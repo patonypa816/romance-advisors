@@ -58,7 +58,7 @@ def source_ref(value, frozen=True):
     if frozen and kind!='fixed_script': names.update(('source_version','source_hash'))
     if set(value)!=names: raise ValidationError('来源字段无效。')
     if kind=='fixed_script':
-        if value['id']!='m4-demo-v1': raise ValidationError('固定剧本不存在。')
+        if value['id'] not in ('m4-demo-v1','m4-live-smoke-v1'): raise ValidationError('固定剧本不存在。')
     else:
         uuid(value['id'])
         if 'submission_id' in value: uuid(value['submission_id'])

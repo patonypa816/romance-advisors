@@ -1,5 +1,6 @@
 """Freeze actual accepted M2/M3 sources without re-evaluation or asset mutation."""
 import copy
+import unittest
 from uuid import uuid4
 from sqlalchemy import select, update
 from hell_inc import db
@@ -94,3 +95,37 @@ class M4SourceTests(M4Fixture):
         result = await self.freeze({'kind': 'competition_result', 'id': self.cid})
         self.assertIn('创意奖', ''.join(s['text'] for s in result['segments']))
         await self.perform_frozen(result)
+
+
+class FixedScriptSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_smoke_is_single_exact_bounded_segment_and_valid_submission_source(self):
+        import re
+        from hell_inc.performance_sources import freeze_source
+        from hell_inc.performance_contract import validate_submission
+        # Fixed source must not need any DB/provider/model input.
+        frozen=await freeze_source(None,'offline-test',{'kind':'fixed_script','id':'m4-live-smoke-v1'})
+        expected='各位新同事，欢迎来到地狱集团。我是你们的首席执行官。在这里，能力决定岗位，创意决定晋升。今天先做个小测试：放轻松，认真回答，别急着把灵魂交给人事部。'
+        self.assertEqual(frozen['segments'],[{'text':expected,'intent':'neutral'}])
+        self.assertEqual(len(expected),74)
+        self.assertEqual(len(re.findall(r'[\u4e00-\u9fff]',expected)),64)
+        self.assertEqual(frozen['source_snapshot']['script_id'],'m4-live-smoke-v1')
+        self.assertEqual(frozen['content_hash'],canonical_hash(frozen['segments']))
+        payload=signed_payload(source_ref=frozen['source_ref'],segments=frozen['segments'])
+        self.assertEqual(validate_submission(payload),payload)
+        # No claimed duration, audio transformation or provider output in the source.
+        self.assertEqual(set(frozen['segments'][0]),{'text','intent'})
+
+    async def test_live_smoke_does_not_replace_demo_or_allow_caller_text(self):
+        from hell_inc.performance_sources import freeze_source
+        from hell_inc.performance_contract import FIXED_SCRIPT
+        from hell_inc.contracts import ValidationError
+        original=await freeze_source(None,'offline-test',{'kind':'fixed_script','id':'m4-demo-v1'})
+        self.assertEqual(original['segments'],FIXED_SCRIPT)
+        self.assertEqual(original['source_snapshot']['script_id'],'m4-demo-v1')
+        frozen=await freeze_source(None,'offline-test',{'kind':'fixed_script','id':'m4-live-smoke-v1'})
+        frozen['segments'][0]['text']='caller mutation'
+        again=await freeze_source(None,'offline-test',{'kind':'fixed_script','id':'m4-live-smoke-v1'})
+        self.assertNotEqual(again['segments'][0]['text'],'caller mutation')
+        for source in ({'kind':'fixed_script','id':'m4-live-smoke-v2'},
+                       {'kind':'fixed_script','id':'m4-live-smoke-v1','text':'caller supplied'}):
+            with self.assertRaises(ValidationError):await freeze_source(None,'offline-test',source)

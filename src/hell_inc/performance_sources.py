@@ -4,11 +4,16 @@ from sqlalchemy import select
 from .db import interviews, competitions
 from .performance_contract import (source_ref,canonical_hash,split_text,FIXED_SCRIPT,PerformanceError)
 
+# 64 Chinese characters / 74 codepoints: roughly 15 seconds at normal speaking
+# pace, not a timing guarantee. Never crop, pad or resynthesize to hit a duration.
+LIVE_SMOKE_SCRIPT = [{'text':'各位新同事，欢迎来到地狱集团。我是你们的首席执行官。在这里，能力决定岗位，创意决定晋升。今天先做个小测试：放轻松，认真回答，别急着把灵魂交给人事部。','intent':'neutral'}]
+
 async def freeze_source(conn,world_id,source):
     source_ref(source,False)
     kind=source['kind']
     if kind=='fixed_script':
-        segments=deepcopy(FIXED_SCRIPT); snapshot={'script_id':'m4-demo-v1','segments':segments}
+        segments=deepcopy(LIVE_SMOKE_SCRIPT if source['id']=='m4-live-smoke-v1' else FIXED_SCRIPT)
+        snapshot={'script_id':source['id'],'segments':segments}
         return {'source_ref':deepcopy(source),'segments':segments,'content_hash':canonical_hash(segments),'source_snapshot':snapshot}
     table=interviews if kind=='interview_result' else competitions
     row=(await conn.execute(select(table).where(table.c.world_id==world_id,table.c.id==source['id']))).mappings().first()
