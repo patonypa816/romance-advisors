@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="referrer" content="no-referrer"><title>HELL INC. · 游客档案</title></head>
+<body>
+  <div class="shell">
+    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M1</span></header>
+    <main>
+      <div class="intro"><div><p class="eyebrow">PERSONNEL RECORDS / 001</p><h1>每个灵魂，都有档案。</h1><p class="subtitle">先登记，再认识。这里暂不决定任何人的职场命运。</p></div><span class="stamp">游客登记处<br><small>GUEST REGISTRY</small></span></div>
+      <aside class="boundary"><strong>隔离测试世界 · 模拟身份</strong><span>simulated / local-test · 数据写入真实 PostgreSQL，不连接抖音、模型或数字人。</span></aside>
+      <div class="connection"><span id="connection" role="status">正在确认登录与数据库状态…</span><button id="reconnect" type="button" class="text-button">重新检查连接</button></div>
+      <p id="notice" role="status" aria-live="polite"></p>
+      <div class="workspace">
+        <section class="panel registration" aria-labelledby="register-heading"><p class="eyebrow">01 / REGISTER</p><h2 id="register-heading">登记游客</h2><p class="muted">稳定身份决定档案；昵称可以改变。</p>
+          <form id="register-form"><label for="subject-id">稳定身份 ID</label><input id="subject-id" name="subject_id" required autocomplete="off" placeholder="visitor-001" aria-describedby="identity-help"><small id="identity-help">逐字保留，不接受首尾空格。请勿填写真实个人信息。</small><label for="display-name">昵称</label><input id="display-name" name="display_name" required autocomplete="off" placeholder="例如：小林"><button id="register" class="primary" type="submit" disabled>登记游客</button></form>
+          <p id="registration-message" role="status" aria-live="polite" class="feedback"></p><p class="note">同一身份再次登记仅更新昵称；不同身份即使同名，也会保留独立档案。网络结果未知时，重试沿用原操作编号。</p>
+        </section>
+        <section class="panel directory" aria-labelledby="directory-heading"><div class="section-head"><div><p class="eyebrow">02 / DIRECTORY</p><h2 id="directory-heading">查找档案</h2></div><span id="revision" class="chip">尚未读取</span></div>
+          <form id="search-form" class="search"><label for="query" class="sr-only">搜索档案</label><input id="query" name="q" placeholder="输入稳定身份或昵称" autocomplete="off"><button type="submit" id="search-button">搜索</button></form>
+          <p id="list-status" role="status" aria-live="polite" class="muted">登录后读取真实档案。</p><ul id="players" class="players" aria-label="档案搜索结果"></ul>
+        </section>
+      </div>
+      <section class="panel detail" aria-labelledby="detail-heading"><div class="section-head"><div><p class="eyebrow">03 / RECORD</p><h2 id="detail-heading">档案详情</h2></div><span class="chip">只读</span></div><div id="detail-content"><p class="empty">选择一份档案，查看真实记录。暂无选中档案。</p></div></section>
+    </main><footer><span>HELL INC. / 人事档案室</span><span>仅游客登记与查询 · 不提供绩效修改</span></footer>
+  </div><script type="module" src="/src/main.ts"></script>
+</body></html>

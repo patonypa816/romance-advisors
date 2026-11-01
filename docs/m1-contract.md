@@ -1,6 +1,6 @@
 # M1 与 P1 首批接口约定
 
-日期：2026-11-01。状态：待实现的首批接口约定，当前没有对应服务。范围：开发环境隔离测试世界；M1 档案与 P1 离线消息监看。真实平台写入、模型与 Vidu 不属于这一阶段。
+日期：2026-11-01。状态：本分支已编写 M1 接口实现，实际验证见 HANDOVER；P1 仍为待实现约定，无对应服务。范围：开发环境隔离测试世界；真实平台写入、模型与 Vidu 不属于这一阶段。
 
 依据：[当前实施规格](SPEC.md)。`local-test` 是隔离测试身份域／模式名，不表示要求访问某台个人电脑。实际云端预览路由与登录交接方式需按选定开发宿主验证；不默认暴露公网端口。
 
@@ -28,10 +28,19 @@
 
 不存在抛 `PlayerNotFound`；命令冲突抛 `CommandConflict`；验证在 API contracts.py 执行，数据层仍保留 DB 唯一约束。initialize_world 幂等，只建世界记录，不隐式改表。迁移单独执行。
 
-## P1 离线规范化边界
+## P1 离线规范化边界（待实现，本分支不提供）
 
 `platform/normalize.py` 提供 `normalize_chat(raw: dict, *, identity_scope: str) -> dict` 和 `NormalizationError(code)`。输入采用现有 dyhub 原始 SSE chat 对象：type/platform/id/roomId/ts/receivedAt/user{id,nickname}/data{content}。
 
 输出字段：provider="douyin", message_id, room_id, subject_id, identity_scope, display_name, original_text, source_timestamp, received_timestamp。时间字段缺失为 null，不猜测单位或补原始时间。ID、昵称、正文逐字保留，不 trim、不截断、不散列；拒绝空 ID、非字符串 ID、不支持的平台、超限内容，避免内存无界。明确稳定作用域是配置假设，跨场稳定性未验证。
 
 GET `/api/platform/monitor` 返回内存有界监看快照：source="recorded_sample", state="offline", events=[规范化消息], business_admission="not_connected"。POST `/api/platform/sample` 载入固定样例用于验收；只监看，不能显示游戏已接纳。不连接真实采集服务。
+
+
+## M1 运行补充
+
+- Python 导入前缀为 `hell_inc`；函数边界位于 `hell_inc.records.service`。
+- 启动命令、同源配置、一次性链接领取和显式迁移见 README。登录令牌 10 分钟有效且只用一次；会话默认 1 小时，重启失效。所有写请求必须携带与配置完全一致的 `Origin`，不允许 CORS。
+- 登录、健康接口不要求 cookie；档案列表、详情和登记均受保护。此页不是公开直播叠层。
+- 仅允许 `provider=simulated`、`identity_scope=local-test`；拒绝额外输入字段，包括资产字段。
+- 注册命令的原始业务载荷及 JSON 结果持久化；后续昵称变化不改变旧命令回执。无变化的新命令不增加 `revision`。

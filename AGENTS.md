@@ -23,3 +23,4 @@
 开发宿主的能力需由实际工具验证；不预设云任务可运行数据库、访问本机或保留后台进程。无已验证运行命令时如实报告，不为了通过验收编造脚本。
 
 文档职责：[README](README.md) 是入口，[HANDOVER](HANDOVER.md) 是现状，[SPEC](docs/SPEC.md) 是当前目标，[接口约定](docs/m1-contract.md) 是首批待实现契约，[walkthrough](walkthrough.md) 是实际历史。不要重新引入过时架构文件；重大规则变化直接维护当前唯一依据。
+
