@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+studio/data/
+studio/sdk/node_modules/
+static/vendor/
+*.log
+.DS_Store

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "library_id": "REPLACE_WITH_LIBRARY_ID",
+  "avatar_id": "REPLACE_WITH_AVATAR_ID",
+  "settings": {
+    "min_interval_seconds": 15,
+    "max_interval_seconds": 25
+  },
+  "actions": [
+    {
+      "id": "REPLACE_WITH_ACTION_ID_1",
+      "name": "轻微侧头",
+      "description_sha256": "4eb3570ab6e32c6a290b876e4aa15714387f706e0bfb6e64569617f75b4b221e",
+      "instruction": "动作：角色端正地坐着，头部轻轻向左侧转动，随后转回面向镜头，双手保持不动，嘴唇紧闭，面部放松，表情平和。\n眼神：按动作描述自然转移视线后注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "recovery_instruction": "动作：正常坐姿，双手自然放在桌面。\n眼神：注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "hold_seconds": 3.0,
+      "cooldown_seconds": 60,
+      "weight": 1,
+      "enabled": true,
+      "visual_verified": false
+    },
+    {
+      "id": "REPLACE_WITH_ACTION_ID_2",
+      "name": "放松肩背",
+      "description_sha256": "6fe0504fabd8b31634dff4537dd384343f7c2e3b71e091ec284edcb5dec59fcb",
+      "instruction": "动作：保持端坐姿势，肩膀自然下沉放松；躯干有微小的舒展幅度后立刻恢复端正坐姿；双手停留在桌面位置不动；嘴唇闭合，目光平静地注视镜头，面部保持平和放松的表情。\n眼神：按动作描述自然转移视线后注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "recovery_instruction": "动作：正常坐姿，双手自然放在桌面。\n眼神：注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "hold_seconds": 3.0,
+      "cooldown_seconds": 60,
+      "weight": 1,
+      "enabled": true,
+      "visual_verified": false
+    },
+    {
+      "id": "REPLACE_WITH_ACTION_ID_3",
+      "name": "手指舒展",
+      "description_sha256": "2ed3af333ffa66504f56638ecdd98561f6fac3eb7a6ccf157f7ea07605c2958b",
+      "instruction": "动作：角色保持端坐姿态，右手保持在桌面原位置轻轻舒展手指，随后自然放松手指，手臂未抬起，未拿取任何物品，嘴角闭合，面部保持平和放松，双眼直视镜头。\n眼神：按动作描述自然转移视线后注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "recovery_instruction": "动作：正常坐姿，双手自然放在桌面。\n眼神：注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "hold_seconds": 3.0,
+      "cooldown_seconds": 60,
+      "weight": 1,
+      "enabled": true,
+      "visual_verified": false
+    },
+    {
+      "id": "REPLACE_WITH_ACTION_ID_4",
+      "name": "短暂垂眸",
+      "description_sha256": "90f9f0c77baad5478f30180b5c83d8f02d5b40b71a63036b81853c15b0da3a5b",
+      "instruction": "动作：保持端坐姿态，双肩与双手固定不动。头部微微低垂，视线短暂地落在前方的桌面上，随后将眼睛抬起并重新注视镜头前方，期间嘴巴闭合，面部呈现平缓放松的平静神态。\n眼神：按动作描述自然转移视线后注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "recovery_instruction": "动作：正常坐姿，双手自然放在桌面。\n眼神：注视镜头。\n表情：神情平静，嘴巴闭合。",
+      "hold_seconds": 3.0,
+      "cooldown_seconds": 60,
+      "weight": 1,
+      "enabled": true,
+      "visual_verified": false
+    }
+  ]
+}
