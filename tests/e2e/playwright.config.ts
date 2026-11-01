@@ -3,7 +3,7 @@ import { defineConfig, devices } from '../../frontend/node_modules/@playwright/t
 
 export default defineConfig({
   testDir: '.',
-  testMatch: '*.spec.ts',
+  testMatch: 'records.spec.ts',
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,

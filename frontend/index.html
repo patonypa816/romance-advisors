@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="referrer" content="no-referrer"><title>HELL INC. · 游客档案</title></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="referrer" content="no-referrer"><title>HELL INC. · 档案与固定题面试</title></head>
 <body>
   <div class="shell">
-    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M1</span></header>
+    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M2</span></header>
     <main>
-      <div class="intro"><div><p class="eyebrow">PERSONNEL RECORDS / 001</p><h1>每个灵魂，都有档案。</h1><p class="subtitle">先登记，再认识。这里暂不决定任何人的职场命运。</p></div><span class="stamp">游客登记处<br><small>GUEST REGISTRY</small></span></div>
-      <aside class="boundary"><strong>隔离测试世界 · 模拟身份</strong><span>simulated / local-test · 数据写入真实 PostgreSQL，不连接抖音、模型或数字人。</span></aside>
+      <div class="intro"><div><p class="eyebrow">PERSONNEL RECORDS / 001</p><h1>每个灵魂，都有档案。</h1><p class="subtitle">先登记，再面试。一次回答，一份有据可查的职业记录。</p></div><span class="stamp">游客登记处<br><small>GUEST REGISTRY</small></span></div>
+      <aside class="boundary"><strong>隔离测试世界 · 模拟身份</strong><span>simulated / local-test · 数据写入真实 PostgreSQL，不连接抖音或数字人；不自动调用模型 API。</span></aside>
       <div class="connection"><span id="connection" role="status">正在确认登录与数据库状态…</span><button id="reconnect" type="button" class="text-button">重新检查连接</button></div>
       <p id="notice" role="status" aria-live="polite"></p>
       <div class="workspace">
@@ -20,6 +20,21 @@
         </section>
       </div>
       <section class="panel detail" aria-labelledby="detail-heading"><div class="section-head"><div><p class="eyebrow">03 / RECORD</p><h2 id="detail-heading">档案详情</h2></div><span class="chip">只读</span></div><div id="detail-content"><p class="empty">选择一份档案，查看真实记录。暂无选中档案。</p></div></section>
-    </main><footer><span>HELL INC. / 人事档案室</span><span>仅游客登记与查询 · 不提供绩效修改</span></footer>
+      <section class="panel interview" aria-labelledby="interview-heading">
+        <p class="eyebrow">04 / FIXED QUESTION INTERVIEW</p><h2 id="interview-heading">固定题面试</h2>
+        <p class="manual-marker">ChatGPT 辅助评估（人工导入；尚非自动 API）</p>
+        <p class="muted">隔离测试世界 / 测试默认规则 / 游戏表现评价，非真实人格测评。岗位：危机公关实习生。</p>
+        <div class="section-head"><p id="interview-selected">在上方查看游客档案详情，即可选择面试对象。</p><button id="interview-start" type="button" disabled>开始固定题面试</button></div>
+        <p id="interview-freshness" class="muted" role="status">状态待确认</p>
+        <div id="interview-list" class="interview-list" aria-label="最近面试"></div>
+        <div id="interview-card"></div><p id="interview-clock" class="feedback"></p>
+        <div class="interview-actions"><button id="interview-open" type="button" disabled>确认题目已展示，开始答题</button><button id="interview-pause" type="button" disabled>暂停面试</button><button id="interview-resume" type="button" disabled>恢复面试</button><button id="interview-retry" type="button" disabled>重试评估（新尝试）</button></div>
+        <form id="interview-answer-form"><label for="interview-answer-text">最终回答</label><textarea id="interview-answer-text" rows="4" aria-describedby="answer-help" disabled></textarea><small id="answer-help">1–1000 字符。接纳后原文冻结，不能修改；失败不会计零分。</small><button id="interview-answer" type="submit" disabled>提交最终回答</button></form>
+        <div class="evaluation-grid"><div><h3>1. 导出冻结任务</h3><p class="muted">将完整 JSON 交给 ChatGPT，根据冻结规则生成 criteria 评价。不会在此页面自动运行模型。</p><button id="evaluation-export" type="button" disabled>导出评估任务</button><label for="evaluation-request">冻结评估任务 JSON</label><textarea id="evaluation-request" rows="9" readonly></textarea><button id="evaluation-copy" type="button">复制冻结任务</button></div>
+        <div><h3>2. 导入结构化评价</h3><p class="muted">只导入 criteria 对象。服务器校验原文证据并计算录用结果，在同一事务更新档案。</p><label for="evaluation-result">ChatGPT 评价 JSON</label><textarea id="evaluation-result" rows="9" placeholder='{"criteria":[…]}' disabled></textarea><button id="evaluation-import" type="button" disabled>导入评价并结算</button></div></div>
+        <details class="cancel-area"><summary>取消当前面试</summary><label for="interview-cancel-reason">取消原因</label><input id="interview-cancel-reason" maxlength="200" placeholder="说明取消原因"><button id="interview-cancel" type="button" disabled>确认取消面试</button></details>
+        <p id="interview-notice" class="feedback" role="status" aria-live="polite"></p><button id="interview-replay" type="button" hidden>确认原面试操作</button>
+      </section>
+    </main><footer><span>HELL INC. / 人事档案室</span><span>固定题面试 · 服务器事务结算 · 不提供任意资产修改</span></footer>
   </div><script type="module" src="/src/main.ts"></script>
 </body></html>

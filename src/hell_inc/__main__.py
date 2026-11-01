@@ -38,7 +38,7 @@ def deliver_login(url: str, filename: str | None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="HELL INC M1 isolated development records")
+    parser = argparse.ArgumentParser(description="HELL INC M2 isolated fixed interview")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="explicit transactional schema migration")
     serve = sub.add_parser("serve", help="serve protected same-origin operator page")
@@ -48,7 +48,7 @@ def main():
         settings = Settings.from_env()
         if args.command == "migrate":
             asyncio.run(run_migration(settings))
-            print("M1 schema version 1 is ready.")
+            print("M2 schema version 2 is ready.")
         else:
             token = secrets.token_urlsafe(32)
             app = create_app(settings, startup_token=token)
@@ -57,7 +57,7 @@ def main():
                 deliver_login(settings.public_origin + "/#token=" + token, args.login_file)
             app.on_startup.append(ready)
             web.run_app(app, host=settings.host, port=settings.port, access_log=None,
-                        print=lambda _: print("HELL INC M1 running (local-test)."))
+                        print=lambda _: print("HELL INC M2 running (local-test)."))
     except (Exception, KeyboardInterrupt):
         # Avoid default exception reprs containing connection strings/parameters.
         print("启动或迁移未完成：检查数据库连接、迁移版本、实例锁及仓库外登录文件路径。", file=sys.stderr)

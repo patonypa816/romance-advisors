@@ -33,3 +33,6 @@ credentials/
 browser-profile/
 *.pem
 *.key
+
+playwright-report-m2/
+test-results-m2/

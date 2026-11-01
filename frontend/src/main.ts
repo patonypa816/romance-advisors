@@ -1,4 +1,6 @@
 import './style.css';
+import { setupInterview } from './interview';
+let interviews: ReturnType<typeof setupInterview> | undefined;
 
 type Player = { player_id: string; provider: string; identity_scope: string; subject_id: string; display_name: string; role: string; department: string | null; position: string | null; performance: number; joined_at: string; updated_at: string; recent_events: unknown[] };
 type Snapshot = { player: Player; revision: number; replayed?: boolean };
@@ -15,6 +17,7 @@ let revision = -1, listRequest = 0, detailRequest = 0, queryVersion = 0;
 let selected: string | null = null, pending: Command | null = null;
 class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 function syncControls() {
+  interviews?.sync();
   register.disabled = !authenticated || !healthy || !navigator.onLine || busy;
   subject.disabled = nickname.disabled = busy;
   el<HTMLButtonElement>('search-button').disabled = !authenticated || !healthy;
@@ -63,6 +66,7 @@ function acceptRevision(value: number) {
   revision = value; el('revision').textContent = `版本 ${revision}`; return true;
 }
 function renderDetail(player: Player) {
+  interviews?.selectPlayer(player);
   const container = el('detail-content'); container.replaceChildren();
   container.append(node('h3', player.display_name), node('p', `${player.provider} / ${player.identity_scope} / ${player.subject_id}`, 'identity'));
   const grid = node('dl', '', 'facts');
@@ -70,7 +74,15 @@ function renderDetail(player: Player) {
     const pair = node('div', ''); pair.append(node('dt', label), node('dd', value)); grid.append(pair);
   }
   container.append(grid, node('h3', '最近经历'));
-  container.append(node('p', player.recent_events.length === 0 ? '暂无经历。尚无已确认的职业事件。' : '当前阶段不展示未支持的事件格式。', 'empty'));
+  if (!player.recent_events.length) container.append(node('p', '暂无经历。尚无已确认的职业事件。', 'empty'));
+  else for (const event of player.recent_events) {
+    if (event && typeof event === 'object') {
+      const record = event as Record<string, unknown>;
+      const title = record.type === 'interview_hired' ? '面试录用' : record.type === 'interview_rejected' ? '面试未录用' : '已确认职业事件';
+      container.append(node('h3', title), node('p', typeof record.summary === 'string' ? record.summary : JSON.stringify(record), 'answer-copy'));
+      if (typeof record.created_at === 'string') container.append(node('small', record.created_at));
+    }
+  }
 }
 async function loadDetail(id: string) {
   selected = id; const request = ++detailRequest;
@@ -124,6 +136,7 @@ async function checkConnection() {
     status(!authenticated ? '尚未登录 · 请从启动器的一次性链接进入。' : healthy ? `已连接真实 PostgreSQL · ${health.world_id} · local-test` : '数据库不可用或模式不符 · 登记暂停。');
     if (authenticated && healthy) {
       await loadPlayers();
+      await interviews?.refresh();
       if (selected && authenticated && healthy) await loadDetail(selected);
       if (healthy && transientNotice !== null && el('notice').textContent === transientNotice) {
         el('notice').textContent = ''; transientNotice = null;
@@ -187,4 +200,5 @@ async function start() {
   const poll = async () => { if (!document.hidden && !busy && navigator.onLine) await checkConnection(); window.setTimeout(() => void poll(), 1000); };
   window.setTimeout(() => void poll(), 1000);
 }
+interviews = setupInterview({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating, failure, refreshPlayer: loadDetail });
 void start();

@@ -38,12 +38,64 @@ def make_engine(url: str):
 
 
 async def migrate(engine):
-    # One explicit, transactional baseline migration; future versions append migrations.
+    """Explicit, transactional fresh baseline or v1 -> v2; never startup."""
     async with engine.begin() as conn:
         await conn.execute(text("SELECT pg_advisory_xact_lock(721023061)"))
-        await conn.run_sync(metadata.create_all)
+        await conn.run_sync(lambda sync: versions.create(sync, checkfirst=True))
         existing = (await conn.execute(versions.select())).scalars().all()
-        if any(v != 1 for v in existing):
+        if existing not in ([], [1], [2]):
             raise RuntimeError("未知数据库版本，拒绝迁移。")
-        if not existing:
-            await conn.execute(versions.insert().values(version=1))
+        await conn.run_sync(metadata.create_all)
+        if existing != [2]:
+            await conn.execute(versions.delete())
+            await conn.execute(versions.insert().values(version=2))
+
+
+# M2 is additive: M1 tables and original command receipts remain untouched.
+memberships = Table('memberships', metadata,
+    Column('player_id', UUID(as_uuid=False), ForeignKey('players.player_id'), primary_key=True),
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
+    Column('role', String(32), nullable=False), Column('department', String(80)),
+    Column('position', String(80)), Column('performance', Integer, nullable=False))
+interviews = Table('interviews', metadata,
+    Column('id', UUID(as_uuid=False), primary_key=True),
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
+    Column('player_id', UUID(as_uuid=False), ForeignKey('players.player_id'), nullable=False),
+    Column('status', String(32), nullable=False), Column('version', Integer, nullable=False),
+    Column('body', JSONB, nullable=False), Column('created_at', DateTime(timezone=True), nullable=False))
+from sqlalchemy import Index
+Index('one_active_interview_per_world', interviews.c.world_id, unique=True,
+      postgresql_where=interviews.c.status.in_(['READY','ANSWERING','EVALUATING','REVIEW_FAILED','PAUSED']))
+interview_commands = Table('interview_commands', metadata,
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), primary_key=True),
+    Column('command_id', UUID(as_uuid=False), primary_key=True),
+    Column('payload', JSONB, nullable=False), Column('response', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False))
+input_records = Table('input_records', metadata,
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), primary_key=True),
+    Column('message_id', UUID(as_uuid=False), primary_key=True),
+    Column('payload', JSONB, nullable=False), Column('response', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False))
+model_tasks = Table('model_tasks', metadata,
+    Column('id', UUID(as_uuid=False), primary_key=True),
+    Column('interview_id', UUID(as_uuid=False), ForeignKey('interviews.id'), nullable=False, unique=True),
+    Column('frozen_input', JSONB, nullable=False), Column('input_hash', String(64), nullable=False),
+    Column('policy_hash', String(64), nullable=False), Column('attempts', JSONB, nullable=False))
+settlements = Table('settlements', metadata,
+    Column('id', UUID(as_uuid=False), primary_key=True),
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
+    Column('interview_id', UUID(as_uuid=False), ForeignKey('interviews.id'), nullable=False, unique=True),
+    Column('player_id', UUID(as_uuid=False), ForeignKey('players.player_id'), nullable=False),
+    Column('payload_hash', String(64), nullable=False), Column('result', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False))
+reward_ledger = Table('reward_ledger', metadata,
+    Column('settlement_id', UUID(as_uuid=False), ForeignKey('settlements.id'), primary_key=True),
+    Column('player_id', UUID(as_uuid=False), ForeignKey('players.player_id'), primary_key=True),
+    Column('award_type', String(32), primary_key=True), Column('before', JSONB, nullable=False),
+    Column('after', JSONB, nullable=False))
+game_events = Table('game_events', metadata,
+    Column('interview_id', UUID(as_uuid=False), ForeignKey('interviews.id'), primary_key=True),
+    Column('player_id', UUID(as_uuid=False), ForeignKey('players.player_id'), primary_key=True),
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
+    Column('event_type', String(32), nullable=False), Column('payload', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False))
