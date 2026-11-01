@@ -454,3 +454,10 @@ class M2ApiTests(unittest.IsolatedAsyncioTestCase):
         await self.post(self.path + '/evaluation-result', payload, 400)
         self.assertFalse(self.client.server.app[STATE]['game_gate'])
         self.assertIsNone((await self.snapshot())['result'])
+        import json
+        raw = json.dumps(self.result_payload(export)).replace('"score": 2', '"score": 1e9999', 1)
+        response = await self.client.post(self.path + '/evaluation-result', data=raw,
+                                         headers={'Origin': 'http://localhost', 'Content-Type': 'application/json'})
+        self.assertEqual(response.status, 400)
+        self.assertFalse(self.client.server.app[STATE]['game_gate'])
+        self.assertEqual((await self.snapshot())['status'], 'EVALUATING')
