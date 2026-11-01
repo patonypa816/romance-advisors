@@ -33,12 +33,22 @@ test('mocked real-media receiver fails closed on autoplay and keeps stop/readbac
     };
     w.AliRtcEngine={getInstance:()=>engine,AliRtcLogLevel:{NONE:5},setLogLevel:(level:number)=>{w.__mockRtc.logLevel=level;}};
     // The pinned loader/SRI is inspected, not weakened in production. No SDK download.
+    const interceptSdk=(node:Node|string) => {
+      if (!(node instanceof HTMLScriptElement) || new URL(node.src).pathname !== '/vendor/aliyun-rtc-sdk-7.1.9.js') return false;
+      if (node.integrity !== 'sha256-gQAzg1HOYiodJeJplyR+VbCRNfRYuQ50iZWzV84m43Y=') throw new Error('Mock requires the exact production SDK pin');
+      w.__mockRtc.sdk.push({src:node.getAttribute('src'),integrity:node.integrity});
+      setTimeout(()=>node.dispatchEvent(new Event('load')),0);return true;
+    };
+    // ParentNode.append is native and does not call a JS override of appendChild.
+    // Cover the actual production loader's document.head.append(script) boundary.
+    const originalAppend=Element.prototype.append;
+    Element.prototype.append=function(...nodes:(Node|string)[]) {
+      const remaining=nodes.filter(node=>!interceptSdk(node));
+      if (remaining.length) originalAppend.apply(this,remaining);
+    };
     const original=Node.prototype.appendChild;
     Node.prototype.appendChild=function<T extends Node>(node:T):T {
-      if(node instanceof HTMLScriptElement && node.src.includes('/vendor/aliyun-rtc-sdk-7.1.9.js')) {
-        w.__mockRtc.sdk.push({src:node.getAttribute('src'),integrity:node.integrity});
-        setTimeout(()=>node.dispatchEvent(new Event('load')),0);return node;
-      }
+      if(interceptSdk(node)) return node;
       return original.call(this,node) as T;
     };
   });
@@ -98,6 +108,7 @@ test('mocked real-media receiver fails closed on autoplay and keeps stop/readbac
   await expect(page.locator('#performance-media-start')).toBeDisabled();
   await expect(page.locator('#performance-session-close')).toBeDisabled();
   await page.locator('#receiver-start').click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__mockRtc.sdk.length)).toBe(1);
   await expect(page.locator('#receiver-audio')).toBeEnabled();
   await expect.poll(()=>heartbeats.some(h=>h.joined)).toBe(true);
   await expect(page.locator('#performance-media-confirm-ready')).toBeDisabled();
