@@ -15,6 +15,7 @@ from .instance import InstanceLock
 from .interviews import InterviewService, InterviewError
 from .competitions import CompetitionService
 from .performances import PerformanceService
+from .media_runtime import RealMediaRuntime
 from .performance_contract import PerformanceError
 from .records.service import RecordService, PlayerNotFound, CommandConflict
 
@@ -72,7 +73,9 @@ async def guard(request, handler):
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    rtc_origins=request.app[STATE]['settings'].rtc_connect_origins if request.app[STATE]['settings'].real_media_enabled else ()
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'" + (" "+" ".join(rtc_origins) if rtc_origins else "") + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
     return response
 
 
@@ -213,6 +216,7 @@ async def lifecycle(app):
                             await state['interviews'].expire_due()
                             await state['competitions'].expire_due()
                             await state['performances'].expire_due()
+                            await state['performances'].media_tick()
                     except (SQLAlchemyError, OSError):
                         state['game_gate'] = True
                         await state['performances'].close_gate()
@@ -235,7 +239,7 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
     app = web.Application(middlewares=[guard], client_max_size=32768)
     app[STATE] = {"settings": settings, "engine": engine,
         "service": RecordService(engine, settings.world_id),
-        "performances": PerformanceService(engine, settings.world_id),
+        "performances": PerformanceService(engine, settings.world_id,runtime=RealMediaRuntime(settings)),
         "competitions": CompetitionService(engine, settings.world_id),
         "interviews": InterviewService(engine, settings.world_id), "game_gate": False, "game_lock": asyncio.Lock(),
         "lock": InstanceLock(settings.database_url, settings.world_id, settings.lock_dir),
@@ -272,12 +276,17 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
     app.router.add_post('/api/performance-session', performance_session_create)
     for action in ('pause','resume','close'):
         app.router.add_post('/api/performance-session/{id}/'+action, performance_session_command)
+    for action in ('start','stop','reconcile','confirm-ready'):
+        app.router.add_post('/api/performance-session/{id}/media/'+action, performance_media_command)
+    app.router.add_post('/api/performance-session/{id}/receiver/claim', performance_receiver_claim)
+    app.router.add_post('/api/performance-session/{id}/receiver/heartbeat', performance_receiver_heartbeat)
     app.router.add_post('/api/performance-sources/freeze', performance_freeze)
     app.router.add_get('/api/performances', performance_list)
     app.router.add_post('/api/performances', performance_submit)
     app.router.add_get('/api/performances/{id}', performance_get)
     for action in ('execute','cancel'):
         app.router.add_post('/api/performances/{id}/'+action, performance_command)
+    app.router.add_get("/vendor/aliyun-rtc-sdk-7.1.9.js", rtc_sdk)
     app.router.add_get("/", index)
     assets = Path(settings.frontend_dir) / "assets"
     if assets.is_dir():
@@ -360,3 +369,20 @@ async def performance_get(request):
     return web.json_response(await request.app[STATE]['performances'].get(request.match_info['id']))
 async def performance_command(request):
     return web.json_response(await request.app[STATE]['performances'].command(request.match_info['id'],request.path.rsplit('/',1)[-1],await body(request)))
+
+
+async def performance_media_command(request):
+    action=request.path.rsplit('/',1)[-1]
+    result=await request.app[STATE]['performances'].media_command(request.match_info['id'],action,await body(request))
+    return web.json_response(result,status=202 if action in ('start','stop','reconcile') else 200)
+async def performance_receiver_claim(request):
+    return web.json_response(await request.app[STATE]['performances'].claim_receiver(request.match_info['id'],await body(request)))
+async def performance_receiver_heartbeat(request):
+    return web.json_response(await request.app[STATE]['performances'].receiver_heartbeat(request.match_info['id'],await body(request)))
+
+
+async def rtc_sdk(request):
+    path=Path(request.app[STATE]['settings'].frontend_dir)/'vendor'/'aliyun-rtc-sdk-7.1.9.js'
+    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!='8100338351ce622a1d25e26997247e55b09135f458b90e748995b357ce26e376':
+        return error('rtc_sdk_not_installed','尚未安装已核验的固定版本 RTC SDK。',503)
+    return web.FileResponse(path)

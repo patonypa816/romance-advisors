@@ -14,3 +14,10 @@
 .performance .evaluation-grid > div { min-width: 0; }
 .performance select { display: block; width: 100%; background: #111410; border: 1px solid #4b5343; border-radius: 4px; padding: 12px; color: #eeefe9; font: inherit; font-size: 13px; }
 .performance select:focus-visible { outline: 2px solid #d9fd6d; outline-offset: 4px; }
+.real-media-controls { margin: 24px 0; border: 1px solid #4b5343; padding: 16px; }
+.real-media-controls summary { color: #d9fd6d; }
+.paid-confirm { display: flex; align-items: flex-start; gap: 12px; }
+.paid-confirm input { width: auto; margin: 6px 0 0; flex: 0 0 auto; }
+.receiver-context { width: min(100%, 360px); aspect-ratio: 9 / 16; background: #111410; border: 1px dashed #72746c; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
+.receiver-context p { font-size: 12px; color: #aeb4a4; }
+#receiver-video { width: 100%; height: auto; object-fit: contain; background: #080a07; }

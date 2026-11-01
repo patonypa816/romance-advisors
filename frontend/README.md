@@ -48,3 +48,27 @@ Node 24；`npm ci && npm run build` 生成 `dist/`，由 Python 应用同源提�
 提交回执未知时，内存保留同一 ID 与完整载荷，仅原样确认；可查回同一记录消除未知回执。执行回执丢失时只查状态，不自动再次发送。请勿在回执未知时刷新页面：待确认请求仅在当前页面内存保存；已落库记录可重新查询。跨模块待定操作会锁住新写入；离线、登录变更、过期快照均关闭操作门。M4 不修改游戏资产，不自动确认 M3 展示或开启投票。
 
 测试定位：所有 M4 静态元素均有相同 `id` / `data-testid`，前缀 `performance-`，包括 `session-create|session-pause|session-resume|session-close`、`aspect`、`source-kind|source-id|submission-id`、`freeze|frozen`、`expiry|submit|replay|execute|cancel|refresh|list|detail|notice`。动态列表为 `performance-select`；游戏按钮为 `interview-freeze-performance`、`competition-freeze-comment`（附 `data-submission-id`）、`competition-freeze-result`。
+
+## M4 Phase 2：真实媒体控制代码（默认禁用，仍需真实联调）
+
+真实链路代码与 mock 测试不代表已完成媒体验收。本轮没有启动云场、请求模型 / TTS、连接真实 RTC 或确认观众收到音画。
+
+工作台折叠区「真实媒体控制」只在服务器声明 capability 后允许创建 **LOCAL real 暂停记录**；这一步不启动云场。真实启动还需服务端独立启用 real / paid 开关、配置新素材与供应商连接，并取得本次限额授权。勾选确认框本身不是授权。启动云场的命令 ID 在请求前固定，未知时只查创建尝试状态，不自动重试创建。普通演出提交回执未知时，独立停止 / 只读核查仍可用；安全命令不会覆盖原演出请求。
+
+显式领取唯一 RTC 接收者后，接收令牌和 RTC 参数仅保留内存；不写 localStorage、sessionStorage、URL、日志或普通快照。接收器禁止本机麦克风、摄像头、屏幕采集，关闭本机音视频发布；视频 muted，声音由 SDK 独立播放以免双声。必须显式点击开启远端声音。它上报的 joined、live tracks、正在推进的解码画面与播放许可均标为 **client_reported**，不是观众证据。自动播放失败、track/解码丢失、心跳异常均保持门关闭；本页不主动自动重连、重新领取或转移接收者。
+
+服务端收到健康接收者后，操作员观察音画并记录人工确认，然后仍需明确恢复发送门。人工确认不是自动验收；发送完成显示真实传输状态，不显示离线演练完成或观众听完。游戏暂停 / 发送暂停不等于结束收费云场。停止后只有供应商正向 ended 回读才标结束；未知可只读核查，不重新创建。已正向结束且无本机 preparing / sending 时，可关闭 real 会话，但旧 unknown 演出仍永不重播，证据保留。
+
+### SDK 安装与验证（仅静态文件）
+
+在 `frontend/` 中先运行 `./tools/fetch-rtc-sdk.sh`，再 `npm run build`。脚本固定 AliRTC **7.1.9** 官方 HTTPS 地址及 SHA-256，在临时文件校验成功后才替换目标；重复执行验证已安装文件，不重复下载。`public/vendor/` 不提交源码；Vite 将其复制进 `dist/vendor/`。没有新增 npm 依赖，不自动安装 SDK，不使用 CDN 运行时回退。
+
+浏览器仅接受 `/vendor/aliyun-rtc-sdk-7.1.9.js` 和 `sha256-gQAzg1HOYiodJeJplyR+VbCRNfRYuQ50iZWzV84m43Y=`，通过 SRI 加载；未安装 / 哈希不符会明确不就绪。SDK 来源与原接收代码 MIT 许可见 `THIRD_PARTY.md`。本地已验证静态下载、哈希及第二次幂等执行；未使用它发出真实 RTC 请求。
+
+固定 SDK 静态源可定位生产 `wss://rs.rtn.aliyuncs.com/roomserver/v1/ws`、`https://rs.rtn.aliyuncs.com/roomserver/v1/ws/version` 和 `https://gw.rtn.aliyuncs.com/gslb/v1/stsupdate`。这只是源码证据，不能证明它们足以完成真实接通。后端默认 CSP 仍须保持最小权限，真实允许源按单独审查配置，不放开全局通配符或所有遥测域；具体已实现策略以服务端契约为准。
+
+接收区域置于 9:16 构图参考框内；数字人仍仅占用户选定 16:9 / 4:3 横向子区域，默认未选，不裁剪（`object-fit: contain`）。其他游戏画面未合成，此处不是 P2 直播画布。
+
+Phase 2 测试定位：`performance-session-real-create`、`performance-paid-confirm`、`performance-media-start|stop|reconcile|confirm-ready|state`；`receiver-start|audio|leave|status|video`。测试通过测试脚本拦截固定 SDK 的 appendChild 并检查 URL / integrity、模拟轨道与帧证据；生产代码没有 mock / 绕过开关。浏览器 mock 不发真实 RTC 请求，不构成媒体质量证据。
+
+接收器在 SDK 实例化前强制 `AliRtcEngine.setLogLevel(AliRtcLogLevel.NONE)`（固定版本常量为 5）。这关闭 SDK 控制台日志，但静态源码显示其内部仍可能缓存遥测日志；因此不能据此声称第三方 SDK 完全不记录信息，也不为日志 / 遥测域放开 CSP。真实联调前仍需审查供应商内部遥测边界。

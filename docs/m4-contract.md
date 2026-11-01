@@ -1,4 +1,4 @@
-# M4 offline protocol contract
+# M4 performance protocol contract — Phase 1 + Phase 2
 
 Real media acceptance remains pending. Fixed script is fetched through the same freeze endpoint with `{source:{kind:"fixed_script",id:"m4-demo-v1"}}`; no extra route or hardcoded client text.
 
@@ -40,10 +40,60 @@ Startup: all previous sending → unknown, preparing/ready/accepted retained but
 Performance module must import no RecordService asset mutator and must not call settle/evaluation. Media status never opens voting, confirms presentation or changes game assets. Game pause stops future game performance submissions and requests performance pause; if confirmation unavailable show pending, not fully stopped. Add linkage only without changing current M2/M3 legal phase transitions.
 
 
-## Implementation boundaries
+## Phase 1 implementation boundaries (superseded for explicit real mode below)
 
 No real session creation, provider clients, TTS, Vidu, RTC or paid preparation is wired. `offline_fixture` performs deterministic protocol calls without audio. Session aspect is layout metadata only; final broadcast context is 9:16 and avatar subregion is optionally landscape 16:9 / 4:3, unset by default.
 
 Service: `PerformanceService(engine,world_id,adapter=None)`. Injectable adapters implement async `prepare(segment,cancellation)` and `send(prepared,session,still_valid)`; callbacks are synchronous booleans. The durable sending commit precedes adapter send. Known terminal IDs remain queryable. Pause/cancel can cancel only unstarted material, and in-flight completion is retained. Shutdown attempts unknown persistence; if the database is unavailable, sending rows are made unknown at next recovery. Manual execute commands are not auto-replayed after restart.
 
 Game pause routes include `performance_pause` receipt after game pause commits. If its DB operation fails, HTTP returns unavailable rather than claiming media stopped; game pause remains durable. Game resume does not auto-resume the performance session.
+
+
+## Phase 2: explicit real runtime, default OFF
+
+Code supports an owned `RealMediaRuntime` and `RealPerformanceAdapter`; normal launch remains offline. This is mocked integration, **not real media acceptance**. No live provider or RTC requests were made during this implementation. No schema change beyond v4 is required: lifecycle facts reside in the session JSON body and per-segment preparation evidence.
+
+### Stable API additions
+
+All existing auth/origin/strict-field guards apply. `GET /api/performance-session` always adds top-level `media`, even with `session:null`; real sessions mirror it as `session.media`. Fields:
+
+```
+{state, owned_live_id, creation_attempted, cloud_end_confirmed,
+ receiver:{claimed,healthy,joined,remote_video,audio_playback,autoplay_blocked,evidence_source:"client_reported"},
+ operator_confirmed,real_enabled,paid_enabled}
+```
+
+States: `not_started|creating|connecting|waiting_receiver|ready|stopping|ended|unknown`. `media_verified` and `audience_heard` remain false. Receiver state is client-reported, operator confirmation is a separate manual observation—not audience proof.
+
+- POST session with `mode:"real"` requires real opt-in and creates only a **local paused** row, never a cloud scene.
+- POST `.../{id}/media/start` `{command_id,confirm_paid:true}` requires both opt-ins and validated configuration. It commits creation-attempted/creating and command receipt before one create call. Returns **202**, including command replay. A different command never creates again after any attempted/unknown outcome.
+- POST `.../{id}/media/stop` `{command_id}` closes future preparation/send, cancels unstarted work, and performs original owned-component stop plus bounded end readback. **202**. This remains permitted after paid opt-in revocation/receiver loss. Pause alone does not end the cloud session.
+- POST `.../{id}/media/reconcile` `{command_id}` performs provider **GET only**, using the persisted owned ID. **202**. Missing ID after ambiguous create reports `reconciliation_required:"provider_console"`; no arbitrary ID adoption or second create.
+- POST `.../{id}/receiver/claim` `{receiver_id}` → **200** `{revision,server_time,receiver_id,receiver_token,epoch,rtc}`. `rtc` contains original provider join grant (`provider/app_id/channel_id/user_id/token/token_expire_at` when supplied), pinned local `sdk_url` and `sdk_integrity`. Only this authenticated no-store response carries tokens; never command receipts, DB, normal snapshots or browser storage. Same receiver refresh rotates the token and pauses; another receiver is rejected even after timeout.
+- POST `.../{id}/receiver/heartbeat` `{receiver_id,receiver_token,joined,remote_video,audio_playback,autoplay_blocked}` → **200** session snapshot. All four flags strictly Boolean. Monotonic TTL is 10 seconds. Expiry/unhealthy state latches pause and invalidates operator confirmation; a late healthy heartbeat cannot resume automatically.
+- POST `.../{id}/media/confirm-ready` `{command_id,receiver_id,confirm_audio_video:true}` → **200**. Requires current healthy claim; existing `/resume` remains separately required and also requires original component ready, durable ownership, current epoch and no unresolved performance.
+- Real `/close` requires confirmed provider end if creation was attempted, and no in-flight worker. A never-started local session can close without inventing end evidence. After confirmed end, unknown performance records remain unknown/non-replayable but do not block closing the ended session. Historical close-command replay never clears a later runtime.
+
+Late callbacks cannot reopen closed sessions or downgrade positive end readback. Runtime monitors capture their original component/epoch and are cancelled before releasing ownership.
+
+### Preparation, sending and restart
+
+Real adapter receives explicit `{performance_id,session_id,segment_index,payload_hash}`. Before every chargeable stage it durably records `preparation.attempted/phase/request_id` plus bounded history. Stage 1 output may contain **only instruction/actions/recovery**; text is composed from the authoritative frozen input. TTS is called exactly once with original whitespace, explicit configured voice and timestamps. Exact PCM hash/alignment is verified before the original constrained schedule-ID planner. No-action plans skip stage 2. No automatic provider retry or third fallback exists.
+
+Per-segment preparation histories retain returned usage/PCM identity even when cancelled; no RTC tokens, private paths or raw provider exceptions are persisted. Restart during real preparation is unknown, never newly charged automatically. Real success uses `result.transport_receipt`, not `fixture_receipt`; it means local transport sent only. The original scheduler owns speech/socket locks and Type9/PCM sequencing; no direct Type9 shortcuts or old asset-bound idle resources are installed.
+
+### Configuration and secure transport
+
+Defaults: `HELL_INC_REAL_MEDIA_ENABLED=0`, `HELL_INC_ALLOW_PAID_MEDIA=0`. Both must be exactly `1` for create/prepare/send. Cleanup/reconciliation of already owned IDs does not depend on those flags.
+
+Credentials use existing deployment variables `VIDU_API_KEY`, `DASHSCOPE_API_KEY`, `BAILIAN_WORKSPACE_ID`. Optional overrides are `HELL_INC_VIDU_KEY`, `HELL_INC_BAILIAN_KEY`, `HELL_INC_BAILIAN_WORKSPACE`: if present—even empty—they take precedence; explicit empty values fail, never fall back. Opaque nonempty header-safe keys are preserved without prefix assumptions, placeholder expansion, local CSV fallback or logging.
+
+Required business configuration: `HELL_INC_AVATAR_ID`, `HELL_INC_PLANNER_MODEL`, `HELL_INC_TTS_VOICE`, `HELL_INC_VOICE_PERSONA`. There is no historical avatar/voice/persona default and no account asset ID in Git. `HELL_INC_MEDIA_DIR` defaults to `/tmp/hell-inc-media`, must be absolute, and should remain outside the checkout. Directories/files use 0700/0600. `HELL_INC_AUDIO_HOSTS` is an explicit comma-separated download-host allowlist, with HTTPS only, no credentials/userinfo/private IP/redirect. `HTTPS_PROXY` is explicitly injected into both HTTPS and WSS; ambient netrc/default auth is forbidden. Bailian uses Bearer, Vidu Token, and downloads get no Authorization. TLS verification remains on. Signed query strings are scrubbed.
+
+The pinned local RTC SDK is `/vendor/aliyun-rtc-sdk-7.1.9.js`, SHA-256 `8100338351ce622a1d25e26997247e55b09135f458b90e748995b357ce26e376`. Both the serving route and production create preflight verify it. `HELL_INC_RTC_CONNECT_ORIGINS` defaults empty; only these pinned-source production candidates are accepted: `wss://rs.rtn.aliyuncs.com`, `https://rs.rtn.aliyuncs.com`, `https://gw.rtn.aliyuncs.com`. Real creation is unavailable without explicit origins and the SDK. These candidates were read from that SDK, **not verified by actual RTC connectivity**; no wildcard/preproduction/telemetry fallback is enabled. Browser CSP stays self-only by default. Any additional real endpoint must be independently reviewed before extension.
+
+`MediaHTTP` uses a narrow aiohttp session override to force redirects off at `_request`, including the WebSocket HTTP Upgrade (aiohttp 3.14.4 `_ws_connect` otherwise uses default request redirects). An injected ordinary aiohttp session without that redirect policy is rejected for WSS. Fake sessions exist only for tests.
+
+### Remaining acceptance
+
+Provider credentials, actual model/TTS/Vidu responses, new avatar resources, RTC audio/video/autoplay, dynamic endpoint completeness, stop/end readback, billing and audience observations remain untested. Mocked provider/scheduler/browser tests cannot close those items. Any actual paid exercise requires separately bounded authorization.

@@ -1,6 +1,6 @@
 # M4：数字人规则复用与未接通边界
 
-本页描述 **离线协议切片**，不是 M4 真实音画验收。HTTP 服务仅装配 `FixtureAdapter`，不请求模型/TTS/Vidu，不创建收费场次，不加载凭据，不播放声音或画面。`send_completed` 仅表示本次协议发送调用完成，不能解释为观众已听完。
+本页描述 **离线协议切片**，不是 M4 真实音画验收。HTTP 服务默认装配无音画 `FixtureAdapter`；Phase 2 另有双开关、显式配置及接收者门控的真实适配器代码，但本轮仅用模拟供应商验证，未请求真实模型/TTS/Vidu/RTC。`send_completed` 仅表示本次协议发送调用完成，不能解释为观众已听完。
 
 ## 选择性复用与许可证
 
@@ -35,7 +35,7 @@
 | Type9 等待不得占住 PCM/Type10 socket 锁；实际首 PCM 时间与发送字节进度共同约束 | 只读核对 `motion_component.py` 的 `_write_motion`、`_run_aligned_remaining`；本切片不重写调度器、不宣称其运行时验证完成 |
 | 内容持有发送权时禁止 idle；成功 idle 写入后才推进 cooldown；受保护 Q 恢复；旧 epoch 失效 | 只读核对 `idle_motion.py`；未装配 idle，未复制旧形象资源关联，未宣称新形象的 idle 已验证 |
 
-`send_prepared(prepared, owned_send_aligned_expression, still_valid)` 只委托调用方已经拥有的原 `MotionComponent.send_aligned_expression`，显式传递 S、1.1、尾 Q 与本地锚点选项；不直接写 Type9，不绕过恢复/所有权检查，不自行创建 session。它没有被 HTTP 工厂接入，**不是已经可用的真实适配器**。未来调用方仍必须证明会话 epoch、唯一 sender、唯一 RTC 接收者、接收就绪及持久发送闸门；函数存在不等于这些条件成立。
+`send_prepared(prepared, owned_send_aligned_expression, still_valid)` 只委托调用方已经拥有的原 `MotionComponent.send_aligned_expression`，显式传递 S、1.1、尾 Q 与本地锚点选项；不直接写 Type9，不绕过恢复/所有权检查，不自行创建 session。Phase 2 的 `RealPerformanceAdapter` 已通过这个接缝委托原 scheduler；默认仍禁用真实调用，**不代表真实媒体验收通过**。未来调用方仍必须证明会话 epoch、唯一 sender、唯一 RTC 接收者、接收就绪及持久发送闸门；函数存在不等于这些条件成立。
 
 ## 离线 Fixture 与真实媒体分离
 
@@ -50,3 +50,12 @@
 最终直播整体仍是 **9:16**。数字人只占其中横屏区域，`avatar_aspect` 默认 `null`，用户可选 **16:9** 或 **4:3**。这是布局偏好元数据，不代表资产经过任何图片处理，也不强制屏幕分配比例。
 
 剩余真实验收：显式授权后的模型/TTS/Vidu、真实音画发送、RTC 实播接收、停止及云端结束回读；新形象资源/动作绑定独立核验。以上完成前，M4 保持 **媒体验收待完成**。
+
+
+## Phase 2 原运行时选择性复用
+
+新增 `avatar_transport` 保留六份固定来源文件及 MIT，详见同目录 `MANIFEST.md` 的原 Git blob/当前 SHA-256/窄补丁列表。保持原 MotionComponent 调度器；只做包相对导入、显式 avatar_id 不读旧底图、on_created 持久化回调先于 WSS、默认禁录像、文本空白/显式声音保留、短不透明凭据脱敏和私有文件权限等必要补丁。未导入 Director、Automation、旧工作台或旧形象 idle 绑定。
+
+`RealPerformanceAdapter` 用原 `tts_live.synthesize_segment`、受限 `timed_action_planner` 和原 `MotionComponent.send_aligned_expression`。stage1 请求只能返回表达计划；stage2 只能选择完整合法 schedule ID；台词、声音 instruction、动作数及内容、恢复姿态被冻结。实际 SDK、供应商和形象操作仍未执行。RTC 心跳与人工确认是两道门，心跳失效后必须重新确认及显式恢复；正常取消允许当前段完成，不宣称远端已中止。
+
+实际本地模拟验证包含原 SSE→ffmpeg/ffprobe→PCM/锚点→完整合法规划→原 scheduler/假 socket，以及假时钟下 Type9 间隔、PCM 不被动作等待阻塞；这些不等于真实网络、实际音画或旧 idle 资源效果验证。运行时/HTTP/数据库完整证据以本轮最终 CI 记录为准。

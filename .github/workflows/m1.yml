@@ -40,6 +40,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
+      - name: Install offline audio fixture conversion tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install exact Python requirements
         run: python -m pip install -r requirements-lock.txt
       - name: Install locked frontend dependencies
@@ -66,6 +68,9 @@ jobs:
       - name: M4 offline protocol browser acceptance (no media playback)
         working-directory: frontend
         run: npx --no-install playwright test --config ../tests/e2e/playwright.m4.config.ts
+      - name: M4 Phase2 mocked receiver safety (no RTC or paid provider)
+        working-directory: frontend
+        run: npx --no-install playwright test --config ../tests/e2e/playwright.m4-phase2.config.ts
       - name: Save browser acceptance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -80,5 +85,7 @@ jobs:
             test-results-m3/
             playwright-report-m4/
             test-results-m4/
+            playwright-report-m4-phase2/
+            test-results-m4-phase2/
           if-no-files-found: ignore
           retention-days: 7
