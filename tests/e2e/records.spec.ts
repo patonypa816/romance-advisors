@@ -111,6 +111,7 @@ test('M1 real persistence, safe display, same identity, replay after response lo
   await context.setOffline(false);
   await expect(page.locator('#connection')).toContainText('已连接真实 PostgreSQL');
   await expect(submit).toBeEnabled();
+  await expect(page.locator('#notice')).not.toContainText('Failed to fetch');
   await page.screenshot({ path: testInfo.outputPath('m1-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

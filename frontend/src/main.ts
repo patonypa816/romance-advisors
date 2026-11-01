@@ -8,7 +8,9 @@ const subject = el<HTMLInputElement>('subject-id');
 const nickname = el<HTMLInputElement>('display-name');
 const query = el<HTMLInputElement>('query');
 const register = el<HTMLButtonElement>('register');
-let authenticated = false, healthy = false, busy = false, checking = false;
+let authenticated = false, healthy = false, busy = false, checking = false, authenticating = false;
+let authEpoch = 0;
+let transientNotice: string | null = null;
 let revision = -1, listRequest = 0, detailRequest = 0, queryVersion = 0;
 let selected: string | null = null, pending: Command | null = null;
 class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
@@ -29,6 +31,11 @@ function failure(error: unknown): string {
     healthy = false; status('连接异常 · 当前快照可能已陈旧；登记暂停，请重新检查连接。');
   }
   return error instanceof Error ? error.message : '请求失败，请稍后重试。';
+}
+function showReadError(error: unknown) {
+  const message = failure(error);
+  el('notice').textContent = message;
+  transientNotice = !(error instanceof ApiError) || error.status >= 500 ? message : null;
 }
 async function api<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000) });
@@ -63,7 +70,7 @@ async function loadDetail(id: string) {
     if (acceptRevision(data.revision)) renderDetail(data.player);
   } catch (error) {
     if (request !== detailRequest || selected !== id) return;
-    el('notice').textContent = failure(error);
+    showReadError(error);
     el('detail-content').replaceChildren(node('p', '详情未能更新，请重新选择档案。', 'empty'));
   }
 }
@@ -88,10 +95,13 @@ async function loadPlayers() {
   }
 }
 async function checkConnection() {
-  if (checking || busy) return;
+  if (checking || busy || authenticating) return;
   checking = true;
+  const epoch = authEpoch;
   try {
-    const session = await api<{ authenticated: boolean }>('/api/session'); authenticated = session.authenticated;
+    const session = await api<{ authenticated: boolean }>('/api/session');
+    if (epoch !== authEpoch) return;
+    authenticated = session.authenticated;
     if (!authenticated) {
       ++listRequest; ++detailRequest; selected = null;
       el('players').replaceChildren();
@@ -99,13 +109,17 @@ async function checkConnection() {
       el('list-status').textContent = '登录后读取真实档案。';
     }
     const health = await api<{ status: string; mode: string; world_id: string }>('/api/health');
+    if (epoch !== authEpoch) return;
     healthy = health.status === 'ok' && health.mode === 'local-test';
     status(!authenticated ? '尚未登录 · 请从启动器的一次性链接进入。' : healthy ? `已连接真实 PostgreSQL · ${health.world_id} · local-test` : '数据库不可用或模式不符 · 登记暂停。');
     if (authenticated && healthy) {
       await loadPlayers();
       if (selected && authenticated && healthy) await loadDetail(selected);
+      if (healthy && transientNotice !== null && el('notice').textContent === transientNotice) {
+        el('notice').textContent = ''; transientNotice = null;
+      }
     }
-  } catch (error) { el('notice').textContent = failure(error); }
+  } catch (error) { if (epoch === authEpoch) showReadError(error); }
   finally { checking = false; syncControls(); }
 }
 function editOperation() { pending = null; el('registration-message').textContent = '表单已修改；下一次提交将建立新的操作。'; syncControls(); }
@@ -118,13 +132,15 @@ el<HTMLFormElement>('register-form').addEventListener('submit', async event => {
   }
   pending ??= { command_id: crypto.randomUUID(), provider: 'simulated', identity_scope: 'local-test', subject_id: subject.value, display_name: nickname.value };
   busy = true; syncControls();
+  const epoch = authEpoch;
   try {
     const data = await api<Snapshot>('/api/players', pending);
+    if (epoch !== authEpoch) return;
     el('registration-message').textContent = data.replayed ? '已确认原登记结果；没有重复创建档案。' : '登记成功，已保存到 PostgreSQL。';
     if (acceptRevision(data.revision)) { selected = data.player.player_id; ++detailRequest; renderDetail(data.player); }
     else el('notice').textContent = '原操作已确认，正在读取当前最新档案。';
     await loadPlayers(); await loadDetail(data.player.player_id);
-  } catch (error) { el('registration-message').textContent = `${failure(error)} 原操作编号和载荷已保留；恢复连接后可重试。修改表单会建立新操作。`; }
+  } catch (error) { if (epoch !== authEpoch) return; el('registration-message').textContent = `${failure(error)} 原操作编号和载荷已保留；恢复连接后可重试。修改表单会建立新操作。`; }
   finally { busy = false; syncControls(); }
 });
 query.addEventListener('input', () => { ++queryVersion; ++listRequest; el('players').replaceChildren(); el('list-status').textContent = '搜索条件已更改，等待读取。'; });
@@ -132,17 +148,30 @@ el<HTMLFormElement>('search-form').addEventListener('submit', event => { event.p
 el('reconnect').addEventListener('click', () => void checkConnection());
 window.addEventListener('offline', () => { healthy = false; status('浏览器离线 · 显示内容可能已陈旧，登记暂停。'); });
 window.addEventListener('online', () => void checkConnection());
-async function start() {
-  // Remove credentials from the address bar before any asynchronous work. Never persist tokens.
+async function exchangeFragment() {
+  // Hash-only navigation does not reload this module. Clear a new token synchronously
+  // on both initial load and hashchange, before any asynchronous session exchange.
   const fragment = location.hash.slice(1);
-  if (fragment) history.replaceState(null, '', location.pathname + location.search);
-  if (fragment) {
-    const token = fragment.includes('=') ? new URLSearchParams(fragment).get('token') : fragment;
-    if (token) {
-      try { await api('/api/session', { token }); }
-      catch (error) { el('notice').textContent = `登录失败：${failure(error)} 请重新生成启动链接。`; }
-    }
+  if (!fragment) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const token = fragment.includes('=') ? new URLSearchParams(fragment).get('token') : fragment;
+  if (!token) return;
+  const epoch = ++authEpoch;
+  authenticating = true; authenticated = false; healthy = false;
+  ++listRequest; ++detailRequest;
+  el('players').replaceChildren(); el('detail-content').replaceChildren();
+  status('正在验证一次性登录链接…');
+  el('notice').textContent = ''; transientNotice = null;
+  try { await api('/api/session', { token }); }
+  catch (error) {
+    if (epoch === authEpoch) el('notice').textContent = `登录失败：${failure(error)} 请重新生成启动链接。`;
+  } finally {
+    if (epoch === authEpoch) { authenticating = false; await checkConnection(); }
   }
+}
+window.addEventListener('hashchange', () => { void exchangeFragment(); });
+async function start() {
+  await exchangeFragment();
   await checkConnection();
   // Full snapshots, no overlapping polling requests. A changed query invalidates old responses.
   const poll = async () => { if (!document.hidden && !busy && navigator.onLine) await checkConnection(); window.setTimeout(() => void poll(), 1000); };

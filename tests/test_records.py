@@ -4,16 +4,15 @@ import os
 import unittest
 from uuid import uuid4
 
-from sqlalchemy import event, text
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from hell_inc.records.service import CommandConflict, PlayerNotFound, RecordService
 
 
 def registration(**changes):
-    return dict(command_id=str(uuid4()), provider="simulated", identity_scope="local-test",
-                subject_id="visitor-001", display_name="小林", **changes) if not changes else {
-        **registration(), **changes}
+    return {"command_id": str(uuid4()), "provider": "simulated", "identity_scope": "local-test",
+            "subject_id": "visitor-001", "display_name": "小林", **changes}
 
 
 class RecordsTests(unittest.IsolatedAsyncioTestCase):
