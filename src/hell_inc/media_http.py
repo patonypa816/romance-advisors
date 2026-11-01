@@ -129,17 +129,28 @@ class MediaHTTP:
 
 
 class BailianPlanner:
-    """One explicitly requested structured call; no retry or reply generation."""
-    def __init__(self,http,api_key,workspace,model):
+    """One explicitly requested non-thinking structured call; no retries.
+
+    Output tokens and request time are bounded independently of the response byte
+    safety limit. These are not a monetary cap or a cancellation/refund guarantee.
+    Pinned Studio bailian_ai.py 2e076b66 also sends top-level enable_thinking=False
+    and bounded max_tokens; direct HTTP (not SDK extra_body) is intentional.
+    """
+    def __init__(self,http,api_key,workspace,model,*,max_tokens=2048,timeout_seconds=60):
         self.http,self.api_key=http,validate_secret(api_key)
         self.workspace=validate_workspace(workspace)
         if not isinstance(model,str) or not model or len(model)>128:raise ValueError('model_not_configured')
+        if type(max_tokens) is not int or not 1<=max_tokens<=4096:
+            raise ValueError('planner_token_limit_invalid')
+        if type(timeout_seconds) is not int or not 1<=timeout_seconds<=120:
+            raise ValueError('planner_timeout_invalid')
         self.model=model
+        self.max_tokens,self.timeout_seconds=max_tokens,timeout_seconds
 
     async def complete_json(self,prompt,data):
         endpoint=f'https://{self.workspace}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions'
-        request={'model':self.model,'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(data,ensure_ascii=False,allow_nan=False)}], 'response_format':{'type':'json_object'},'temperature':0.2}
-        async with self.http.post(endpoint,headers={'Authorization':'Bearer '+self.api_key,'Content-Type':'application/json'},json=request) as response:
+        request={'model':self.model,'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(data,ensure_ascii=False,allow_nan=False)}], 'response_format':{'type':'json_object'},'temperature':0.2,'enable_thinking':False,'max_tokens':self.max_tokens}
+        async with self.http.post(endpoint,headers={'Authorization':'Bearer '+self.api_key,'Content-Type':'application/json'},json=request,timeout=aiohttp.ClientTimeout(total=self.timeout_seconds)) as response:
             if response.status!=200:raise RuntimeError('planner_http_error')
             raw=await response.content.read(1048577)
             if len(raw)>1048576:raise ValueError('planner_response_too_large')

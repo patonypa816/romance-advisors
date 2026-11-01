@@ -58,11 +58,14 @@ class PersistentComponent:
         "on_live_at", "close_reason", "live_duration",
     }
 
-    def __init__(self, http: aiohttp.ClientSession, out: Path, image: Path, diagnostics=None, *, on_created=None, recording=True, collect_recording=False):
+    def __init__(self, http: aiohttp.ClientSession, out: Path, image: Path, diagnostics=None, *, on_created=None, recording=True, collect_recording=False, record_only_diagnostic=False):
         self.http, self.out, self.image = http, Path(out), Path(image)
         self.on_created = on_created
         if type(recording) is not bool or type(collect_recording) is not bool:
             raise ValueError('invalid_recording_configuration')
+        if type(record_only_diagnostic) is not bool:raise ValueError("invalid_diagnostic_mode")
+        if record_only_diagnostic and not recording:raise ValueError("diagnostic_recording_required")
+        self.record_only_diagnostic = record_only_diagnostic
         self.recording_enabled = recording
         # Cloud recording request is independent of automatic artifact download.
         self.collect_recording = collect_recording
@@ -156,6 +159,7 @@ class PersistentComponent:
             "audio_sent_complete": self.audio_sent_complete,
             "playback_complete_confirmed": False,
             "cloud": dict(self._cloud),
+            "record_only_diagnostic": self.record_only_diagnostic,
             "recording_requested": self.recording_enabled,
             "recording_saved": self.recording_saved,
             "recording_file": "component-cloud.mp4" if self.recording_saved else None,
@@ -169,6 +173,7 @@ class PersistentComponent:
 
     def joined(self) -> None:
         # The host calls this only after actual remote audio/video tracks and decoded video frames exist. OBS owns local recording.
+        if self.record_only_diagnostic:raise RuntimeError("record_only_has_no_receiver")
         if self.state == "waiting_stage" and not self._stop.is_set():
             self._joined.set()
             self._event("stage_audio_video_decoded_ready")
@@ -599,7 +604,10 @@ class PersistentComponent:
             self._check()
             self.state = "waiting_stage"
             self._event("renderer_ready")
-            await self._until(self._joined, self.JOIN_TIMEOUT, "浏览器音画和录像未及时就绪")
+            if not self.record_only_diagnostic:
+                await self._until(self._joined, self.JOIN_TIMEOUT, "浏览器音画和录像未及时就绪")
+            else:
+                self._event("record_only_renderer_ready", receiver_verified=False)
             self.state = "ready"
             self._event("session_ready")
             # Keep exactly this live running until manual stop or a genuine failure.

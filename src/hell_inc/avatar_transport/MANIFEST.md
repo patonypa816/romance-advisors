@@ -36,9 +36,13 @@ Fake SSE→real ffprobe/ffmpeg→original scheduler tests verify exact bytes and
 ## Patched file SHA-256
 
 - `__init__.py`: `32603d54ed03c98a9e0b33717e8053556975f62b061a154d619a8106fb2dc893`
-- `component_live.py`: `5dccc5ad41aec1d82beddb0238dad2939d2a69ab82a3c9f097d2881c51a0226e`
+- `component_live.py`: `27c8ab6ac6ce4223164f445f296a6cd872613c69073733bf5126a0126deb13df`
 - `diagnostics.py`: `3ca15a53bba546c915d2b4b5ef9473a8026a6629c182d9b143b0a79553905ace`
 - `idle_motion.py`: `c9c8ac9792b0211ab8c212b1fb920574be98e4a76dc7c5a740677a0ddae2e271`
-- `motion_component.py`: `b0e38a45b493cdbe01751f19cf865fe420a92007ed8400b331ab2ed58668a601`
+- `motion_component.py`: `7c1dd4b51647a7efe54823f3e5a55b49f0d1ded2d6a9f606b83637388151d5ba`
 - `timed_action_planner.py`: `888a9176f866def88c1fcc1ade6dc7f15b1bdd5e82457028e26112f9f9259b99`
 - `tts_live.py`: `255860124ef40b41e6d65633cf56f66df5b982b0039e36d7400a627fef2b6c24`
+
+## Isolated diagnostic delivery exception
+
+Constructor-only `record_only_diagnostic=False` preserves production defaults. The explicit tool-only mode skips local browser wait after original renderer Type2 ready, refuses `joined()`, and allows only original aligned semantic sends without `_joined`; other sender/control gates stay unchanged. It neither sends fake receiver frames nor changes scheduling/drain/Q. Recording remains requested; owned ID is persisted before WSS. This is not proof the provider renders with no viewer.

@@ -1,5 +1,6 @@
 """Bounded, whole-round competition. Every mutation holds the existing world lock."""
 from copy import deepcopy
+import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from uuid import uuid4
@@ -8,7 +9,7 @@ from .db import worlds, players, memberships, competitions, competition_commands
 from .contracts import ValidationError
 from .interviews import uuid, fields, stamp, InterviewError
 from .evaluation import content_hash
-from .competition_evaluation import RULE, POLICY, validate_evaluation
+from .competition_evaluation import RULE, POLICY, validate_evaluation, policy_for
 from .records.service import RecordService, PlayerNotFound, CommandConflict
 
 ACTIVE=('READY','SUBMITTING','REVIEWING','WAITING_REVIEW','DISPLAYING','VOTING','READY_TO_SETTLE','PAUSED')
@@ -41,8 +42,11 @@ def snapshot(b):
     return result
 
 class CompetitionService:
-    def __init__(self,engine,world_id):
+    def __init__(self,engine,world_id,*,evaluation_provider=None,evaluation_model=None):
         self.engine,self.world_id=engine,world_id
+        provider=os.getenv('HELL_INC_M3_EVALUATION_PROVIDER','chatgpt_native_manual') if evaluation_provider is None else evaluation_provider
+        model=os.getenv('HELL_INC_M3_EVALUATION_MODEL') if evaluation_model is None else evaluation_model
+        self.evaluation_policy=policy_for(provider,model)
         self.records=RecordService(engine,world_id)
 
     @asynccontextmanager
@@ -108,7 +112,7 @@ class CompetitionService:
             if replay:return replay
             fields(data,'command_id')
             if (await conn.execute(select(competitions.c.id).where(competitions.c.world_id==self.world_id,competitions.c.status.in_(ACTIVE)))).first(): raise CompetitionError('active_competition_exists')
-            b={'id':str(uuid4()),'version':0,'status':'READY','paused_from':None,'pause_reason':None,'rule':deepcopy(RULE),'policy':deepcopy(POLICY),'rule_hash':content_hash(RULE),'policy_hash':content_hash(POLICY),'opened_at':None,'deadline_at':None,'submissions':[],'votes':[],'result':None}
+            b={'id':str(uuid4()),'version':0,'status':'READY','paused_from':None,'pause_reason':None,'rule':deepcopy(RULE),'policy':deepcopy(self.evaluation_policy),'rule_hash':content_hash(RULE),'policy_hash':content_hash(self.evaluation_policy),'opened_at':None,'deadline_at':None,'submissions':[],'votes':[],'result':None}
             await conn.execute(competitions.insert().values(id=b['id'],world_id=self.world_id,status='READY',version=0,body=b,created_at=now))
             revision=await self._save(conn,b,revision)
             return await self._receipt(conn,data['command_id'],payload,b,revision,now)

@@ -170,6 +170,17 @@ async def send_prepared(prepared: PreparedSemantic, owned_send_aligned_expressio
     """
     if not callable(owned_send_aligned_expression) or not still_valid():
         raise ValueError('real_media_not_configured_or_gate_closed')
+    validate_prepared(prepared)
+    content = prepared.content
+    return await owned_send_aligned_expression(
+        prepared.pcm, content['text'], content['actions'], number,
+        recovery=content['recovery'], reading=None, alignment=prepared.alignment,
+        action_kind=DIALOGUE_ACTION_KIND, ge_lead_seconds=DIALOGUE_GE_LEAD_SECONDS,
+        allow_tail_q_after_audio=True, local_action_anchors=True)
+
+
+def validate_prepared(prepared: PreparedSemantic):
+    """Pure revalidation before paid creation as well as before sending."""
     content = prepared.content
     # Detect even a manually constructed/altered prepared record before effects.
     stage1 = freeze_stage1(content['text'], content)
@@ -177,8 +188,3 @@ async def send_prepared(prepared: PreparedSemantic, owned_send_aligned_expressio
                          content if content['actions'] else None)
     if checked != prepared:
         raise ValueError('prepared_evidence_changed')
-    return await owned_send_aligned_expression(
-        prepared.pcm, content['text'], content['actions'], number,
-        recovery=content['recovery'], reading=None, alignment=prepared.alignment,
-        action_kind=DIALOGUE_ACTION_KIND, ge_lead_seconds=DIALOGUE_GE_LEAD_SECONDS,
-        allow_tail_q_after_audio=True, local_action_anchors=True)

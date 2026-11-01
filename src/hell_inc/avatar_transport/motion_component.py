@@ -856,7 +856,7 @@ class MotionComponent(PersistentComponent):
                 try:
                     self._check()
                     await self._pause_idle_for_content()
-                    if self.state != "ready" or not self._ready.is_set() or not self._joined.is_set():
+                    if self.state != "ready" or not self._ready.is_set() or not (self._joined.is_set() or self.record_only_diagnostic):
                         raise RuntimeError("组件不能接收新一轮")
                     self._motion_epoch += 1
                     epoch = self._motion_epoch

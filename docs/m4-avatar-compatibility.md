@@ -70,3 +70,31 @@ TTS 默认使用完整 SSE inline 音频而非未知下载主机，保留一次�
 ### 录制配置忠实复用修正
 
 固定迁移源 `component_live.py` 的原 create 请求明确为 `managed_rtc.enable_recording=true`。M4 Phase 2 曾为避免自动下载而一并传入 false，属于迁移配置偏差。现默认恢复请求 true，允许 `HELL_INC_MEDIA_RECORDING_ENABLED=0` 明确关闭；自动下载另行保持关闭。`recording_requested` 仅保存有效请求配置，不等于平台确认启用、生成录像或本地已保存。真实 component body 的 true/false 测试均使用模拟 HTTP；不据此补称此前真实场次请求已完整捕获，也不对已结束场次补录或转码。
+
+### Isolated record-only diagnostic (not receiver acceptance)
+
+`tools/m4_record_only.py` is not wired to production routes. It prepares exactly
+three exported M3 game sources (two comments and settled result), retaining their
+original split segments with the same shared preparation function,
+then sends them in one recorded scene. The constructor-only
+`record_only_diagnostic=False` default preserves production `_joined` gating.
+Only the aligned semantic sender has a diagnostic exception: real Type2 renderer
+ready, recording requested, durable owned ID, and not stopped. No joined flag,
+heartbeat or operator-ready evidence is manufactured; `joined()` rejects this
+mode. Other legacy senders and idle/manual controls retain the original gate.
+Whether Vidu actually renders without a viewer remains a real-test question.
+
+Original S/GE1.1/Q1.5, Type9 spacing, exact PCM, drain and recovery are unchanged.
+The script checks `send_complete`, `buffer_complete`, `actions_sent_complete` and
+exact PCM byte count; none proves visible motion or audience playback. All original split
+segments must pass preparation before any Vidu create. The diagnostic does not
+become a game scheduler or change game state.
+
+Bailian planning now explicitly sends top-level `enable_thinking:false`,
+`max_tokens:2048` and a 60-second request timeout; bounded constructor overrides
+allow 1–4096 tokens and 1–120 seconds. These are output/request bounds, not a
+currency cap, input-token cap or guarantee of provider cancellation/refund.
+[Official compatible API](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions)
+was checked against pinned `2e076b66` `studio/bailian_ai.py`, blob
+`a6e41ff7426ad517f8e728115604990aeeaf84a0`, lines 134–136 (thinking false,
+selection 512 / other 4096 tokens). Response byte limits remain memory protection.

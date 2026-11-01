@@ -116,3 +116,72 @@ The pinned original `avatar-studio/studio/component_live.py` at `2e076b66` (blob
 `HELL_INC_MEDIA_RECORDING_ENABLED` now defaults to `1`; an explicit `0` requests no recording. Other values, including empty, fail configuration validation before creation. `MediaConfig.recording_enabled` is passed to the original component's create body. The persisted/session-public **`media.recording_requested`** is the exact effective request configuration, retained before dispatch for auditing—not confirmation that the provider enabled recording or produced a video. Mock component request-body tests cover both true and explicit false; they do not prove the body of any earlier real session was captured.
 
 Automatic download is a separate component option (`collect_recording`, default false). Requesting cloud recording does not automatically download or transcode artifacts, and `recording_saved` stays false without independently saved-video evidence. Provider `recording.enabled` readback and an actual `video_url` are separate evidence still requiring verification. Stop-only recovery never creates a live or changes historical recording settings. This code correction creates no new scene and cannot retroactively record a completed session.
+
+### Manual bounded M3 record-only integration diagnostic
+
+Not a production API or browser acceptance path. After the real isolated M3 flow
+(two simulated players → model evaluations → display confirmation → voting →
+settlement), export existing freeze API responses in fixed order: two distinct
+`competition_comment` submissions and one `competition_result` from the same round.
+With separately approved fee scope:
+
+```
+PYTHONPATH=src python tools/m4_record_only.py --sources /private/frozen.json --out /private/new-attempt --max-total-seconds 90 --confirm-paid
+```
+
+No flag means no calls. Before invocation, the operator must confirm there is no
+existing active/unknown paid scene; this isolated tool does not discover/adopt
+other scenes. The new absolute directory refuses reuse. The tool verifies
+export consistency (source refs, each content hash, optional snapshot hash), not
+provenance authentication: the Cloud operator must preserve actual protected HTTP
+flow and recheck source authenticity. No DB access, new game schema, or arbitrary
+text generation is added. Original sources/split segments are stored privately.
+
+At most eight original split segments, each ≤120 codepoints/30 PCM seconds, total
+PCM ≤ the separately approved maximum (never above 90s). Roughly one minute is a
+target, not a minimum. There is no stretching, truncation, padding or repeated TTS.
+Each segment gets one stage1 and one TTS; only nonempty actions require one stage2.
+No retry; the exact segment count bounds each provider stage before creation.
+Short result segments may have no action, but the complete scenario must contain
+at least one valid action group. All segments, exact PCM hashes and timelines are
+revalidated before the only create. Any preparation failure means zero Vidu create.
+
+All segments use the same original aligned sender in order, including each drain
+and Q recovery; failure stops remaining segments. Completion or failure/cancellation
+requests immediate stop of the same owned scene, retaining an in-flight create ID.
+Only positive provider `ended` confirms stop; unknown never auto-recreates. Then
+recording metadata is queried once. Signed URLs remain memory-only; evidence stores
+host/availability/status, not the URL. No unknown host is downloaded automatically;
+later approved same-recording retrieval requires no new scene. Recording requested
+is not video generated. The tool does not fake browser joins, heartbeats or ready
+confirmations. Actual audio, visible motion, continuity, and browser acceptance
+remain separate evidence, not transport success. CLI exit zero means only this
+transport attempt finished with confirmed ended, never full M4 acceptance.
+
+Diagnostic audit files: `frozen-sources.json` retains exported game provenance;
+`preparation.jsonl` retains stage1 plans and provider request/usage evidence;
+`prepared-manifest.json` is fsynced before create and contains final stage2 content,
+alignment, compiled timeline, source mapping, PCM hashes and actual durations.
+`send-N.json`, original component diagnostics (`ws_attempt` / `ws_sent` /
+`ws_failed`) and motion events distinguish planned commands from successful local
+writes and audio-relative times. Renderer/recording/visual evidence stays separate.
+Credentials are scrubbed; no PCM body, handshake token or signed recording URL is
+added to these reports. ffmpeg/ffprobe availability is checked before provider calls.
+A fixed 180-second local deadline surrounds create/readiness/ordered sends and then
+requests stop; it cannot guarantee provider `ended` or billing termination by that
+second. Operator monetary authorization/monitoring is still required.
+
+### M3 evaluation provenance for the isolated integration round
+
+The default remains the exact existing `chatgpt_native_manual` policy. Before
+starting a **new** test competition, the server may explicitly set
+`HELL_INC_M3_EVALUATION_PROVIDER=bailian_manual_api` and
+`HELL_INC_M3_EVALUATION_MODEL=<actual approved model>`.
+Only provider/model metadata changes; policy instructions, rubric, response schema,
+validation and settlement rules stay identical. The existing policy ID is retained
+as the rule revision identifier, not a claim about which provider executed it.
+The new competition freezes this copy and normal policy/input hashes at creation.
+Existing competitions/tasks retain their original policies/hashes, including after
+server restart with different configuration. There is no provider client or
+automatic evaluation call here; the manual export/import flow is unchanged.
+Actual provider execution must still be evidenced by its real call/receipt.

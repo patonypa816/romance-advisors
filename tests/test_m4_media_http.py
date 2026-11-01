@@ -104,3 +104,58 @@ class MediaTransportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(request.await_args.kwargs['allow_redirects'],False)
                 self.assertEqual(request.await_args.kwargs['proxy'],'http://proxy.example:3128')
         finally: await http.close()
+
+
+class BoundedPlannerTests(unittest.IsolatedAsyncioTestCase):
+    def provider(self, *, error=None, status=200):
+        import json
+        class Response:
+            def __init__(self):self.status=status;self.content=self
+            async def __aenter__(self):
+                if error:raise error
+                return self
+            async def __aexit__(self,*args):pass
+            async def read(self,limit):
+                return json.dumps({'id':'safe-request-id','choices':[{'message':{'content':'{"schedule_id":"s01"}'}}],
+                    'usage':{'prompt_tokens':7,'completion_tokens':3,'total_tokens':10,'reasoning_tokens':999}}).encode()
+        class HTTP:
+            def __init__(self):self.calls=[]
+            def post(self,url,**kwargs):self.calls.append((url,kwargs));return Response()
+        return HTTP()
+
+    async def test_non_thinking_token_and_timeout_limits_top_level_preserve_usage_one_call(self):
+        from hell_inc.media_http import BailianPlanner
+        http=self.provider()
+        planner=BailianPlanner(http,'opaque-key','approved-workspace','qwen3.8-flash')
+        response=await planner.complete_json('Only JSON',{'enable_thinking':True,'max_tokens':999999})
+        self.assertEqual(len(http.calls),1)
+        url,kwargs=http.calls[0];request=kwargs['json']
+        self.assertTrue(url.endswith('/compatible-mode/v1/chat/completions'))
+        self.assertIs(request['enable_thinking'],False)
+        self.assertEqual(request['max_tokens'],2048);self.assertNotIn('extra_body',request)
+        self.assertEqual(kwargs['timeout'].total,60)
+        self.assertEqual(response,{'output':{'schedule_id':'s01'},'request_id':'safe-request-id',
+            'usage':{'prompt_tokens':7,'completion_tokens':3,'total_tokens':10}})
+        self.assertEqual(kwargs['headers']['Authorization'],'Bearer opaque-key')
+
+    async def test_explicit_tighter_bounds_and_reject_bool_float_zero_or_unbounded(self):
+        from hell_inc.media_http import BailianPlanner
+        http=self.provider()
+        planner=BailianPlanner(http,'opaque-key','approved-workspace','qwen3.8-flash',max_tokens=512,timeout_seconds=15)
+        await planner.complete_json('JSON',{})
+        self.assertEqual(http.calls[0][1]['json']['max_tokens'],512)
+        self.assertEqual(http.calls[0][1]['timeout'].total,15)
+        for key,values in (('max_tokens',(True,1.0,0,-1,4097,None)),('timeout_seconds',(True,1.0,0,-1,121,None))):
+            for value in values:
+                with self.subTest(key=key,value=value),self.assertRaises(ValueError):
+                    BailianPlanner(http,'opaque-key','approved-workspace','qwen3.8-flash',**{key:value})
+        self.assertEqual(len(http.calls),1)
+
+    async def test_timeout_and_http_failure_never_retry_or_change_limits(self):
+        from hell_inc.media_http import BailianPlanner
+        for error,status in ((TimeoutError(),200),(None,429)):
+            http=self.provider(error=error,status=status)
+            with self.subTest(status=status),self.assertRaises((TimeoutError,RuntimeError)):
+                await BailianPlanner(http,'opaque-key','approved-workspace','qwen3.8-flash').complete_json('JSON',{})
+            self.assertEqual(len(http.calls),1)
+            self.assertIs(http.calls[0][1]['json']['enable_thinking'],False)

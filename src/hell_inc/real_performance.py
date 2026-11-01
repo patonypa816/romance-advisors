@@ -79,77 +79,14 @@ class RealPerformanceAdapter:
         self.persona=persona if persona is not None else runtime.config.persona
 
     async def prepare(self,segment,cancellation,*,context):
-        ctx=_context(context)
-        self.runtime.validate(ctx)
-        if cancellation():raise ValueError('preparation_cancelled')
-        text,intent=segment['text'],segment['intent']
-        if not isinstance(text,str) or not text.strip() or len(text)>120:raise ValueError('invalid_frozen_text')
-        if intent not in ('question','listen','comment','result','neutral'):raise ValueError('invalid_intent')
         epoch=self.runtime.epoch
-        out=self.artifact_root/ctx['session_id']/ctx['performance_id']/str(ctx['segment_index'])
-        # IDs are strict canonical UUID/index, no caller path fragments.
-        for folder in (self.artifact_root,out.parent.parent,out.parent,out):
-            folder.mkdir(parents=True,exist_ok=True,mode=0o700);folder.chmod(0o700)
-        with private_open(out/'attempt-reserved','x') as marker:marker.write(ctx['payload_hash'])
-        phase='stage1';evidence={'attempted':True,'phase':phase,'request_id':None}
-
-        async def record(**changes):
-            evidence.update(changes)
-            await self.preparation_evidence(ctx,dict(evidence))
-
-        async def charge(awaitable):
-            # A stop request never retries or discards a paid request's response.
-            # Cancellation of the owner waits for the bounded provider operation,
-            # so evidence can be persisted before propagating cancellation.
-            task=asyncio.create_task(awaitable)
-            try:return await asyncio.shield(task),False
-            except asyncio.CancelledError:return await task,True
-
-        try:
-            await record(phase='stage1')
-            reply,cancelled=await charge(self.model.complete_json(STAGE1_PROMPT,{'text':text,'intent':intent,'persona':self.persona}))
-            await record(phase='stage1_returned',request_id=_safe_id(reply.get('request_id')),stage1_usage=_usage(reply))
-            if cancelled or cancellation():raise asyncio.CancelledError() if cancelled else ValueError('preparation_cancelled')
-            plan=reply.get('output')
-            if not isinstance(plan,dict) or set(plan)!={'instruction','actions','recovery'}:raise ValueError('invalid_stage1_output')
-            stage1=freeze_stage1(text,{'text':text,**plan})
-            await record(phase='stage1_complete',frozen_plan=stage1.content)
-            self.runtime.validate(ctx)
-            if self.runtime.epoch!=epoch or cancellation():raise ValueError('preparation_cancelled')
-            await record(phase='tts',request_id=None)
-            audio,cancelled=await charge(synthesize_segment(self.http,self.api_key,self.workspace,out/'tts',text,
-                    stage1.content['instruction'],word_timestamps=True,voice=self.voice))
-            await record(phase='tts_returned',request_id=_safe_id(audio.get('request_id')),tts_status=audio.get('status'),
-                         pcm_sha256=audio.get('pcm_sha256'),usage={k:audio.get(k) for k in ('input_tokens','output_tokens','total_tokens','usage_verified')})
-            if cancelled or cancellation():raise asyncio.CancelledError() if cancelled else ValueError('preparation_cancelled')
-            if audio.get('status') not in ('ok','usage_unverified') or audio.get('text')!=text:raise ValueError('tts_unverified')
-            pcm_path=Path(audio['pcm_path']).resolve()
-            if pcm_path.parent!=(out/'tts').resolve():raise ValueError('invalid_pcm_artifact')
-            pcm=pcm_path.read_bytes()
-            if hashlib.sha256(pcm).hexdigest()!=audio.get('pcm_sha256'):raise ValueError('pcm_hash_mismatch')
-            seconds=len(pcm)/48000
-            if not pcm or len(pcm)%2 or seconds>30 or abs(seconds-audio['audio_seconds'])>.05:raise ValueError('invalid_pcm_duration')
-            final=None
-            if stage1.content['actions']:
-                LocalActionAlignment(audio['alignment'],text,seconds,pcm_sha256=audio['pcm_sha256'])
-                frozen,data,trusted=prepare_timed_action_request(stage1.content,audio['alignment'],seconds,{'character':{'identity':self.persona}})
-                self.runtime.validate(ctx)
-                if self.runtime.epoch!=epoch or cancellation():raise ValueError('preparation_cancelled')
-                await record(phase='stage2',request_id=None)
-                reply,cancelled=await charge(self.model.complete_json(TIMED_ACTION_PROMPT,{'input':data,'character':trusted}))
-                await record(phase='stage2_returned',request_id=_safe_id(reply.get('request_id')),stage2_usage=_usage(reply))
-                if cancelled or cancellation():raise asyncio.CancelledError() if cancelled else ValueError('preparation_cancelled')
-                selected=compile_timed_action_result(frozen,audio['alignment'],seconds,reply.get('output'),schedules=data['schedules'])
-                final={**stage1.content,'actions':selected['actions']}
-            semantic=bind_audio(stage1,pcm,audio.get('alignment'),final)
-            self.runtime.validate(ctx)
-            if self.runtime.epoch!=epoch or cancellation():raise ValueError('preparation_cancelled')
-            await record(phase='ready',pcm_sha256=semantic.pcm_sha256)
-            return RealPrepared(semantic,ctx['session_id'],ctx['performance_id'],ctx['segment_index'],ctx['payload_hash'],epoch,_safe_id(audio.get('request_id')))
-        except BaseException as exc:
-            # Generic codes only: provider errors can contain signed URLs/secrets.
-            await record(phase='interrupted' if isinstance(exc,asyncio.CancelledError) else 'failed',error_code='preparation_interrupted' if isinstance(exc,asyncio.CancelledError) else 'preparation_failed')
-            raise
+        semantic,request_id=await prepare_frozen(segment,cancellation,context=context,
+            authorize=self.runtime.validate,current_epoch=lambda:self.runtime.epoch,
+            model=self.model,http=self.http,api_key=self.api_key,workspace=self.workspace,
+            artifact_root=self.artifact_root,preparation_evidence=self.preparation_evidence,
+            voice=self.voice,persona=self.persona)
+        ctx=_context(context)
+        return RealPrepared(semantic,ctx["session_id"],ctx["performance_id"],ctx["segment_index"],ctx["payload_hash"],epoch,request_id)
 
     async def send(self,prepared,session,still_valid):
         if not isinstance(prepared,RealPrepared) or session.get('mode')!='real' or session.get('session_id')!=prepared.session_id:raise ValueError('invalid_real_prepared')
@@ -162,3 +99,89 @@ class RealPerformanceAdapter:
         if not isinstance(receipt,dict) or receipt.get('send_complete') is not True:raise ValueError('real_send_unconfirmed')
         return {'execution_kind':'real','transport_sent':True,'pcm_sha256':prepared.semantic.pcm_sha256,
                 'provider_request_id':prepared.provider_request_id,'media_verified':False,'audience_heard':False}
+
+
+async def prepare_frozen(segment,cancellation,*,context,authorize,current_epoch,model,http,
+                         api_key,workspace,artifact_root,preparation_evidence,voice,persona,require_actions=False,duration_bounds=None):
+    """Shared paid preparation. authorize is an explicit owner policy, not RTC evidence.
+
+    Production passes runtime.validate (receiver/DB ownership); the isolated
+    diagnostic passes its exclusive-attempt paid authorization. No scene is created.
+    """
+    if duration_bounds is not None:
+        low,high=duration_bounds
+        if not 0 < low <= high <= 30:raise ValueError("invalid_duration_bounds")
+    ctx=_context(context)
+    authorize(ctx)
+    if cancellation():raise ValueError('preparation_cancelled')
+    text,intent=segment['text'],segment['intent']
+    if not isinstance(text,str) or not text.strip() or len(text)>120:raise ValueError('invalid_frozen_text')
+    if intent not in ('question','listen','comment','result','neutral'):raise ValueError('invalid_intent')
+    epoch=current_epoch()
+    out=Path(artifact_root)/ctx['session_id']/ctx['performance_id']/str(ctx['segment_index'])
+    # IDs are strict canonical UUID/index, no caller path fragments.
+    for folder in (Path(artifact_root),out.parent.parent,out.parent,out):
+        folder.mkdir(parents=True,exist_ok=True,mode=0o700);folder.chmod(0o700)
+    with private_open(out/'attempt-reserved','x') as marker:marker.write(ctx['payload_hash'])
+    phase='stage1';evidence={'attempted':True,'phase':phase,'request_id':None}
+
+    async def record(**changes):
+        evidence.update(changes)
+        await preparation_evidence(ctx,dict(evidence))
+
+    async def charge(awaitable):
+        # A stop request never retries or discards a paid request's response.
+        # Cancellation of the owner waits for the bounded provider operation,
+        # so evidence can be persisted before propagating cancellation.
+        task=asyncio.create_task(awaitable)
+        try:return await asyncio.shield(task),False
+        except asyncio.CancelledError:return await task,True
+
+    try:
+        await record(phase='stage1')
+        prompt=STAGE1_PROMPT + ('\n本次是有动作的完整场景诊断：请按上述原合同生成1至2组合规可见动作，不得改写台词或新增动作枚举。' if require_actions else '')
+        reply,cancelled=await charge(model.complete_json(prompt,{'text':text,'intent':intent,'persona':persona}))
+        await record(phase='stage1_returned',request_id=_safe_id(reply.get('request_id')),stage1_usage=_usage(reply))
+        if cancelled or cancellation():raise asyncio.CancelledError() if cancelled else ValueError('preparation_cancelled')
+        plan=reply.get('output')
+        if not isinstance(plan,dict) or set(plan)!={'instruction','actions','recovery'}:raise ValueError('invalid_stage1_output')
+        stage1=freeze_stage1(text,{'text':text,**plan})
+        if require_actions and not stage1.content['actions']:raise ValueError('diagnostic_actions_required')
+        await record(phase='stage1_complete',frozen_plan=stage1.content)
+        authorize(ctx)
+        if current_epoch()!=epoch or cancellation():raise ValueError('preparation_cancelled')
+        await record(phase='tts',request_id=None)
+        audio,cancelled=await charge(synthesize_segment(http,api_key,workspace,out/'tts',text,
+                stage1.content['instruction'],word_timestamps=True,voice=voice))
+        await record(phase='tts_returned',request_id=_safe_id(audio.get('request_id')),tts_status=audio.get('status'),
+                     pcm_sha256=audio.get('pcm_sha256'),usage={k:audio.get(k) for k in ('input_tokens','output_tokens','total_tokens','usage_verified')})
+        if cancelled or cancellation():raise asyncio.CancelledError() if cancelled else ValueError('preparation_cancelled')
+        if audio.get('status') not in ('ok','usage_unverified') or audio.get('text')!=text:raise ValueError('tts_unverified')
+        pcm_path=Path(audio['pcm_path']).resolve()
+        if pcm_path.parent!=(out/'tts').resolve():raise ValueError('invalid_pcm_artifact')
+        pcm=pcm_path.read_bytes()
+        if hashlib.sha256(pcm).hexdigest()!=audio.get('pcm_sha256'):raise ValueError('pcm_hash_mismatch')
+        seconds=len(pcm)/48000
+        if not pcm or len(pcm)%2 or seconds>30 or abs(seconds-audio['audio_seconds'])>.05:raise ValueError('invalid_pcm_duration')
+        if duration_bounds is not None and not duration_bounds[0]<=seconds<=duration_bounds[1]:raise ValueError("diagnostic_duration_out_of_range")
+        final=None
+        if stage1.content['actions']:
+            LocalActionAlignment(audio['alignment'],text,seconds,pcm_sha256=audio['pcm_sha256'])
+            frozen,data,trusted=prepare_timed_action_request(stage1.content,audio['alignment'],seconds,{'character':{'identity':persona}})
+            authorize(ctx)
+            if current_epoch()!=epoch or cancellation():raise ValueError('preparation_cancelled')
+            await record(phase='stage2',request_id=None)
+            reply,cancelled=await charge(model.complete_json(TIMED_ACTION_PROMPT,{'input':data,'character':trusted}))
+            await record(phase='stage2_returned',request_id=_safe_id(reply.get('request_id')),stage2_usage=_usage(reply))
+            if cancelled or cancellation():raise asyncio.CancelledError() if cancelled else ValueError('preparation_cancelled')
+            selected=compile_timed_action_result(frozen,audio['alignment'],seconds,reply.get('output'),schedules=data['schedules'])
+            final={**stage1.content,'actions':selected['actions']}
+        semantic=bind_audio(stage1,pcm,audio.get('alignment'),final)
+        authorize(ctx)
+        if current_epoch()!=epoch or cancellation():raise ValueError('preparation_cancelled')
+        await record(phase='ready',pcm_sha256=semantic.pcm_sha256)
+        return semantic,_safe_id(audio.get('request_id'))
+    except BaseException as exc:
+        # Generic codes only: provider errors can contain signed URLs/secrets.
+        await record(phase='interrupted' if isinstance(exc,asyncio.CancelledError) else 'failed',error_code='preparation_interrupted' if isinstance(exc,asyncio.CancelledError) else 'preparation_failed')
+        raise
