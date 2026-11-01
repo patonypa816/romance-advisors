@@ -1,5 +1,7 @@
 import './style.css';
 import { setupInterview } from './interview';
+import { setupCompetition } from './competition';
+let competitions: ReturnType<typeof setupCompetition> | undefined;
 let interviews: ReturnType<typeof setupInterview> | undefined;
 
 type Player = { player_id: string; provider: string; identity_scope: string; subject_id: string; display_name: string; role: string; department: string | null; position: string | null; performance: number; joined_at: string; updated_at: string; recent_events: unknown[] };
@@ -18,7 +20,8 @@ let selected: string | null = null, pending: Command | null = null;
 class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 function syncControls() {
   interviews?.sync();
-  register.disabled = !authenticated || !healthy || !navigator.onLine || busy;
+  competitions?.sync();
+  register.disabled = !authenticated || !healthy || !navigator.onLine || busy || !!competitions?.locked() || !!interviews?.locked();
   subject.disabled = nickname.disabled = busy;
   el<HTMLButtonElement>('search-button').disabled = !authenticated || !healthy;
   register.textContent = busy ? '正在提交…' : pending ? '重试 / 确认原登记' : '登记游客';
@@ -78,7 +81,7 @@ function renderDetail(player: Player) {
   else for (const event of player.recent_events) {
     if (event && typeof event === 'object') {
       const record = event as Record<string, unknown>;
-      const title = record.type === 'interview_hired' ? '面试录用' : record.type === 'interview_rejected' ? '面试未录用' : '已确认职业事件';
+      const title = record.type === 'interview_hired' ? '面试录用' : record.type === 'interview_rejected' ? '面试未录用' : record.type === 'competition_participated' ? '创意赛参与记录' : '已确认职业事件';
       container.append(node('h3', title), node('p', typeof record.summary === 'string' ? record.summary : JSON.stringify(record), 'answer-copy'));
       if (typeof record.created_at === 'string') container.append(node('small', record.created_at));
     }
@@ -137,6 +140,7 @@ async function checkConnection() {
     if (authenticated && healthy) {
       await loadPlayers();
       await interviews?.refresh();
+      await competitions?.refresh();
       if (selected && authenticated && healthy) await loadDetail(selected);
       if (healthy && transientNotice !== null && el('notice').textContent === transientNotice) {
         el('notice').textContent = ''; transientNotice = null;
@@ -149,7 +153,7 @@ function editOperation() { pending = null; el('registration-message').textConten
 subject.addEventListener('input', editOperation); nickname.addEventListener('input', editOperation);
 el<HTMLFormElement>('register-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!authenticated || !healthy || busy || !navigator.onLine) return;
+  if (!authenticated || !healthy || busy || competitions?.locked() || interviews?.locked() || !navigator.onLine) return;
   if (!subject.value || subject.value !== subject.value.trim() || [...subject.value].length > 128 || !nickname.value || [...nickname.value].length > 80) {
     el('registration-message').textContent = '请检查输入：身份 ID 不可有首尾空白，昵称须为 1–80 字符。'; return;
   }
@@ -200,5 +204,6 @@ async function start() {
   const poll = async () => { if (!document.hidden && !busy && navigator.onLine) await checkConnection(); window.setTimeout(() => void poll(), 1000); };
   window.setTimeout(() => void poll(), 1000);
 }
-interviews = setupInterview({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating, failure, refreshPlayer: loadDetail });
+interviews = setupInterview({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !competitions?.locked(), failure, refreshPlayer: loadDetail });
+competitions = setupCompetition({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !interviews?.locked(), failure, refreshPlayer: loadDetail });
 void start();
