@@ -3,7 +3,7 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="referrer" content="no-referrer"><title>HELL INC. · 档案、面试与创意赛</title></head>
 <body>
   <div class="shell">
-    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M3</span></header>
+    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M4</span></header>
     <main>
       <div class="intro"><div><p class="eyebrow">PERSONNEL RECORDS / 001</p><h1>每个灵魂，都有档案。</h1><p class="subtitle">先登记，再面试。一次回答，一份有据可查的职业记录。</p></div><span class="stamp">游客登记处<br><small>GUEST REGISTRY</small></span></div>
       <aside class="boundary"><strong>隔离测试世界 · 模拟身份</strong><span>simulated / local-test · 数据写入真实 PostgreSQL，不连接抖音或数字人；不自动调用模型 API。</span></aside>
@@ -52,6 +52,22 @@
         <div id="competition-result"></div>
         <details class="cancel-area"><summary>取消当前比赛</summary><label for="competition-cancel-reason">比赛取消原因</label><input id="competition-cancel-reason" maxlength="200"><button id="competition-cancel" type="button" disabled>确认取消比赛</button></details>
         <p id="competition-notice" role="status" aria-live="polite" class="feedback"></p><button id="competition-replay" type="button" hidden>确认原比赛操作</button>
+      </section>
+
+      <section class="panel performance" aria-labelledby="performance-heading">
+        <p class="eyebrow">06 / LOCAL PERFORMANCE PROTOCOL</p><h2 id="performance-heading" data-testid="performance-heading">游戏演出工作台</h2>
+        <p class="manual-marker">离线协议演练（不播放音画）</p>
+        <p>真实媒体适配未启用 · 不调用模型、TTS 或 Vidu，不创建收费云场。离线完成不是观众已听到。</p>
+        <p class="muted">拟用数字人：地狱集团首席执行官（参考素材 1672 × 941）；未加载图片。最终直播画面为 9:16，数字人仅占横向子区域。本页是操作台，不是直播画布或 P2 叠层。</p>
+        <label for="performance-aspect">数字人子区域比例（仅布局示意；不裁剪素材）</label><select id="performance-aspect" data-testid="performance-aspect"><option value="">未选择</option><option value="16:9">16:9 横向</option><option value="4:3">4:3 横向</option></select>
+        <div id="performance-avatar-placeholder" data-testid="performance-avatar-placeholder" class="avatar-placeholder" hidden></div>
+        <p id="performance-session-state" data-testid="performance-session-state" role="status">尚无 LOCAL 演练会话</p><p id="performance-freshness" data-testid="performance-freshness" class="muted"></p>
+        <div class="interview-actions"><button id="performance-session-create" data-testid="performance-session-create" type="button" disabled>创建 LOCAL 演练会话</button><button id="performance-session-pause" data-testid="performance-session-pause" type="button" disabled>暂停发送门</button><button id="performance-session-resume" data-testid="performance-session-resume" type="button" disabled>人工恢复发送门</button><button id="performance-session-close" data-testid="performance-session-close" type="button" disabled>关闭 LOCAL 会话</button></div>
+        <div class="evaluation-grid"><div><h3>1. 从服务器冻结内容</h3><label for="performance-source-kind">内容来源</label><select id="performance-source-kind" data-testid="performance-source-kind"><option value="fixed_script">固定演出脚本</option><option value="interview_result">已结算面试结果</option><option value="competition_comment">已采纳比赛短评</option><option value="competition_result">已结算比赛结果</option></select><label for="performance-source-id">面试 / 比赛 ID（固定脚本无需填写）</label><input id="performance-source-id" data-testid="performance-source-id" autocomplete="off"><label for="performance-submission-id">作品 ID（仅比赛短评）</label><input id="performance-submission-id" data-testid="performance-submission-id" autocomplete="off"><button id="performance-freeze" data-testid="performance-freeze" type="button" disabled>冻结服务器原文</button><div id="performance-frozen" data-testid="performance-frozen" class="answer-copy"></div></div>
+        <div><h3>2. 提交不可变演出</h3><label for="performance-expiry">有效期（秒）</label><input id="performance-expiry" data-testid="performance-expiry" type="number" min="30" max="900" value="300"><p class="muted">提交生成稳定演出 ID；原文、意图、来源、会话与失效时间共同计算 payload_hash，服务器再次验证。未知回执仅原样确认，不创建替代演出。</p><button id="performance-submit" data-testid="performance-submit" type="button" disabled>提交离线演出</button><button id="performance-replay" data-testid="performance-replay" type="button" hidden>原样确认待定操作</button></div></div>
+        <h3>持久化演出记录</h3><button id="performance-refresh" data-testid="performance-refresh" type="button" disabled>查询演出状态</button><div id="performance-list" data-testid="performance-list" class="interview-list" aria-label="最近演出"></div><div id="performance-detail" data-testid="performance-detail" class="answer-copy"></div>
+        <div class="interview-actions"><button id="performance-execute" data-testid="performance-execute" type="button" disabled>执行离线协议演练（不播放音画）</button><button id="performance-cancel" data-testid="performance-cancel" type="button" disabled>取消未开始部分</button></div>
+        <p class="note">取消区分未开始、当前段发送中与未知；不能保证远端停止。sending / unknown 未解决时不关闭会话。演练不会自动确认作品展示、开放投票或改变游戏资产。</p><p id="performance-notice" data-testid="performance-notice" role="status" aria-live="polite" class="feedback"></p>
       </section>
     </main><footer><span>HELL INC. / 人事档案室</span><span>固定题面试 · 服务器事务结算 · 不提供任意资产修改</span></footer>
   </div><script type="module" src="/src/main.ts"></script>

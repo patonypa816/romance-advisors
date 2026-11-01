@@ -1,9 +1,10 @@
+import { performancePauseMessage, type PerformanceSource } from './performance';
 type Obj = Record<string, unknown>;
 type Person = {player_id: string; display_name: string; role?: string};
 type Work = {id: string; player: Person; revision: number; text: string; task: {id: string; status: string; attempt_no: number; error_code: string | null} | null; comment: string | null; display_confirmed_at: string | null; evaluation: unknown};
 type Competition = {id: string; version: number; status: string; paused_from: string | null; pause_reason: string | null; rule: Obj; deadline_at: string | null; submissions: Work[]; allowed_actions: string[]; result: {settlement_id: string; awards: {player_id: string; submission_id: string; award_type: string; performance_delta: number}[]; rankings: {submission_id: string; total: number; votes: number}[]} | null};
 type Envelope = {task_id: string; attempt_no: number; input_hash: string; policy_hash: string; frozen_input: Obj};
-type Dependencies = {api: <T>(url: string, body?: unknown) => Promise<T>; acceptRevision: (revision: number) => boolean; epoch: () => number; ready: () => boolean; authenticated: () => boolean; failure: (error: unknown) => string; refreshPlayer: (id: string) => Promise<void>};
+type Dependencies = {freezePerformance?: (source: PerformanceSource) => Promise<void> | undefined; api: <T>(url: string, body?: unknown) => Promise<T>; acceptRevision: (revision: number) => boolean; epoch: () => number; ready: () => boolean; authenticated: () => boolean; failure: (error: unknown) => string; refreshPlayer: (id: string) => Promise<void>};
 const get = <T extends HTMLElement>(id: string) => document.getElementById(`competition-${id}`) as T;
 const obj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const integer = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
@@ -34,6 +35,7 @@ export function setupCompetition(d: Dependencies) {
       }
     }
     const e = enabled();
+    for (const b of document.querySelectorAll<HTMLButtonElement>('[data-performance-source]')) b.disabled = !e;
     get<HTMLButtonElement>('create').disabled = !e || !!current && !['COMPLETED','CANCELLED','EXPIRED'].includes(current.status);
     for (const a of ['open','close-submissions','open-voting','close-voting','settle','pause','resume','cancel']) get<HTMLButtonElement>(a).disabled = !e || !allowed(a);
     get<HTMLButtonElement>('open-voting').disabled ||= !displayable() || !current?.submissions.length || !current.submissions.every(w => !!w.display_confirmed_at);
@@ -54,6 +56,7 @@ export function setupCompetition(d: Dependencies) {
     }
     for (const b of get('list').querySelectorAll<HTMLButtonElement>('button')) b.disabled = !e;
   }
+  function freezeButton(kind: string, id: string, submission_id?: string) {const b = text('button',kind === 'competition_comment' ? '冻结短评到离线演出' : '冻结比赛结果到离线演出') as HTMLButtonElement; b.type = 'button'; b.dataset.performanceSource = kind; b.dataset.testid = `competition-freeze-${kind === 'competition_comment' ? 'comment' : 'result'}`; if (submission_id) b.dataset.submissionId = submission_id; b.addEventListener('click', () => {if (enabled()) void d.freezePerformance?.({kind,id,...(submission_id ? {submission_id} : {})});}); return b;}
   function workButton(w: Work, action: string, label: string) {
     const b = text('button', label) as HTMLButtonElement; b.type = 'button'; b.dataset.testid = `competition-${action === 'export' ? 'export' : action}`; b.dataset.submissionId = w.id; b.dataset.workAction = action;
     b.addEventListener('click', () => action === 'export' ? void exportWork(w.id) : void lifecycle(action, w.id)); return b;
@@ -73,6 +76,7 @@ export function setupCompetition(d: Dependencies) {
       if (displayable()) {
         const display = text('article','','competition-work'); display.dataset.submissionId = w.id; display.dataset.testid = 'competition-display-work';
         display.append(text('h3',w.player.display_name),text('p',w.text,'answer-copy'),text('h4','ChatGPT 描述性短评'),text('p',w.comment!,'answer-copy'),workButton(w,'confirm-display',w.display_confirmed_at ? '此稿与短评已确认展示' : '已核对短评，确认此完整作品与短评已在本页展示')); get('display').append(display);
+        if (d.freezePerformance) display.append(freezeButton('competition_comment', s.id, w.id));
       }
     }
     if (!displayable()) get('display').append(text('p','展示尚未开放。必须全部作品评价有效采纳，才可逐稿展示与确认；不以零分代替失败。','empty'));
@@ -81,6 +85,7 @@ export function setupCompetition(d: Dependencies) {
     if (displayable()) for (const w of s.submissions) candidate.add(new Option(`${s.submissions.indexOf(w) + 1}. ${w.player.display_name} · ${w.id.slice(0,8)}`,w.id));
     candidate.value = saved || voterState?.submission_id || '';
     if (s.status === 'COMPLETED' && s.result) {
+      if (d.freezePerformance) get('result').append(freezeButton('competition_result', s.id));
       get('result').append(text('h3','服务器整轮结算结果'),text('p',`结算 ID：${s.result.settlement_id}`,'identity'));
       for (const a of s.result.awards) get('result').append(text('p',`${s.submissions.find(w => w.id === a.submission_id)?.player.display_name ?? a.player_id} · ${a.award_type} · 绩效变化 ${a.performance_delta >= 0 ? '+' : ''}${a.performance_delta}`));
       for (const r of s.result.rankings) get('result').append(text('p',`${s.submissions.find(w => w.id === r.submission_id)?.player.display_name ?? r.submission_id} · AI 总分 ${r.total} · 最终票数 ${r.votes}`));
@@ -138,6 +143,7 @@ export function setupCompetition(d: Dependencies) {
         if (data.accepted && frozen.url.endsWith('/submissions') && integer(data.submission_revision)) authorRevision = data.submission_revision;
         d.acceptRevision(data.revision); voterState = null; ++voteRequest;
       } else { if (!valid(data.competition)) throw new Error('操作回执格式无效，结果未知。'); chosen = data.competition.id; adopt(data); notice(data.replayed ? '原操作结果已确认，未重复执行。' : '操作已由服务器确认。'); }
+      if (frozen.url.endsWith('/pause')) notice(performancePauseMessage(data.performance_pause));
       pending = null;
       if (current?.status === 'COMPLETED') for (const w of current.submissions) await d.refreshPlayer(w.player.player_id);
     } catch (e) {

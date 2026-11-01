@@ -34,3 +34,17 @@ Node 24；`npm ci && npm run build` 生成 `dist/`，由 Python 应用同源提�
 所有按钮遵从服务器 `allowed_actions`，倒计时只供参考。网络结果未知时，页面锁定原操作 ID 与完整载荷，只能确认原操作；不能改载荷重试或继续其他写入。服务器快照过期、离线、登录失效时停止操作。暂停后人工恢复，中断评价逐稿重试；取消必须填写原因。全部内容以文本 DOM 渲染，不解释作品内 HTML 或指令。
 
 浏览器定位：静态元素均有同名 `id` / `data-testid`（`competition-author`、`competition-text`、`competition-submit`、`competition-voter`、`competition-candidate`、`competition-vote` 等）。逐稿按钮使用 `data-testid="competition-export|competition-retry|competition-confirm-display"` 和 `data-submission-id`；展示条目使用 `data-testid="competition-display-work"`。
+
+## M4 LOCAL 离线协议演练（不播放音画）
+
+同页「游戏演出工作台」是操作入口，不是直播画布，也没有移植旧 Studio。
+
+1. 比例默认未选择；可手动选 16:9 或 4:3，只显示数字人横向子区域的布局占位，不加载、裁剪或改写素材。最终直播仍为 9:16。拟用素材为「地狱集团首席执行官」，真实媒体尚未接入。
+2. 显式「创建 LOCAL 演练会话」。不会创建云场、调用模型、TTS、Vidu 或播放音画。
+3. 选择固定脚本并「冻结服务器原文」；也可填已结算面试 / 比赛 ID、已采纳短评的作品 ID。M2 已结算结果和 M3 合法展示短评 / 结算结果有直接冻结按钮。原文与分段不可编辑；服务端以持久游戏记录为权威再次核对。
+4. 设置 30–900 秒有效期，「提交离线演出」生成稳定 ID 与 SHA-256。哈希包含会话、来源、逐段原文 / 意图和毫秒 UTC 失效时间，使用服务端规定的规范 JSON。服务端验证之后仍需显式「执行离线协议演练」。完成显示「离线演练完成」，不是观众已听到；证据中的 `media_verified` 和 `audience_heard` 均为 false。
+5. 记录列表可选择详情、查询状态、取消未开始部分。取消 / 暂停分别展示未开始取消、当前段进行中、结果未知；不声称远端停止。未知记录不能重播，sending / unknown 未解决时不允许关闭会话。恢复发送门只手动触发，不复活已取消 / 过期 / 未知演出。
+
+提交回执未知时，内存保留同一 ID 与完整载荷，仅原样确认；可查回同一记录消除未知回执。执行回执丢失时只查状态，不自动再次发送。请勿在回执未知时刷新页面：待确认请求仅在当前页面内存保存；已落库记录可重新查询。跨模块待定操作会锁住新写入；离线、登录变更、过期快照均关闭操作门。M4 不修改游戏资产，不自动确认 M3 展示或开启投票。
+
+测试定位：所有 M4 静态元素均有相同 `id` / `data-testid`，前缀 `performance-`，包括 `session-create|session-pause|session-resume|session-close`、`aspect`、`source-kind|source-id|submission-id`、`freeze|frozen`、`expiry|submit|replay|execute|cancel|refresh|list|detail|notice`。动态列表为 `performance-select`；游戏按钮为 `interview-freeze-performance`、`competition-freeze-comment`（附 `data-submission-id`）、`competition-freeze-result`。

@@ -34,11 +34,11 @@ class M2MigrationTests(unittest.IsolatedAsyncioTestCase):
                     'updated_at': now.isoformat(), 'role': 'guest', 'department': None, 'position': None, 'performance': 0, 'recent_events': []}}
                 await conn.execute(db.commands.insert().values(world_id=world, command_id=command, payload={k: v for k, v in payload.items() if k != 'command_id'}, response=original, created_at=now))
             # Latest migration still exercises the actual v1 -> M2 additive table upgrade,
-            # then M3; all original guest/receipt/event assertions remain below.
+            # then M3/M4; all original guest/receipt/event assertions remain below.
             await db.migrate(engine)
             await db.migrate(engine)
             async with engine.connect() as conn:
-                self.assertEqual((await conn.execute(select(db.versions.c.version))).scalars().all(), [3])
+                self.assertEqual((await conn.execute(select(db.versions.c.version))).scalars().all(), [4])
                 self.assertEqual((await conn.execute(select(db.worlds.c.revision))).scalar_one(), 1)
                 self.assertEqual((await conn.execute(select(db.commands.c.response))).scalar_one(), original)
                 for table in (db.interviews, db.model_tasks, db.memberships, db.settlements, db.reward_ledger, db.game_events):

@@ -16,7 +16,7 @@ class M3MigrationTests(unittest.IsolatedAsyncioTestCase):
         engine = create_async_engine(url, connect_args={'server_settings': {'search_path': schema}})
         world = 'existing-m2'; player, interview, task, settlement, command, message = [str(uuid4()) for _ in range(6)]
         now = datetime.now(timezone.utc)
-        legacy_tables = [t for t in db.metadata.sorted_tables if not t.name.startswith('competition')]
+        legacy_tables = [t for t in db.metadata.sorted_tables if not t.name.startswith(('competition', 'performance'))]
         try:
             async with admin.begin() as conn: await conn.execute(text(f'CREATE SCHEMA {schema}'))
             async with engine.begin() as conn:
@@ -35,7 +35,7 @@ class M3MigrationTests(unittest.IsolatedAsyncioTestCase):
                 before = {t.name: [dict(row) for row in (await conn.execute(select(t))).mappings()] for t in legacy_tables if t is not db.versions}
             await db.migrate(engine); await db.migrate(engine)
             async with engine.connect() as conn:
-                self.assertEqual((await conn.execute(select(db.versions.c.version))).scalars().all(), [3])
+                self.assertEqual((await conn.execute(select(db.versions.c.version))).scalars().all(), [4])
                 for table in legacy_tables:
                     if table is not db.versions:
                         self.assertEqual([dict(row) for row in (await conn.execute(select(table))).mappings()], before[table.name], table.name)

@@ -1,6 +1,8 @@
 import './style.css';
 import { setupInterview } from './interview';
 import { setupCompetition } from './competition';
+import { setupPerformance } from './performance';
+let performances: ReturnType<typeof setupPerformance> | undefined;
 let competitions: ReturnType<typeof setupCompetition> | undefined;
 let interviews: ReturnType<typeof setupInterview> | undefined;
 
@@ -19,9 +21,10 @@ let revision = -1, listRequest = 0, detailRequest = 0, queryVersion = 0;
 let selected: string | null = null, pending: Command | null = null;
 class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 function syncControls() {
+  performances?.sync();
   interviews?.sync();
   competitions?.sync();
-  register.disabled = !authenticated || !healthy || !navigator.onLine || busy || !!competitions?.locked() || !!interviews?.locked();
+  register.disabled = !authenticated || !healthy || !navigator.onLine || busy || !!competitions?.locked() || !!interviews?.locked() || !!performances?.locked();
   subject.disabled = nickname.disabled = busy;
   el<HTMLButtonElement>('search-button').disabled = !authenticated || !healthy;
   register.textContent = busy ? '正在提交…' : pending ? '重试 / 确认原登记' : '登记游客';
@@ -141,6 +144,7 @@ async function checkConnection() {
       await loadPlayers();
       await interviews?.refresh();
       await competitions?.refresh();
+      await performances?.refresh();
       if (selected && authenticated && healthy) await loadDetail(selected);
       if (healthy && transientNotice !== null && el('notice').textContent === transientNotice) {
         el('notice').textContent = ''; transientNotice = null;
@@ -153,7 +157,7 @@ function editOperation() { pending = null; el('registration-message').textConten
 subject.addEventListener('input', editOperation); nickname.addEventListener('input', editOperation);
 el<HTMLFormElement>('register-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!authenticated || !healthy || busy || competitions?.locked() || interviews?.locked() || !navigator.onLine) return;
+  if (!authenticated || !healthy || busy || competitions?.locked() || interviews?.locked() || performances?.locked() || !navigator.onLine) return;
   if (!subject.value || subject.value !== subject.value.trim() || [...subject.value].length > 128 || !nickname.value || [...nickname.value].length > 80) {
     el('registration-message').textContent = '请检查输入：身份 ID 不可有首尾空白，昵称须为 1–80 字符。'; return;
   }
@@ -204,6 +208,7 @@ async function start() {
   const poll = async () => { if (!document.hidden && !busy && navigator.onLine) await checkConnection(); window.setTimeout(() => void poll(), 1000); };
   window.setTimeout(() => void poll(), 1000);
 }
-interviews = setupInterview({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !competitions?.locked(), failure, refreshPlayer: loadDetail });
-competitions = setupCompetition({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !interviews?.locked(), failure, refreshPlayer: loadDetail });
+interviews = setupInterview({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !competitions?.locked() && !performances?.locked(), freezePerformance: source => performances?.freezeSource(source), failure, refreshPlayer: loadDetail });
+competitions = setupCompetition({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !interviews?.locked() && !performances?.locked(), freezePerformance: source => performances?.freezeSource(source), failure, refreshPlayer: loadDetail });
+performances = setupPerformance({ api, acceptRevision, epoch: () => authEpoch, authenticated: () => authenticated, ready: () => authenticated && healthy && navigator.onLine && !authenticating && !busy && !interviews?.locked() && !competitions?.locked(), failure, changed: syncControls });
 void start();

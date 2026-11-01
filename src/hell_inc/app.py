@@ -14,6 +14,8 @@ from .db import make_engine, versions
 from .instance import InstanceLock
 from .interviews import InterviewService, InterviewError
 from .competitions import CompetitionService
+from .performances import PerformanceService
+from .performance_contract import PerformanceError
 from .records.service import RecordService, PlayerNotFound, CommandConflict
 
 COOKIE_NAME = "hell_inc_session"
@@ -53,6 +55,8 @@ async def guard(request, handler):
         response = await dispatch(request, handler)
     except ValidationError as exc:
         response = error("validation_error", str(exc), 400)
+    except PerformanceError as exc:
+        response = error(exc.code, '演出来源、场次或状态不允许此操作；未知发送不会重播。', exc.status)
     except InterviewError as exc:
         response = error(exc.code, '面试状态或版本不允许此操作。', exc.status)
     except PlayerNotFound:
@@ -80,13 +84,15 @@ async def dispatch(request, handler):
     # DB operation. A queued result cannot pass an older pre-lock gate check.
     async with state['game_lock']:
         try:
-            if state['game_gate'] and request.path not in ('/api/session','/api/health'):
+            if (state['game_gate'] or state['performances'].gate) and request.path not in ('/api/session','/api/health'):
                 await state['interviews'].recover('database_recovery')
                 await state['competitions'].recover('database_recovery')
+                await state['performances'].recover('database_recovery')
                 state['game_gate'] = False
             return await handler(request)
         except (SQLAlchemyError, OSError):
             state['game_gate'] = True
+            await state['performances'].close_gate()
             raise
 
 
@@ -154,6 +160,7 @@ async def health(request):
     except (SQLAlchemyError, OSError):
         status = "unavailable"
         state["game_gate"] = True
+        await state["performances"].close_gate()
     return web.json_response({"status": status, "mode": "local-test",
         "world_id": state["settings"].world_id}, status=200 if status == "ok" else 503)
 
@@ -186,25 +193,29 @@ async def lifecycle(app):
     state["lock"].acquire()
     try:
         async with state["engine"].connect() as conn:
-            if (await conn.execute(select(versions.c.version))).scalars().all() != [3]:
+            if (await conn.execute(select(versions.c.version))).scalars().all() != [4]:
                 raise RuntimeError("请先单独执行 migrate；启动不会修改表结构。")
         await state["service"].initialize_world()
         await state['interviews'].recover('restart')
         await state['competitions'].recover('restart')
+        await state['performances'].recover('restart')
         async def tick():
             while True:
                 await asyncio.sleep(0.5)
                 async with state['game_lock']:
                     try:
-                        if state['game_gate']:
+                        if state['game_gate'] or state['performances'].gate:
                             await state['interviews'].recover('database_recovery')
                             await state['competitions'].recover('database_recovery')
+                            await state['performances'].recover('database_recovery')
                             state['game_gate'] = False
                         else:
                             await state['interviews'].expire_due()
                             await state['competitions'].expire_due()
+                            await state['performances'].expire_due()
                     except (SQLAlchemyError, OSError):
                         state['game_gate'] = True
+                        await state['performances'].close_gate()
         timer = asyncio.create_task(tick())
         try:
             yield
@@ -212,6 +223,7 @@ async def lifecycle(app):
             timer.cancel()
             with suppress(asyncio.CancelledError):
                 await timer
+            await state['performances'].shutdown()
     finally:
         await state["engine"].dispose()
         state["lock"].release()
@@ -223,6 +235,7 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
     app = web.Application(middlewares=[guard], client_max_size=32768)
     app[STATE] = {"settings": settings, "engine": engine,
         "service": RecordService(engine, settings.world_id),
+        "performances": PerformanceService(engine, settings.world_id),
         "competitions": CompetitionService(engine, settings.world_id),
         "interviews": InterviewService(engine, settings.world_id), "game_gate": False, "game_lock": asyncio.Lock(),
         "lock": InstanceLock(settings.database_url, settings.world_id, settings.lock_dir),
@@ -255,6 +268,16 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
         app.router.add_post('/api/competitions/{id}/submissions/{sid}/'+action, competition_submission_command)
     for action in ('open','close-submissions','open-voting','close-voting','settle','pause','resume','cancel'):
         app.router.add_post('/api/competitions/{id}/'+action, competition_command)
+    app.router.add_get('/api/performance-session', performance_session_get)
+    app.router.add_post('/api/performance-session', performance_session_create)
+    for action in ('pause','resume','close'):
+        app.router.add_post('/api/performance-session/{id}/'+action, performance_session_command)
+    app.router.add_post('/api/performance-sources/freeze', performance_freeze)
+    app.router.add_get('/api/performances', performance_list)
+    app.router.add_post('/api/performances', performance_submit)
+    app.router.add_get('/api/performances/{id}', performance_get)
+    for action in ('execute','cancel'):
+        app.router.add_post('/api/performances/{id}/'+action, performance_command)
     app.router.add_get("/", index)
     assets = Path(settings.frontend_dir) / "assets"
     if assets.is_dir():
@@ -272,8 +295,12 @@ async def interview_get(request):
     return web.json_response(await request.app[STATE]['interviews'].get(request.match_info['id']))
 
 async def interview_command(request):
-    return web.json_response(await request.app[STATE]['interviews'].command(request.match_info['id'],
-        request.path.rsplit('/',1)[-1], await body(request)))
+    action=request.path.rsplit('/',1)[-1]
+    data=await body(request)
+    result=await request.app[STATE]['interviews'].command(request.match_info['id'],action,data)
+    if action=='pause':
+        result['performance_pause']=await request.app[STATE]['performances'].pause_for_game(data['command_id'],'interview:'+request.match_info['id'])
+    return web.json_response(result)
 
 async def interview_answer(request):
     return web.json_response(await request.app[STATE]['interviews'].answer(request.match_info['id'],await body(request)))
@@ -292,7 +319,13 @@ async def competition_start(request):
 async def competition_get(request):
     return web.json_response(await request.app[STATE]['competitions'].get(request.match_info['id']))
 async def competition_command(request):
-    return web.json_response(await request.app[STATE]['competitions'].command(request.match_info['id'],request.path.rsplit('/',1)[-1],await body(request)))
+    action=request.path.rsplit('/',1)[-1]
+    data=await body(request)
+    result=await request.app[STATE]['competitions'].command(request.match_info['id'],action,data)
+    if action=='pause':
+        result['performance_pause']=await request.app[STATE]['performances'].pause_for_game(data['command_id'],'competition:'+request.match_info['id'])
+    return web.json_response(result)
+
 async def competition_submit(request):
     return web.json_response(await request.app[STATE]['competitions'].submit(request.match_info['id'],await body(request)))
 async def competition_vote(request):
@@ -306,3 +339,24 @@ async def competition_import(request):
     return web.json_response(await request.app[STATE]['competitions'].evaluation_result(request.match_info['id'],request.match_info['sid'],await body(request)))
 async def competition_submission_command(request):
     return web.json_response(await request.app[STATE]['competitions'].submission_command(request.match_info['id'],request.match_info['sid'],request.path.rsplit('/',1)[-1],await body(request)))
+
+
+async def performance_session_get(request):
+    return web.json_response(await request.app[STATE]['performances'].session_get())
+async def performance_session_create(request):
+    result,created=await request.app[STATE]['performances'].session_create(await body(request))
+    return web.json_response(result,status=201 if created else 200)
+async def performance_session_command(request):
+    return web.json_response(await request.app[STATE]['performances'].session_command(request.match_info['id'],request.path.rsplit('/',1)[-1],await body(request)))
+async def performance_freeze(request):
+    return web.json_response(await request.app[STATE]['performances'].freeze(await body(request)))
+async def performance_submit(request):
+    result,created=await request.app[STATE]['performances'].submit(await body(request))
+    return web.json_response(result,status=201 if created else 200)
+async def performance_list(request):
+    if set(request.query)-{'session_id'}:raise ValidationError('不支持的查询字段。')
+    return web.json_response(await request.app[STATE]['performances'].list(request.query.get('session_id')))
+async def performance_get(request):
+    return web.json_response(await request.app[STATE]['performances'].get(request.match_info['id']))
+async def performance_command(request):
+    return web.json_response(await request.app[STATE]['performances'].command(request.match_info['id'],request.path.rsplit('/',1)[-1],await body(request)))
