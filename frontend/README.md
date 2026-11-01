@@ -72,3 +72,22 @@ Node 24；`npm ci && npm run build` 生成 `dist/`，由 Python 应用同源提�
 Phase 2 测试定位：`performance-session-real-create`、`performance-paid-confirm`、`performance-media-start|stop|reconcile|confirm-ready|state`；`receiver-start|audio|leave|status|video`。测试通过测试脚本拦截固定 SDK 的 appendChild 并检查 URL / integrity、模拟轨道与帧证据；生产代码没有 mock / 绕过开关。浏览器 mock 不发真实 RTC 请求，不构成媒体质量证据。
 
 接收器在 SDK 实例化前强制 `AliRtcEngine.setLogLevel(AliRtcLogLevel.NONE)`（固定版本常量为 5）。这关闭 SDK 控制台日志，但静态源码显示其内部仍可能缓存遥测日志；因此不能据此声称第三方 SDK 完全不记录信息，也不为日志 / 遥测域放开 CSP。真实联调前仍需审查供应商内部遥测边界。
+
+### 唯一 Vidu 音画来源（同会话 / 频道 / 远端参与者）
+
+最终音频与视频必须都从同一 owned Vidu live 的 managed RTC 输出接收。百炼 TTS 只在服务端生成 PCM，再连同已校验动作送入该 Vidu 会话；浏览器不直接下载、播放或混入百炼源音频。SDK 使用独立 audio 元素播放 RTC 音轨，并不意味着另接百炼声音。
+
+接收器现在关闭“自动订阅所有远端”并在 join 前静音。它检查 SDK `channel` / `userId` 与受保护 claim 的频道和本地接收身份一致，锁定唯一非本地远端 UID，仅显式订阅该 UID 的摄像头轨与音轨。通过固定版本公开 `getAudioTrack(uid)` 与 `getVideoTrack({userId: uid, streamType: 0})` 获取同 UID 的原生 `MediaStreamTrack`，视频元素的 `srcObject` 必须包含相同视频轨，而非任意全局 PC 最近发出的轨道。用户开启声音只解除这个 UID 的静音。
+
+出现第二 UID、本地接收 UID 被当作发送者、频道不匹配、绑定参与者离线或非空视频元素装载了不同轨道，立即静音并闩锁失败、上报 false、离开接收；不自动换人或重连。同一次接收尝试不能重新开始。它仍只是浏览器 client_reported 证据；不能凭此宣称真实供应商输出或观众收听已经验收。
+
+不要求音视频必然使用同一个 JavaScript `RTCPeerConnection` 对象，也不允许凭“两条合成 PC 能录制”放松来源约束。固定 SDK 内有 Subscriber / Publisher / CommonController、复用及重连和能力检测路径；不能由 PC 对象数量推断供应商身份。需验证的是同一个 owned live 的 RTC grant、同一频道、同一远端 UID 的两条音视频轨及唯一接收者。
+
+源码依据（固定提交 `2e076b66ebd7b1db25d8c20914713ab7f4983f77`）：
+- `avatar-studio/studio/automation.py:reply_once` 调用大脑生成计划；`BailianAI` 继承结构化规划实现。
+- `live_session.py` 合成并校验 PCM，`prepare_timed_actions` 基于同 PCM 时间戳只调整动作锚点，`process_answers` 调用 `send_aligned_expression`。
+- `motion_component.py:send_aligned_expression` 与 `component_live.py:_audio` 将动作 / Type10 台词 / PCM 写入 owned live 的同一组件连接；创建响应提供该场 `managed_rtc`。
+- 原 `static/player.js` 使用这份 RTC grant 入会，音画都来自 RTC；但原来的全订阅与按全局 track.kind 观察方式本身没有验证相同远端 UID，不能当作来源保障。
+- 固定 SDK 7.1.9（同 SHA-256）公开 `getAudioTrack(uid)`、`getVideoTrack({userId,streamType})`、`getOnlineRemoteUsers()`、`subscribeRemoteMediaStream(uid,1,true,true)`；内部 remoteUser 按 UID 保存并返回原生轨道。
+
+跨场切换还必须等待旧接收者的 claim / join 尝试退出，以及旧 SDK `leaveChannel` / `destroy` 清理完成。清理期间新场领取按钮与入口函数均拒绝开始；同一 teardown 共用 Promise。旧 generation 的迟到回执不得关闭新 claim、清空新视频或修改新场忙态。join 等待仍使用既有 20 秒上限，不增加自动重试。

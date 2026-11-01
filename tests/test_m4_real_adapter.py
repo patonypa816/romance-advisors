@@ -375,7 +375,9 @@ class OriginalComponentCreationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.http.calls), 1)
         self.assertEqual(self.http.calls[0][2]['json']['avatar_id'], '123456789')
         self.assertNotIn('image_uri', self.http.calls[0][2]['json'])
-        self.assertFalse(self.http.calls[0][2]['json']['managed_rtc']['enable_recording'])
+        self.assertTrue(self.http.calls[0][2]['json']['managed_rtc']['enable_recording'])
+        self.assertTrue(self.component.public()['recording_requested'])
+        self.assertFalse(self.component.public()['recording_saved'])
         owned = json.loads((self.component.out / 'component-owned-id.json').read_text())
         self.assertEqual(owned, {'live_id': 'offline-owned-live'})
         release.set()
@@ -386,9 +388,27 @@ class OriginalComponentCreationTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.events.index('callback-committed'), self.events.index('WSS'))
         await self.component.stop(); await self.component._task
         self.assertTrue(self.component.cloud_end_confirmed)
+        self.assertFalse(self.component.public()['recording_saved'])
+        self.assertIsNone(self.component._recording_task)
         with self.assertRaises(RuntimeError): await self.component.start('opaque-test-vidu-key', avatar_id='123456789')
         self.assertEqual(sum(method == 'POST' for method, _, _ in self.http.calls), 1)
         self.assertTrue(all(kwargs['headers']['Authorization'] == 'Token opaque-test-vidu-key' for _, _, kwargs in self.http.calls))
+
+    async def test_explicit_recording_false_reaches_actual_component_create_body(self):
+        self.component=component_live.PersistentComponent(self.http,Path(self.tmp.name)/'explicit-no-recording',
+            Path(self.tmp.name)/'unused.png',recording=False)
+        self.addAsyncCleanup(self.component.close)
+        entered=asyncio.Event()
+        async def created(live_id,safe):entered.set()
+        self.component.on_created=created
+        await self.component.start('opaque-test-vidu-key',avatar_id='123456789')
+        await asyncio.wait_for(entered.wait(),1)
+        self.assertFalse(self.http.calls[0][2]['json']['managed_rtc']['enable_recording'])
+        self.assertFalse(self.component.public()['recording_requested'])
+        self.assertFalse(self.component.public()['recording_saved'])
+        await self.component.stop();await self.component._task
+        self.assertIsNone(self.component._recording_task)
+        self.assertFalse(any('/recording' in url for _,url,_ in self.http.calls))
 
     async def test_callback_commit_failure_known_id_controlled_stop_unknown_no_second_create(self):
         async def failed_commit(live_id, safe):

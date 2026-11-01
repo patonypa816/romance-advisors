@@ -490,7 +490,7 @@ class PerformanceService:
                 if media.get('stop_requested'):raise PerformanceError('media_stop_latched')
                 self.runtime.ensure_configured()
                 if media.get('creation_attempted'):raise PerformanceError('media_already_attempted')
-                media.update(state='creating',creation_attempted=True);s['status']='paused';launch=True
+                media.update(state='creating',creation_attempted=True,recording_requested=self.runtime.config.recording_enabled);s['status']='paused';launch=True
             elif action in ('stop','reconcile'):
                 self.runtime.pause()
                 if s['status']!='unknown':s['status']='paused'

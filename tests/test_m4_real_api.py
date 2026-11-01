@@ -71,6 +71,8 @@ class M4RealLifecycleTests(M4Fixture):
         initial=await self.media('start',command=command,confirm_paid=True)
         await self.media_drained()
         self.assertEqual(self.create_observations[0]['state'],'creating');self.assertIs(self.create_observations[0]['creation_attempted'],True)
+        self.assertTrue(self.create_observations[0]['recording_requested'])
+        self.assertTrue(self.components[0].recording_enabled)
         self.assertEqual(len(self.components),1);self.assertIn(('connect_after_durable_callback',),self.components[0].calls)
         repeat=await self.media('start',command=command,confirm_paid=True)
         self.assertEqual(repeat['session'],initial['session'])

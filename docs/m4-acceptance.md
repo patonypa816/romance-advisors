@@ -32,3 +32,13 @@
 `6789b828` 的首次 CI 在旧测试仍把 real mode 视为非法400处失败。Phase2已支持real但默认禁用，更新为409 real_media_disabled，并另保留非法mode400、原会话不变与组件未创建断言。
 
 `ce1b33ac` 的153项Python和原5项浏览器通过，但新增浏览器mock只拦appendChild而产品使用append，导致SDK模拟未载入。修正测试拦截真实路径并校验SRI与单次加载后，`c0c7f94` 全部通过。未改变生产门控以迁就测试。
+
+## 后续止费保护与一次真实短测
+
+`3daa079ba11a55d1c3f2080e9a894ba0b11f043c` 在 [Actions 41343548981](https://github.com/patonypa816/hell-inc-game/actions/runs/41343548981) 通过172项Python、6项浏览器。覆盖持久stop latch、停止早于/交错启动、在途创建返回后挂断、重启只对DB-owned ID主动挂断、cleanup HTTP与正式workspace隔离。TTS默认严格保存SSE原始音频，不依赖未知下载host；损坏/截断不重合成。15秒目标脚本m4-live-smoke-v1为74码点单段，实际时长必须据一次真实TTS测量，不截音/填充。
+
+2026-11-01 19:57:37 UTC一次真实start，约32.4秒后stop，19:58:13 UTC正向ended与cloud_end_confirmed=true。仅1场，0规划、0TTS、0台词发送；控制器错误receiver_evidence_timeout，未保存足够逐步诊断，不能确定具体接收失败环节。供应商24计费秒/24积分，最终账单未核实。已恢复默认关闭媒体/收费开关；无自动重试。
+
+本场录像GET成功但enabled=false、无video_url。源代码与供应商回读共同确认录制未开启；没有保留实际创建请求体，所以不能宣称具有完整HTTP请求抓取证据。没有录像不证明Vidu未生成；renderer_ready也不单独证明可见视频输出。
+
+后续修复将原Studio默认云端录制与自动下载分开，记录recording_requested而不伪称已保存录像；同时以SDK公开getAudioTrack/getVideoTrack按同远端UID绑定。新修复的通过状态以其精确提交CI为准。真实RTC、音画内容和浏览器证书问题仍待验证，不能将新增mock测试当作二次实际联调。

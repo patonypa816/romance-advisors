@@ -58,10 +58,14 @@ class PersistentComponent:
         "on_live_at", "close_reason", "live_duration",
     }
 
-    def __init__(self, http: aiohttp.ClientSession, out: Path, image: Path, diagnostics=None, *, on_created=None, recording=False):
+    def __init__(self, http: aiohttp.ClientSession, out: Path, image: Path, diagnostics=None, *, on_created=None, recording=True, collect_recording=False):
         self.http, self.out, self.image = http, Path(out), Path(image)
         self.on_created = on_created
-        self.recording_enabled = recording is True
+        if type(recording) is not bool or type(collect_recording) is not bool:
+            raise ValueError('invalid_recording_configuration')
+        self.recording_enabled = recording
+        # Cloud recording request is independent of automatic artifact download.
+        self.collect_recording = collect_recording
         self.out.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.out.chmod(0o700)
         self.diagnostics = diagnostics or Diagnostics(out)
@@ -152,6 +156,7 @@ class PersistentComponent:
             "audio_sent_complete": self.audio_sent_complete,
             "playback_complete_confirmed": False,
             "cloud": dict(self._cloud),
+            "recording_requested": self.recording_enabled,
             "recording_saved": self.recording_saved,
             "recording_file": "component-cloud.mp4" if self.recording_saved else None,
             "recording_error": self.recording_error,
@@ -198,7 +203,7 @@ class PersistentComponent:
         self.diagnostics.register_secret(self._key)
         self.state = "starting"
         self._event("start_requested", creation_input_mode=self.creation_input_mode,
-                    creation_avatar_id=self.creation_avatar_id)
+                    creation_avatar_id=self.creation_avatar_id, recording_requested=self.recording_enabled)
         self._task = asyncio.create_task(self._run(body), name="component-persistent-session")
         return self.public()
 
@@ -729,7 +734,7 @@ class PersistentComponent:
                     await asyncio.sleep(min(self.POLL_INTERVAL, max(0, deadline - time.monotonic())))
             self.state = "ended" if self.cloud_end_confirmed else "stop_unconfirmed"
             self._event("stop_result", live_id=self.live_id, cloud_end_confirmed=self.cloud_end_confirmed)
-            if self.recording_enabled and self.cloud_end_confirmed and self._recording_task is None:
+            if self.recording_enabled and self.collect_recording and self.cloud_end_confirmed and self._recording_task is None:
                 self._recording_task = asyncio.create_task(self._collect_recording(), name="component-recording")
             self._save("component-receipt.json", self.public())
 

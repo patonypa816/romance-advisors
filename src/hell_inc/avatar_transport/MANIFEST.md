@@ -14,7 +14,7 @@ Source: `patonypa816/hell-inc-game`, pinned commit `2e076b66ebd7b1db25d8c2091471
 Narrow patches:
 - Package-relative imports only; no sys.path mutation or credential-file fallback.
 - Stop-only restart binding (`bind_owned_for_stop`) accepts only a fresh idle component and a validated already-owned live ID; it latches stop and reuses original `_finish`/Type1+Type5/close/GET. It cannot create, join RTC or send speech.
-- Component explicit avatar-ID start skips local image read; async on_created commits ownership before WSS; private emergency owned-ID receipt. Recording is explicitly disabled by default, including automatic recording retrieval. Credential strings remain opaque/header-safe; redirects disabled.
+- Component explicit avatar-ID start skips local image read; async on_created commits ownership before WSS; private emergency owned-ID receipt. Cloud recording request defaults to true, matching the pinned original create body; runtime explicitly supplies a validated configuration (HELL_INC_MEDIA_RECORDING_ENABLED=0 opts out). Automatic recording retrieval is independently disabled by default. Public recording_requested is request configuration, not provider confirmation or saved-video evidence. Credential strings remain opaque/header-safe; redirects disabled.
 - Original motion/idle scheduler logic unchanged. Idle is not enabled or bound to old assets. Game wrapper delegates formal S / 1.1-second GE / 1.5-second Q path, with original successful Type9 gap and independent PCM writer locks.
 - TTS keeps exact supplied text/instruction, explicit runtime voice required (no historical voice fallback), word timestamps always enabled by real adapter, exact PCM hashes retained. Audio download has no Authorization header. Private file writes; ffmpeg writes PCM to stdout then private file rather than public-mode output. Safe status/content-type evidence retained before SSE parsing; no signed URLs or raw secrets recorded.
 - Timed planner validates but preserves original text/instruction whitespace. Enumeration, legal schedule selection and compilation unchanged.
@@ -36,7 +36,7 @@ Fake SSE→real ffprobe/ffmpeg→original scheduler tests verify exact bytes and
 ## Patched file SHA-256
 
 - `__init__.py`: `32603d54ed03c98a9e0b33717e8053556975f62b061a154d619a8106fb2dc893`
-- `component_live.py`: `c2e3deba0f86d578e7dee69cf030898e3437ea13431cc5f11334cd9195b3eeeb`
+- `component_live.py`: `5dccc5ad41aec1d82beddb0238dad2939d2a69ab82a3c9f097d2881c51a0226e`
 - `diagnostics.py`: `3ca15a53bba546c915d2b4b5ef9473a8026a6629c182d9b143b0a79553905ace`
 - `idle_motion.py`: `c9c8ac9792b0211ab8c212b1fb920574be98e4a76dc7c5a740677a0ddae2e271`
 - `motion_component.py`: `b0e38a45b493cdbe01751f19cf865fe420a92007ed8400b331ab2ed58668a601`

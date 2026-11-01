@@ -14,6 +14,7 @@ from hell_inc.performance_contract import PerformanceError
 
 class FakeComponent:
     def __init__(self, http, out, image, *, on_created, recording=False):
+        self.recording_enabled=recording
         self.on_created=on_created; self.state='idle'; self.live_id=None; self._task=None
         self.calls=[]; self.end_confirmed=True; self.cloud_end_confirmed=False; self.stop_latched=False
         self.after_created=None; self.fail_creation=False
@@ -377,3 +378,34 @@ class StopLatchRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(clients),2)
                 await runtime.shutdown()
                 self.assertTrue(clients[1].closed);self.assertTrue(clients[0].closed)
+
+
+class RecordingConfigurationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_default_and_explicit_disabled_recording_are_forwarded_without_construction_requests(self):
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as tmp:
+            base=MediaConfig('opaque-test','tts-test','workspace','123','model','voice','persona',Path(tmp))
+            self.assertTrue(base.recording_enabled)
+            for enabled in (True,False):
+                http=FakeReadback();runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=True,allow_paid_media=True),
+                    component_factory=FakeComponent,http=http,config=replace(base,recording_enabled=enabled))
+                self.assertEqual(http.calls,[]);self.assertIsNone(runtime.component)
+                async def created(live_id,meta):pass
+                async def persist(meta):pass
+                await runtime.start(str(uuid4()),created,persist)
+                self.assertIs(runtime.component.recording_enabled,enabled)
+                await runtime.shutdown()
+
+    async def test_recording_env_defaults_true_and_accepts_only_explicit_zero_or_one(self):
+        import os
+        env={'VIDU_API_KEY':'opaque-test','DASHSCOPE_API_KEY':'tts-test','BAILIAN_WORKSPACE_ID':'workspace',
+             'HELL_INC_AVATAR_ID':'123','HELL_INC_PLANNER_MODEL':'model','HELL_INC_TTS_VOICE':'voice','HELL_INC_VOICE_PERSONA':'persona'}
+        with patch.dict(os.environ,env,clear=True):
+            self.assertTrue(MediaConfig.from_env().recording_enabled)
+            os.environ['HELL_INC_MEDIA_RECORDING_ENABLED']='0'
+            self.assertFalse(MediaConfig.from_env().recording_enabled)
+            os.environ['HELL_INC_MEDIA_RECORDING_ENABLED']='1'
+            self.assertTrue(MediaConfig.from_env().recording_enabled)
+            for invalid in ('','false','true','2',' 1'):
+                os.environ['HELL_INC_MEDIA_RECORDING_ENABLED']=invalid
+                with self.assertRaises(ValueError):MediaConfig.from_env()

@@ -31,8 +31,10 @@ class MediaConfig:
     artifact_dir: Path=Path('/tmp/hell-inc-media')
     audio_hosts: tuple=()
     proxy: str|None=field(default=None,repr=False)
+    recording_enabled: bool=True
 
     def __post_init__(self):
+        if type(self.recording_enabled) is not bool:raise ValueError('invalid_recording_configuration')
         validate_secret(self.api_key);validate_secret(self.tts_key);validate_workspace(self.workspace);validate_proxy(self.proxy)
         if not Path(self.artifact_dir).is_absolute():raise ValueError('media_directory_must_be_absolute')
         if not re.fullmatch(r'[0-9]{1,64}',self.avatar_id):raise ValueError('avatar_id_required')
@@ -49,8 +51,10 @@ class MediaConfig:
                 configured('HELL_INC_BAILIAN_WORKSPACE','BAILIAN_WORKSPACE_ID'),
                 os.getenv('HELL_INC_AVATAR_ID'),os.getenv('HELL_INC_PLANNER_MODEL'),os.getenv('HELL_INC_TTS_VOICE'),os.getenv('HELL_INC_VOICE_PERSONA'))
         if any(not value for value in values):raise PerformanceError('real_media_not_configured')
+        recording=os.getenv('HELL_INC_MEDIA_RECORDING_ENABLED','1')
+        if recording not in ('0','1'):raise ValueError('invalid_recording_configuration')
         return cls(*values,artifact_dir=Path(os.getenv('HELL_INC_MEDIA_DIR','/tmp/hell-inc-media')),
-                   audio_hosts=tuple(x for x in os.getenv('HELL_INC_AUDIO_HOSTS','').split(',') if x),proxy=os.getenv('HTTPS_PROXY') or None)
+                   audio_hosts=tuple(x for x in os.getenv('HELL_INC_AUDIO_HOSTS','').split(',') if x),proxy=os.getenv('HTTPS_PROXY') or None,recording_enabled=recording=='1')
 
 
 
@@ -75,7 +79,7 @@ class RealMediaRuntime:
     def paid_enabled(self):return self.settings.allow_paid_media is True
 
     def default_media(self):
-        return {'state':'not_started','owned_live_id':None,'creation_attempted':False,'stop_requested':False,'cloud_end_confirmed':False,'receiver':empty_receiver(),'operator_confirmed':False,'real_enabled':self.real_enabled,'paid_enabled':self.paid_enabled}
+        return {'state':'not_started','owned_live_id':None,'creation_attempted':False,'stop_requested':False,'recording_requested':None,'cloud_end_confirmed':False,'receiver':empty_receiver(),'operator_confirmed':False,'real_enabled':self.real_enabled,'paid_enabled':self.paid_enabled}
 
     def view(self,media=None):
         result={**self.default_media(),**(media or {})}
@@ -124,7 +128,7 @@ class RealMediaRuntime:
             self.owned_live_id=live_id
             if must_stop is True or session_id in self.stopped_sessions:
                 self.latch_stop(session_id)
-        self.component=factory(self.http,out,Path('UNUSED'),on_created=created,recording=False)
+        self.component=factory(self.http,out,Path('UNUSED'),on_created=created,recording=self.config.recording_enabled)
         await self.component.start(self.config.api_key,avatar_id=self.config.avatar_id)
         task=asyncio.create_task(self._monitor(self.component,self.persist,self.epoch));self.tasks.add(task);task.add_done_callback(self.tasks.discard)
 

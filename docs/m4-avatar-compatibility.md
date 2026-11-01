@@ -54,7 +54,7 @@
 
 ## Phase 2 原运行时选择性复用
 
-新增 `avatar_transport` 保留六份固定来源文件及 MIT，详见同目录 `MANIFEST.md` 的原 Git blob/当前 SHA-256/窄补丁列表。保持原 MotionComponent 调度器；只做包相对导入、显式 avatar_id 不读旧底图、on_created 持久化回调先于 WSS、默认禁录像、文本空白/显式声音保留、短不透明凭据脱敏和私有文件权限等必要补丁。未导入 Director、Automation、旧工作台或旧形象 idle 绑定。
+新增 `avatar_transport` 保留六份固定来源文件及 MIT，详见同目录 `MANIFEST.md` 的原 Git blob/当前 SHA-256/窄补丁列表。保持原 MotionComponent 调度器；只做包相对导入、显式 avatar_id 不读旧底图、on_created 持久化回调先于 WSS、默认请求云录制、独立默认禁自动录像下载、文本空白/显式声音保留、短不透明凭据脱敏和私有文件权限等必要补丁。未导入 Director、Automation、旧工作台或旧形象 idle 绑定。
 
 `RealPerformanceAdapter` 用原 `tts_live.synthesize_segment`、受限 `timed_action_planner` 和原 `MotionComponent.send_aligned_expression`。stage1 请求只能返回表达计划；stage2 只能选择完整合法 schedule ID；台词、声音 instruction、动作数及内容、恢复姿态被冻结。实际 SDK、供应商和形象操作仍未执行。RTC 心跳与人工确认是两道门，心跳失效后必须重新确认及显式恢复；正常取消允许当前段完成，不宣称远端已中止。
 
@@ -65,3 +65,8 @@
 `component_live.bind_owned_for_stop` 只给一个全新、未启动的本地对象绑定本场已持久化 ID；它只能调用原 `stop/_finish` 的同 ID Type1 → Type5 → 关闭 → GET 回读路径，不调用创建/RTC/发音方法。调度器未改写。运行时及数据库均保留 stop latch；在途创建返回 ID 后先持久化再立即停止。模拟测试实际执行了原 `_finish` 与假 WSS 帧，断言无 POST、无音频，未确认结束仍 unknown；这不是实际供应商止费证明。
 
 TTS 默认使用完整 SSE inline 音频而非未知下载主机，保留一次合成、完整性/容器/PCM hash/时间戳核验及私有证据。完整性失败不补第二次 TTS，不自动回退下载；来源适配的具体修改与 SHA 见 `avatar_transport/MANIFEST.md`。
+
+
+### 录制配置忠实复用修正
+
+固定迁移源 `component_live.py` 的原 create 请求明确为 `managed_rtc.enable_recording=true`。M4 Phase 2 曾为避免自动下载而一并传入 false，属于迁移配置偏差。现默认恢复请求 true，允许 `HELL_INC_MEDIA_RECORDING_ENABLED=0` 明确关闭；自动下载另行保持关闭。`recording_requested` 仅保存有效请求配置，不等于平台确认启用、生成录像或本地已保存。真实 component body 的 true/false 测试均使用模拟 HTTP；不据此补称此前真实场次请求已完整捕获，也不对已结束场次补录或转码。
