@@ -13,6 +13,7 @@ from .contracts import ValidationError, validate_registration
 from .db import make_engine, versions
 from .instance import InstanceLock
 from .interviews import InterviewService, InterviewError
+from .competitions import CompetitionService
 from .records.service import RecordService, PlayerNotFound, CommandConflict
 
 COOKIE_NAME = "hell_inc_session"
@@ -81,6 +82,7 @@ async def dispatch(request, handler):
         try:
             if state['game_gate'] and request.path not in ('/api/session','/api/health'):
                 await state['interviews'].recover('database_recovery')
+                await state['competitions'].recover('database_recovery')
                 state['game_gate'] = False
             return await handler(request)
         except (SQLAlchemyError, OSError):
@@ -116,7 +118,7 @@ async def body(request):
                     check_strings(item)
         check_strings(result)
         return result
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         raise ValidationError("JSON 格式不合法。") from None
 
 
@@ -184,10 +186,11 @@ async def lifecycle(app):
     state["lock"].acquire()
     try:
         async with state["engine"].connect() as conn:
-            if (await conn.execute(select(versions.c.version))).scalars().all() != [2]:
+            if (await conn.execute(select(versions.c.version))).scalars().all() != [3]:
                 raise RuntimeError("请先单独执行 migrate；启动不会修改表结构。")
         await state["service"].initialize_world()
         await state['interviews'].recover('restart')
+        await state['competitions'].recover('restart')
         async def tick():
             while True:
                 await asyncio.sleep(0.5)
@@ -195,9 +198,11 @@ async def lifecycle(app):
                     try:
                         if state['game_gate']:
                             await state['interviews'].recover('database_recovery')
+                            await state['competitions'].recover('database_recovery')
                             state['game_gate'] = False
                         else:
                             await state['interviews'].expire_due()
+                            await state['competitions'].expire_due()
                     except (SQLAlchemyError, OSError):
                         state['game_gate'] = True
         timer = asyncio.create_task(tick())
@@ -218,6 +223,7 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
     app = web.Application(middlewares=[guard], client_max_size=32768)
     app[STATE] = {"settings": settings, "engine": engine,
         "service": RecordService(engine, settings.world_id),
+        "competitions": CompetitionService(engine, settings.world_id),
         "interviews": InterviewService(engine, settings.world_id), "game_gate": False, "game_lock": asyncio.Lock(),
         "lock": InstanceLock(settings.database_url, settings.world_id, settings.lock_dir),
         "token_hash": digest(token), "token_expires": time.monotonic() + 600,
@@ -237,6 +243,18 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
     app.router.add_post('/api/interviews/{id}/answers', interview_answer)
     for action in ('open','pause','resume','retry','cancel'):
         app.router.add_post('/api/interviews/{id}/' + action, interview_command)
+    app.router.add_get('/api/competitions', competition_list)
+    app.router.add_post('/api/competitions', competition_start)
+    app.router.add_get('/api/competitions/{id}', competition_get)
+    app.router.add_get('/api/competitions/{id}/vote-state', competition_vote_state)
+    app.router.add_post('/api/competitions/{id}/submissions', competition_submit)
+    app.router.add_post('/api/competitions/{id}/votes', competition_vote)
+    app.router.add_get('/api/competitions/{id}/submissions/{sid}/evaluation-request', competition_export)
+    app.router.add_post('/api/competitions/{id}/submissions/{sid}/evaluation-result', competition_import)
+    for action in ('retry','confirm-display'):
+        app.router.add_post('/api/competitions/{id}/submissions/{sid}/'+action, competition_submission_command)
+    for action in ('open','close-submissions','open-voting','close-voting','settle','pause','resume','cancel'):
+        app.router.add_post('/api/competitions/{id}/'+action, competition_command)
     app.router.add_get("/", index)
     assets = Path(settings.frontend_dir) / "assets"
     if assets.is_dir():
@@ -265,3 +283,26 @@ async def interview_export(request):
 
 async def interview_import(request):
     return web.json_response(await request.app[STATE]['interviews'].evaluation_result(request.match_info['id'],await body(request)))
+
+
+async def competition_list(request):
+    return web.json_response(await request.app[STATE]['competitions'].list_competitions())
+async def competition_start(request):
+    return web.json_response(await request.app[STATE]['competitions'].start(await body(request)))
+async def competition_get(request):
+    return web.json_response(await request.app[STATE]['competitions'].get(request.match_info['id']))
+async def competition_command(request):
+    return web.json_response(await request.app[STATE]['competitions'].command(request.match_info['id'],request.path.rsplit('/',1)[-1],await body(request)))
+async def competition_submit(request):
+    return web.json_response(await request.app[STATE]['competitions'].submit(request.match_info['id'],await body(request)))
+async def competition_vote(request):
+    return web.json_response(await request.app[STATE]['competitions'].vote(request.match_info['id'],await body(request)))
+async def competition_vote_state(request):
+    if set(request.query)!={'player_id'}:raise ValidationError('需要 player_id。')
+    return web.json_response(await request.app[STATE]['competitions'].vote_state(request.match_info['id'],request.query['player_id']))
+async def competition_export(request):
+    return web.json_response(await request.app[STATE]['competitions'].evaluation_request(request.match_info['id'],request.match_info['sid']))
+async def competition_import(request):
+    return web.json_response(await request.app[STATE]['competitions'].evaluation_result(request.match_info['id'],request.match_info['sid'],await body(request)))
+async def competition_submission_command(request):
+    return web.json_response(await request.app[STATE]['competitions'].submission_command(request.match_info['id'],request.match_info['sid'],request.path.rsplit('/',1)[-1],await body(request)))

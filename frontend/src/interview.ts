@@ -155,5 +155,5 @@ export function setupInterview(d: Dependencies) {
     get('interview-clock').textContent = current?.status === 'ANSWERING' && deadline ? `参考倒计时：${Math.max(0, Math.ceil((Date.parse(deadline) - Date.now() - serverOffset) / 1000))} 秒 · 接纳以服务器时间为准` : '';
   }, 1000);
   render();
-  return {refresh, sync: controls, selectPlayer(player: {player_id: string; display_name: string; role: string}) { guest = player.role === 'guest' ? player.player_id : null; get('interview-selected').textContent = guest ? `已选择游客：${player.display_name}` : '此档案已是员工，不能再次面试。'; controls(); }};
+  return {refresh, sync: controls, locked: () => busy || !!pending, selectPlayer(player: {player_id: string; display_name: string; role: string}) { guest = player.role === 'guest' ? player.player_id : null; get('interview-selected').textContent = guest ? `已选择游客：${player.display_name}` : '此档案已是员工，不能再次面试。'; controls(); }};
 }

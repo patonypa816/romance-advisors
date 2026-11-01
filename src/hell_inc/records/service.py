@@ -147,8 +147,97 @@ class RecordService:
             payload=result,created_at=timestamp))
         return result
 
+    async def apply_competition_result(self, conn, world_id, competition_id, frozen_plan):
+        """Apply the gameplay-frozen whole-round plan in the caller's transaction.
+
+        This never commits, opens a connection, or determines winners. The caller
+        holds the world lock and commits round, assets, event and receipt together.
+        """
+        from copy import deepcopy
+        from sqlalchemy import text
+        from ..db import (competition_settlements, competition_reward_ledger,
+                          competition_events, memberships)
+        from ..evaluation import content_hash
+        if world_id != self.world_id:
+            raise ValueError('wrong world')
+        plan_hash = content_hash(frozen_plan)
+        old = (await conn.execute(select(competition_settlements).where(
+            competition_settlements.c.world_id == world_id,
+            competition_settlements.c.competition_id == competition_id))).mappings().first()
+        if old:
+            if old['payload_hash'] != plan_hash:
+                raise CommandConflict('同一比赛结算来源不得改变结果。')
+            return old['result']
+
+        submissions = frozen_plan['submissions']
+        participants = {s['player']['player_id']: s for s in submissions}
+        if len(participants) != len(submissions) or not 1 <= len(submissions) <= 12:
+            raise CommandConflict('比赛参与者快照不合法。')
+        awards = deepcopy(frozen_plan['awards'])
+        seen_awards = set()
+        member_states = {}
+        for player_id, submission in participants.items():
+            player = (await conn.execute(select(players.c.player_id).where(
+                players.c.player_id == player_id, players.c.world_id == world_id))).first()
+            if not player:
+                raise PlayerNotFound(player_id)
+            member = (await conn.execute(select(memberships).where(
+                memberships.c.player_id == player_id,
+                memberships.c.world_id == world_id))).mappings().first()
+            member_states[player_id] = ({k: member[k] for k in
+                ('role','department','position','performance')} if member else
+                {'role':'guest','department':None,'position':None,'performance':0})
+        for award in awards:
+            player_id = award['player_id']
+            submission = participants.get(player_id)
+            if (submission is None or award['submission_id'] != submission['id']
+                or award['award_type'] not in ('creativity','popularity')
+                or award['award_type'] in seen_awards):
+                raise CommandConflict('比赛奖励计划不合法。')
+            seen_awards.add(award['award_type'])
+            eligible = submission['eligibility']['role'] == 'employee'
+            delta = award['performance_delta']
+            if type(delta) is not int or delta != (1 if eligible else 0):
+                raise CommandConflict('比赛奖励资格快照不一致。')
+            if eligible and member_states[player_id]['role'] != 'employee':
+                raise CommandConflict('员工奖励要求参与时和结算时均为员工。')
+
+        timestamp = (await conn.execute(text('SELECT clock_timestamp()'))).scalar_one()
+        settlement_id = str(uuid4())
+        result = {'settlement_id':settlement_id, 'awards':awards,
+                  'rankings':deepcopy(frozen_plan['rankings']),
+                  'completed_at':timestamp.isoformat()}
+        await conn.execute(competition_settlements.insert().values(
+            id=settlement_id, world_id=world_id, competition_id=competition_id,
+            payload_hash=plan_hash, result=result, created_at=timestamp))
+        for award in awards:
+            player_id = award['player_id']
+            before = deepcopy(member_states[player_id])
+            after = {**before, 'performance':before['performance'] + award['performance_delta']}
+            await conn.execute(competition_reward_ledger.insert().values(
+                settlement_id=settlement_id, player_id=player_id,
+                award_type=award['award_type'], before=before, after=after))
+            if award['performance_delta']:
+                await conn.execute(update(memberships).where(
+                    memberships.c.player_id == player_id,
+                    memberships.c.world_id == world_id).values(performance=after['performance']))
+            member_states[player_id] = after
+        for player_id, submission in participants.items():
+            earned = [a for a in awards if a['player_id'] == player_id]
+            event = {'settlement_id':settlement_id, 'submission_id':submission['id'],
+                'submission_revision':submission['revision'], 'text':submission['text'],
+                'display_name':submission['player']['display_name'],
+                'participation_role':submission['eligibility']['role'],
+                'rule_id':frozen_plan['rule']['id'], 'awards':earned,
+                'performance_delta':sum(a['performance_delta'] for a in earned),
+                'company_delta':None}
+            await conn.execute(competition_events.insert().values(
+                competition_id=competition_id, player_id=player_id, world_id=world_id,
+                event_type='competition_participated', payload=event, created_at=timestamp))
+        return result
+
     async def _profile(self, conn, row):
-        from ..db import memberships, game_events
+        from ..db import memberships, game_events, competition_events
         value = player_json(row)
         member = (await conn.execute(select(memberships).where(
             memberships.c.player_id == row['player_id'], memberships.c.world_id == self.world_id))).mappings().first()
@@ -158,4 +247,15 @@ class RecordService:
             game_events.c.player_id == row['player_id']).order_by(game_events.c.created_at.desc()).limit(10))).mappings().all()
         value['recent_events'] = [{'type':e['event_type'],'interview_id':e['interview_id'],
             'created_at':e['created_at'].isoformat(), **e['payload']} for e in events]
+        competition_rows = (await conn.execute(select(competition_events).where(
+            competition_events.c.world_id == self.world_id,
+            competition_events.c.player_id == row['player_id'])
+            .order_by(competition_events.c.created_at.desc(), competition_events.c.competition_id)
+            .limit(10))).mappings().all()
+        value['recent_events'].extend({'type':e['event_type'],
+            'competition_id':e['competition_id'], 'created_at':e['created_at'].isoformat(),
+            **e['payload']} for e in competition_rows)
+        value['recent_events'].sort(key=lambda e: (e['created_at'],
+            e.get('interview_id', e.get('competition_id', ''))), reverse=True)
+        value['recent_events'] = value['recent_events'][:10]
         return value
