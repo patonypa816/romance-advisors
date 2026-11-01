@@ -4,7 +4,7 @@
 
 ## 开发运行
 
-需要 Python 3.12、PostgreSQL 17、Node.js 22。数据库必须是专用开发库；不要连接正式玩家数据。以下命令是项目运行入口，不代表已有部署。
+需要 Python 3.12、PostgreSQL 17、Node.js 24。数据库必须是专用开发库；不要连接正式玩家数据。以下命令是项目运行入口，不代表已有部署。
 
 ```sh
 python -m venv .venv

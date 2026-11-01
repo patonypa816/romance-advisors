@@ -13,3 +13,23 @@ frontend/dist/
 login-*.html
 playwright-report/
 test-results/
+
+# Preserve baseline local data and credential exclusions.
+.DS_Store
+venv/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+coverage/
+*.sqlite
+*.sqlite3
+*.db
+data/
+artifacts/
+.runtime/
+.secrets/
+credentials/
+browser-profile/
+*.pem
+*.key
