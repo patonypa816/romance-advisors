@@ -185,3 +185,38 @@ Existing competitions/tasks retain their original policies/hashes, including aft
 server restart with different configuration. There is no provider client or
 automatic evaluation call here; the manual export/import flow is unchanged.
 Actual provider execution must still be evidenced by its real call/receipt.
+
+### CLI-only independent fee watchdog
+
+The manual CLI now takes one fixed per-user local `flock` across attempt directories
+before any paid preparation. A separate, new-session subprocess inherits the locked
+file descriptor, so abrupt parent exit does not release concurrency ownership while
+cleanup is running. It receives only the Vidu credential/proxy and Python runtime
+environment, not Bailian credentials or a create/TTS entry point. The parent waits
+for its readiness handshake before starting preparation.
+
+Before create, `attempt.json` fsyncs `create_attempted` and a monotonic start time.
+The watchdog watches only that attempt's atomic manifest and emergency owned-ID
+receipt. A parent-liveness pipe EOF or 180 elapsed seconds latches a local stop file;
+the main CLI also cancels its active work. The independent process binds the already
+owned ID to the original stop-only component (Type1/Type5/GET), never creates, sends
+speech, queries unrelated sessions or guesses an ID. Positive ended exits normally.
+A live parent's in-flight create response may supply the ID during bounded cleanup;
+a dead parent with a lost create response remains unknown with no stop claimed.
+
+`watchdog.json` retains ended/unknown/no-cloud-attempt evidence. The lock metadata
+blocks a later attempt when the previous attempt has unresolved creation ownership;
+operator reconciliation must resolve that evidence, not silently delete the lock.
+The lock is local to the operating-system user/host, not a distributed service or a
+provider monetary cap. Host death, network loss and provider delay can still leave
+an unknown scene. Stop request at 180 seconds is not proof of ended by 180 seconds.
+Production HTTP and source/settlement schemas are unchanged. Calling the internal
+Python runner directly does not install this process supervisor; actual operator
+runs must use the CLI.
+
+Before reporting readiness, the watchdog preconstructs the original stop-only
+component in a private `<attempt>.watchdog-cleanup` sibling directory. Allocation
+failure therefore refuses paid preparation. Later inability to write latch/audit
+files cannot prevent an already-owned hangup; the stop object needs no new directory
+at that point. A failure saving original provider readback can still leave unknown
+rather than a durable ended confirmation, which deliberately blocks automatic reuse.

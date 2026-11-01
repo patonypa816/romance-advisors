@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from hell_inc.media_runtime import MediaConfig
 from hell_inc.record_only import run_record_only
+from hell_inc.record_only_guard import DiagnosticGuard
 
 
 async def run(args):
@@ -22,9 +23,13 @@ def main():
     parser.add_argument('--confirm-paid',action='store_true',help='Explicitly authorized preparation for original split segments (up to 8), then one Vidu create')
     args=parser.parse_args()
     if not args.confirm_paid:parser.error('No calls made: --confirm-paid requires separate operator authorization')
-    try:result=asyncio.run(run(args))
+    guard=DiagnosticGuard(args.out)
+    try:
+        guard.acquire();guard.start()
+        result=asyncio.run(guard.supervise(run(args)))
     except (Exception,KeyboardInterrupt):
         print(json.dumps({'state':'failed_or_unknown','action':'Inspect private attempt evidence; never auto-retry'}));return 1
+    finally:guard.close()
     print(json.dumps(result,ensure_ascii=False))
     return 0 if result['cloud_end_confirmed'] else 2
 

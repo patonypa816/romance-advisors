@@ -75,7 +75,7 @@ export function setupCompetition(d: Dependencies) {
       card.append(workButton(w,'export','导出此稿评估任务'),workButton(w,'retry','仅重试此稿失败评估')); get('works').append(card);
       if (displayable()) {
         const display = text('article','','competition-work'); display.dataset.submissionId = w.id; display.dataset.testid = 'competition-display-work';
-        display.append(text('h3',w.player.display_name),text('p',w.text,'answer-copy'),text('h4','ChatGPT 描述性短评'),text('p',w.comment!,'answer-copy'),workButton(w,'confirm-display',w.display_confirmed_at ? '此稿与短评已确认展示' : '已核对短评，确认此完整作品与短评已在本页展示')); get('display').append(display);
+        display.append(text('h3',w.player.display_name),text('p',w.text,'answer-copy'),text('h4','AI 描述性短评'),text('p',w.comment!,'answer-copy'),workButton(w,'confirm-display',w.display_confirmed_at ? '此稿与短评已确认展示' : '已核对短评，确认此完整作品与短评已在本页展示')); get('display').append(display);
         if (d.freezePerformance) display.append(freezeButton('competition_comment', s.id, w.id));
       }
     }
@@ -166,7 +166,7 @@ export function setupCompetition(d: Dependencies) {
       const e = await d.api<unknown>(`/api/competitions/${id}/submissions/${work}/evaluation-request`);
       if (auth !== d.epoch() || current?.id !== id || !d.ready()) return;
       if (!obj(e) || typeof e.task_id !== 'string' || !integer(e.attempt_no) || typeof e.input_hash !== 'string' || typeof e.policy_hash !== 'string' || !obj(e.frozen_input)) throw new Error('冻结任务格式无效。');
-      exported = {work,envelope: e as Envelope}; get<HTMLTextAreaElement>('evaluation-request').value = JSON.stringify(e,null,2); get<HTMLTextAreaElement>('evaluation-result').value = ''; notice('此稿冻结任务已导出；请原生 ChatGPT 评价后人工导入 criteria 与 comment。');
+      exported = {work,envelope: e as Envelope}; get<HTMLTextAreaElement>('evaluation-request').value = JSON.stringify(e,null,2); get<HTMLTextAreaElement>('evaluation-result').value = ''; notice('此稿冻结任务已导出；请按冻结评估策略取得 AI 评价后人工导入 criteria 与 comment。');
     } catch (e) { if (auth === d.epoch()) { fresh = false; notice(d.failure(e)); } } finally { busy = false; controls(); }
   }
   async function loadVote() {

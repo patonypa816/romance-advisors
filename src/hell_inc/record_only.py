@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from uuid import uuid4
 from .avatar_compat import send_prepared, validate_prepared
@@ -156,7 +157,8 @@ async def run_record_only(config,out,*,sources,confirm_paid=False,http=None,mode
         summary.update(state='prepared',pcm_seconds=total);_write(out/'attempt.json',summary)
         component=(component_factory or MotionComponent)(http,out/'component',out/'unused-image',
             on_created=owned,recording=True,collect_recording=False,record_only_diagnostic=True)
-        summary.update(state='creating',create_attempted=True);_write(out/'attempt.json',summary)
+        if (out/'watchdog-stop.json').exists():raise ValueError('watchdog_stop_latched')
+        summary.update(state='creating',create_attempted=True,create_started_monotonic=time.monotonic());_write(out/'attempt.json',summary)
         # Local 180s stop deadline, not a guarantee of provider billing/end time.
         async with asyncio.timeout(180):
             await component.start(config.api_key,avatar_id=config.avatar_id)
@@ -168,7 +170,7 @@ async def run_record_only(config,out,*,sources,confirm_paid=False,http=None,mode
             def deliverable():
                 return (bool(summary['owned_live_id']) and component.live_id==summary['owned_live_id']
                         and component.recording_enabled and component._ready.is_set()
-                        and not component._stop.is_set() and not cancelled)
+                        and not component._stop.is_set() and not cancelled and not (out/'watchdog-stop.json').exists())
             summary.update(state='sending',send_attempted=True);_write(out/'attempt.json',summary)
             for index,semantic in enumerate(prepared):
                 receipt=await send_prepared(semantic,component.send_aligned_expression,deliverable,number=index+1)
