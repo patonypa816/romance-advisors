@@ -21,6 +21,19 @@ import test_m4_scheduler as scheduler
 from test_m4_policy import action, RECOVERY
 
 
+class StageOnePromptPolicyTests(unittest.TestCase):
+    def test_original_generic_voice_policy_preserved_without_old_character_or_text_rewrite(self):
+        from hell_inc.real_performance import STAGE1_PROMPT
+        # Exact generic source sentence, not the old character/persona fields.
+        self.assertIn('回答声音自然清晰、松弛、正常语速，按语义生成重音与停顿。', STAGE1_PROMPT)
+        self.assertIn('不刻意拖长或压嗓。', STAGE1_PROMPT)
+        self.assertIn('逐段按冻结台词与表达意图生成声音指令和动作', STAGE1_PROMPT)
+        self.assertIn('不得修改、增删、复述或输出台词', STAGE1_PROMPT)
+        self.assertIn('只能包含instruction、actions、recovery', STAGE1_PROMPT)
+        for historical_identity in ('朱元璋', '洪武', '陛下', '朕'):
+            self.assertNotIn(historical_identity, STAGE1_PROMPT)
+
+
 def wave_fixture(seconds=6):
     pcm = b'\0\0' * (24000 * seconds)
     out = io.BytesIO()
@@ -139,6 +152,10 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
             network.assert_not_called()
         self.assertEqual(len(self.model.calls), 2)
         self.assertEqual([c[0] for c in self.http.calls], ['POST', 'GET'])
+        self.assertIn('回答声音自然清晰、松弛、正常语速，按语义生成重音与停顿。', self.model.calls[0][0])
+        self.assertEqual(self.model.calls[0][1]['persona'], '经批准的运行时人设')
+        self.assertEqual(prepared.semantic.content['instruction'], '自然平静说话')
+        self.assertEqual(self.http.calls[0][2]['json']['input']['instruction'], prepared.semantic.content['instruction'])
         self.assertEqual(self.model.calls[0][1]['text'], self.segment['text'])
         self.assertEqual(self.model.calls[1][1]['input']['text'], self.segment['text'])
         self.assertTrue(self.model.calls[1][1]['input']['schedules'])
