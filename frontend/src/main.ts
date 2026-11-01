@@ -20,7 +20,17 @@ function syncControls() {
   el<HTMLButtonElement>('search-button').disabled = !authenticated || !healthy;
   register.textContent = busy ? '正在提交…' : pending ? '重试 / 确认原登记' : '登记游客';
 }
-function status(message: string) { el('connection').textContent = message; syncControls(); }
+function status(message: string) {
+  // Offline is authoritative even when an earlier fetch settles after the browser
+  // event. Neither a delayed health success nor a failed request may overwrite it.
+  if (!navigator.onLine) {
+    healthy = false;
+    el('connection').textContent = '浏览器离线 · 显示内容可能已陈旧，登记暂停。';
+  } else {
+    el('connection').textContent = message;
+  }
+  syncControls();
+}
 function failure(error: unknown): string {
   if (error instanceof ApiError && error.status === 401) {
     authenticated = false; healthy = false;

@@ -105,9 +105,26 @@ test('M1 real persistence, safe display, same identity, replay after response lo
   await expect(page.locator('#registration-message')).toContainText('没有重复创建档案');
   await page.unroute('**/api/players');
 
+  // Deterministically reject a read that started online AFTER the offline event.
+  // Its catch handler must not overwrite the more precise offline state.
+  await expect(submit).toBeEnabled();
+  let rejectRead!: () => void;
+  let sawRead!: () => void;
+  const readSeen = new Promise<void>(resolve => { sawRead = resolve; });
+  const rejectPendingRead = new Promise<void>(resolve => { rejectRead = resolve; });
+  await page.route('**/api/health', async route => {
+    sawRead(); await rejectPendingRead; await route.abort('failed');
+  });
+  await page.getByRole('button', { name: '重新检查连接' }).click();
+  await readSeen;
+  const readFailed = page.waitForEvent('requestfailed', request => request.url().endsWith('/api/health'));
   await context.setOffline(true);
   await expect(page.locator('#connection')).toContainText('离线');
+  rejectRead(); await readFailed;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(page.locator('#connection')).toContainText('离线');
   await expect(submit).toBeDisabled();
+  await page.unroute('**/api/health');
   await context.setOffline(false);
   await expect(page.locator('#connection')).toContainText('已连接真实 PostgreSQL');
   await expect(submit).toBeEnabled();
