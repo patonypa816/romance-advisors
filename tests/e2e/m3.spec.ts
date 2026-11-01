@@ -55,11 +55,30 @@ test('M3 three guests: revision, failed review gate, retry, all-display gate, vo
     criteria: ['originality', 'coherence', 'setting'].map(id => ({ id, score: 2, evidence: [texts[i].trim()], reason: '离线契约样例：证据为该作品原文，不代表真实模型判断。' })),
     comment: ['考勤钟将迟到转为时间倒流，客服提供清醒假。', '枕头退回老板的梦，并提供替换芯。', '复印机用影子加班，客服负责删除并归还睡眠。'][i],
   });
+  // Export is an asynchronous GET. Observe this work AND attempt, rather than
+  // treating a click or a nonempty textarea left by a previous work as completion.
+  const exportWork = async (index: number, attemptNo: number) => {
+    await workButton('export', index).click();
+    let envelope: any;
+    await expect.poll(async () => {
+      const raw = await exported.inputValue();
+      if (!raw) return null;
+      envelope = JSON.parse(raw);
+      return {
+        taskId: envelope.task_id,
+        submissionId: envelope.frozen_input?.submission?.id,
+        attemptNo: envelope.attempt_no,
+      };
+    }).toEqual({
+      taskId: submissions[index].task.id,
+      submissionId: submissions[index].id,
+      attemptNo,
+    });
+    return envelope;
+  };
   const exports: any[] = [];
   for (let i = 0; i < 3; i++) {
-    await workButton('export', i).click();
-    await expect(exported).not.toHaveValue('');
-    exports.push(JSON.parse(await exported.inputValue()));
+    exports.push(await exportWork(i, submissions[i].task.attempt_no));
     expect(exports[i].frozen_input.submission.text).toBe(texts[i]);
     expect(JSON.stringify(exports[i])).not.toContain('browser-m3-test-token-only');
     await result.fill(JSON.stringify(i === 1 ? { ...fixture(i), criteria: fixture(i).criteria.map((row, index) => index === 0 ? { ...row, evidence: ['这段证据没有出现在任何作品原文'] } : row) } : fixture(i)));
@@ -76,8 +95,7 @@ test('M3 three guests: revision, failed review gate, retry, all-display gate, vo
   await expect(page.locator('#competition-settle')).toBeDisabled();
   await expect(workButton('retry', 0)).toBeDisabled();
   await workButton('retry', 1).click();
-  await workButton('export', 1).click();
-  const retry = JSON.parse(await exported.inputValue());
+  const retry = await exportWork(1, exports[1].attempt_no + 1);
   expect(retry.attempt_no).toBe(exports[1].attempt_no + 1);
   expect(retry.input_hash).toBe(exports[1].input_hash);
   expect(retry.frozen_input).toEqual(exports[1].frozen_input);

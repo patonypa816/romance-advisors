@@ -81,7 +81,7 @@ function renderDetail(player: Player) {
   else for (const event of player.recent_events) {
     if (event && typeof event === 'object') {
       const record = event as Record<string, unknown>;
-      const title = record.type === 'interview_hired' ? '面试录用' : record.type === 'interview_rejected' ? '面试未录用' : '已确认职业事件';
+      const title = record.type === 'interview_hired' ? '面试录用' : record.type === 'interview_rejected' ? '面试未录用' : record.type === 'competition_participated' ? '创意赛参与记录' : '已确认职业事件';
       container.append(node('h3', title), node('p', typeof record.summary === 'string' ? record.summary : JSON.stringify(record), 'answer-copy'));
       if (typeof record.created_at === 'string') container.append(node('small', record.created_at));
     }
