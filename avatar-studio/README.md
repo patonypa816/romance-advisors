@@ -4,6 +4,8 @@
 
 `examples/` 保存脱敏后的四条待机动作规则和角色设定。动作库、形象和动作 ID 已替换为占位符：它们不是可直接启用的云端资源。需在本地重新关联真实资源并经过原有同步、摘要和绑定校验；人设样例可通过界面填写，不能直接覆盖运行状态文件。默认底图是 `studio/assets/study-facing-fresh-smile-720x1280-v7.png`；另一张是原本选用的形象，迁移后需重新选择。运行状态、会话、音视频、日志、本机密钥和其他历史素材未迁移。
 
+Cloud 任务的依赖准备、Secret 配置要求与非敏感配置恢复计划见 [CLOUD_SETUP.md](CLOUD_SETUP.md)；准备脚本不会开场或调用模型。
+
 ## 环境与离线检查
 
 需要 Python 3、`requirements.txt` 中的 aiohttp、Pillow、NumPy；语音转换还需要 `ffmpeg` 和 `ffprobe`。依赖须预先安装；以下检查本身不请求模型或开启云场：
@@ -29,12 +31,13 @@ cd ..
 
 | 变量 | 用途 |
 | --- | --- |
-| `BAILIAN_API_KEY` | 百炼文本大脑和 TTS API 密钥 |
+| `BAILIAN_API_KEY` | 百炼文本大脑和 TTS API 密钥；未设置时使用 DASHSCOPE_API_KEY 别名 |
 | `BAILIAN_WORKSPACE_ID` | 百炼北京地域工作空间 ID；与密钥一起提供 |
 | `VIDU_API_KEY` | Vidu 数字人组件 API 密钥 |
 
-环境变量完整配置时优先使用；未提供对应变量时保留原凭据文件回退逻辑，但迁移后的相对路径已变化，原机文件不会自动跟随仓库迁移。只提供百炼两个变量中的一个会报错，不会混用另一来源。百炼请求发往 `{workspace}.cn-beijing.maas.aliyuncs.com`，Vidu 请求发往 `api.vidu.cn`；TTS 音频下载、WebSocket 和 RTC 还可能需要额外网络目的地，须按实际服务返回和运行环境验证。
+环境变量完整配置时优先使用；未提供对应变量时保留原凭据文件回退逻辑，但迁移后的相对路径已变化，原机文件不会自动跟随仓库迁移。显式 BAILIAN_API_KEY（包括空值）优先于 DASHSCOPE_API_KEY；只提供百炼密钥或 workspace 中的一个会报错，不会混用另一来源。百炼请求发往 `{workspace}.cn-beijing.maas.aliyuncs.com`，Vidu 请求发往 `api.vidu.cn`；TTS 音频下载、WebSocket 和 RTC 还可能需要额外网络目的地，须按实际服务返回和运行环境验证。
 
 历史 CloudBase 适配器并非当前默认大脑。若日后明确启用，必须自行提供 `CLOUDBASE_ENV_ID`、匹配的本地配置和私有凭据文件；迁移副本不包含原账户标识或凭据。
 
 GitHub 仓库存储代码；GitHub Actions 仅在工作流显式引用 Secrets 时向任务提供凭据。Codex Cloud 调试则需在该环境配置变量和必要网络访问，两者配置互不自动同步。离线代码和单元测试不需要密钥。有限的真实 API 测试须单独授权并控制费用；本次迁移没有调用模型或验证云端媒体链路。
+

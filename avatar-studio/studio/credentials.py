@@ -47,10 +47,17 @@ def cloudbase_config(data):
 def config():
     return json.loads(LEGACY_SETTINGS.read_text())
 
+def _environment_value(name):
+    # An explicitly supplied BAILIAN key (even empty) must not be masked.
+    if name == "BAILIAN_API_KEY" and name not in os.environ:
+        return os.environ.get("DASHSCOPE_API_KEY", "")
+    return os.environ.get(name, "")
+
+
 def load_bailian():
     # Any environment override must be complete: never silently mix sources.
-    if "BAILIAN_API_KEY" in os.environ or "BAILIAN_WORKSPACE_ID" in os.environ:
-        key = os.environ.get("BAILIAN_API_KEY", "").strip()
+    if any(name in os.environ for name in ("BAILIAN_API_KEY", "DASHSCOPE_API_KEY", "BAILIAN_WORKSPACE_ID")):
+        key = _environment_value("BAILIAN_API_KEY").strip()
         workspace = os.environ.get("BAILIAN_WORKSPACE_ID", "").strip()
     else:
         source = Path(config()["bailian_credentials_file"])
@@ -75,6 +82,8 @@ def load_vidu():
 
 def source_available(names, legacy_settings=LEGACY_SETTINGS):
     """Check source presence only; local validation still occurs before use."""
-    if any(name in os.environ for name in names):
-        return all(bool(os.environ.get(name, "").strip()) for name in names)
+    if (any(name in os.environ for name in names) or
+            ("BAILIAN_API_KEY" in names and "DASHSCOPE_API_KEY" in os.environ)):
+        return all(bool(_environment_value(name).strip()) for name in names)
     return legacy_settings.exists()
+
