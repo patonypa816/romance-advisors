@@ -1,7 +1,7 @@
 name: Avatar offline preparation checks
 on:
   push:
-    branches: ['codex/avatar-*', main]
+    branches: ['codex/avatar-*', 'codex/m4-game-performance', main]
     paths: ['avatar-studio/**', '.github/workflows/avatar-offline.yml']
   pull_request:
     paths: ['avatar-studio/**', '.github/workflows/avatar-offline.yml']
@@ -25,7 +25,7 @@ jobs:
         run: python -m pip install --index-url https://pypi.org/simple -r avatar-studio/requirements.txt
       - name: Credential mapping tests with dummy values only
         working-directory: avatar-studio/studio
-        run: python -B -m unittest test_credentials_env test_bailian_config
+        run: python -B -m unittest test_credentials_env test_bailian_config test_connection_compat
       - name: Mocked preparation and SDK fetch tests
         working-directory: avatar-studio
         run: python -B -m unittest discover -s tools -p test_cloud_prepare.py

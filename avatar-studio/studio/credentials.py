@@ -54,10 +54,23 @@ def _environment_value(name):
     return os.environ.get(name, "")
 
 
+def header_safe_key(value):
+    """Environment tokens are opaque; validate transport safety, not vendor syntax."""
+    return isinstance(value, str) and 1 <= len(value) <= 4096 and all(
+        "!" <= char <= "~" for char in value)
+
+
+def is_environment_bailian_key(value):
+    # Only the selected environment source may bypass the legacy vendor format.
+    return (any(name in os.environ for name in ("BAILIAN_API_KEY", "DASHSCOPE_API_KEY"))
+            and header_safe_key(value) and value == _environment_value("BAILIAN_API_KEY"))
+
+
 def load_bailian():
     # Any environment override must be complete: never silently mix sources.
-    if any(name in os.environ for name in ("BAILIAN_API_KEY", "DASHSCOPE_API_KEY", "BAILIAN_WORKSPACE_ID")):
-        key = _environment_value("BAILIAN_API_KEY").strip()
+    environment = any(name in os.environ for name in ("BAILIAN_API_KEY", "DASHSCOPE_API_KEY", "BAILIAN_WORKSPACE_ID"))
+    if environment:
+        key = _environment_value("BAILIAN_API_KEY")
         workspace = os.environ.get("BAILIAN_WORKSPACE_ID", "").strip()
     else:
         source = Path(config()["bailian_credentials_file"])
@@ -65,14 +78,17 @@ def load_bailian():
         key, workspace = records.get("apiKey", "").strip(), records.get("workspaceId", "").strip()
         if records.get("apiHost", "").removeprefix("https://").rstrip("/") != workspace + ".cn-beijing.maas.aliyuncs.com":
             raise ValueError("百炼凭据地域不匹配")
-    if not key.startswith("sk-") or not re.fullmatch(r"[A-Za-z0-9-]+", workspace):
+    if not (header_safe_key(key) if environment else key.startswith("sk-")) or not re.fullmatch(r"[A-Za-z0-9-]+", workspace):
         raise ValueError("百炼凭据格式不正确")
     return key, workspace
 
 
 def load_vidu():
     if "VIDU_API_KEY" in os.environ:
-        key = os.environ["VIDU_API_KEY"].strip()
+        key = os.environ["VIDU_API_KEY"]
+        if not header_safe_key(key):
+            raise ValueError("请填写完整Vidu密钥")
+        return key
     else:
         key = Path(config()["vidu_credentials_file"]).read_text(encoding="utf-8-sig").strip()
     if not key.startswith("vda_") or len(key) < 20 or any(c.isspace() for c in key):

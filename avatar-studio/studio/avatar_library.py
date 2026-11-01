@@ -26,8 +26,10 @@ from PIL import Image, UnidentifiedImageError
 
 try:
     from . import credentials
+    from .connection import client_session
 except ImportError:
     import credentials
+    from connection import client_session
 
 MAX_IMAGE = 20 * 1024 * 1024
 MAX_PIXELS = 40_000_000
@@ -136,7 +138,7 @@ class ViduAvatarClient:
 
     async def _request(self, method, path, *, body=None, params=None):
         if self._api is None:
-            self._api = aiohttp.ClientSession()
+            self._api = client_session()
         try:
             key = credentials.load_vidu()
             async with self._api.request(method, "https://api.vidu.cn" + path, json=body, params=params,

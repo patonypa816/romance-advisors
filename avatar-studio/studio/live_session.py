@@ -23,6 +23,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
+from connection import client_session
 from motion_component import MotionComponent as PersistentComponent
 from tts_live import synthesize_segment
 from action_schema import (ACTION_POST_SEND_SECONDS, READING_LEAD_SECONDS, compile_reading_timeline, parse_plan,
@@ -49,7 +50,7 @@ VARIANTS = {
     "A": {"image": "study-facing-fresh-smile-720x1280-v7.png", "title": "Terra · 整套读弹幕与自然接话",
           "goal": "结合上下文自然选择整套读弹幕或直接接话；整套保留前倾、眯眼、1秒后轻声短读与回正，不把动作拆开随机。"},
 }
-SOURCE_FILES = ("server.py", "automation.py", "cloudbase_ai.py", "bailian_ai.py", "comment_intake.py", "dyhub_client.py", "live_session.py", "credentials.py", "component_live.py", "tts_live.py", "brain-context.json", "brain_bridge.py", "action_schema.py", "motion_component.py", "diagnostics.py", "director.py", "avatar_library.py", "fixed_replay.py", "semantic_replay.py", "semantic_speech.py", "timed_action_planner.py", "idle_motion.py", "idle_action_library.py")
+SOURCE_FILES = ("connection.py", "server.py", "automation.py", "cloudbase_ai.py", "bailian_ai.py", "comment_intake.py", "dyhub_client.py", "live_session.py", "credentials.py", "component_live.py", "tts_live.py", "brain-context.json", "brain_bridge.py", "action_schema.py", "motion_component.py", "diagnostics.py", "director.py", "avatar_library.py", "fixed_replay.py", "semantic_replay.py", "semantic_speech.py", "timed_action_planner.py", "idle_motion.py", "idle_action_library.py")
 PREVIOUS_COMPONENT_DIRS = (
     "zhuyuanzhang-terra-ge-overlay-20261029",
     "zhuyuanzhang-terra-action-rules-20261029",
@@ -371,7 +372,7 @@ class LiveSession:
         save(self.out / "conversation.json", {"comments": self.public_comments(), "totals": self.totals})
 
     async def startup(self, app):
-        self.http = aiohttp.ClientSession()
+        self.http = client_session()
         self.component = PersistentComponent(self.http, self.out, self.image, self.diagnostics,
                                              short_performance_test=self.short_performance_test,
                                              continuous_speech_test=self.continuous_speech_test,
