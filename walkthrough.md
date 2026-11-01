@@ -18,3 +18,9 @@
 ### 首轮 Actions 回读
 
 运行 `41324659684` 中，PostgreSQL 17 迁移重复执行通过，16 项 Python 测试全部通过。浏览器主登记查询路径通过，但 fragment 登录导航检查失败；正在修复前端并等待修复提交全量复验。此次回读是部分通过，不代表整个 M1 已完成验收。
+
+### M1 修复后全量验收通过
+
+2026-11-01，代码提交 `76b26419310453f0098286375f91e7245d620ea9` 的 [Actions 41325088938](https://github.com/patonypa816/hell-inc-game/actions/runs/41325088938) 成功：PostgreSQL 17 迁移连续两次、16 项 Python 测试和 2 项 Playwright 浏览器测试全部通过。首轮登录 fragment 导航失败已修复，最终代码完整复验通过。[PR #1](https://github.com/patonypa816/hell-inc-game/pull/1) 为开发交付入口；具体覆盖与限制见 [验收记录](docs/m1-acceptance.md)。
+
+结论仅为 M1 隔离模拟身份功能通过当前自动化验收。没有部署生产或长期在线预览，CI 数据库没有跨 job 保留承诺；没有实现 M2／P1 或验证真实平台、模型、数字人、媒体和长期备份恢复。本次收尾只更新文档，不改应用代码。

@@ -1,6 +1,6 @@
 # HELL INC. 地狱招聘局
 
-面向抖音中文观众的互动直播游戏。本分支实现 **M1 隔离测试世界的游客登记与查档**：稳定模拟身份、昵称更新、命令防重、真实 PostgreSQL 持久化。没有真实抖音接入、面试、资产修改、AI、数字人或收费云服务。实际验证结论见 [HANDOVER](HANDOVER.md)。
+面向抖音中文观众的互动直播游戏。本分支实现 **M1 隔离测试世界的游客登记与查档**：稳定模拟身份、昵称更新、命令防重、真实 PostgreSQL 持久化。没有真实抖音接入、面试、资产修改、AI、数字人或收费云服务。M1 当前自动化验收已通过（16 项 Python + 2 项浏览器测试），但未部署长期在线服务。具体提交、证据与限制见 [验收记录](docs/m1-acceptance.md) 和 [HANDOVER](HANDOVER.md)。
 
 ## 开发运行
 
@@ -56,6 +56,7 @@ cd frontend && npm run build
 
 ## 文档
 
+- [M1 验收记录](docs/m1-acceptance.md)：精确代码提交、Actions 证据与限制
 - [HANDOVER](HANDOVER.md)：当前状态与实际验证
 - [AGENTS](AGENTS.md)：协作约束
 - [SPEC](docs/SPEC.md)：唯一产品规格与 M1–M6 顺序
