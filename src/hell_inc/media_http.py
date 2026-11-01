@@ -128,6 +128,13 @@ class MediaHTTP:
         if self._owns and self.session is not None:await self.session.close()
 
 
+class PlannerOutputError(ValueError):
+    """Only successful-response model content, never headers/error response bodies."""
+    def __init__(self,candidate):
+        self.candidate=candidate
+        super().__init__('planner_output_json_invalid')
+
+
 class BailianPlanner:
     """One explicitly requested non-thinking structured call; no retries.
 
@@ -151,14 +158,22 @@ class BailianPlanner:
         endpoint=f'https://{self.workspace}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions'
         request={'model':self.model,'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(data,ensure_ascii=False,allow_nan=False)}], 'response_format':{'type':'json_object'},'temperature':0.2,'enable_thinking':False,'max_tokens':self.max_tokens}
         async with self.http.post(endpoint,headers={'Authorization':'Bearer '+self.api_key,'Content-Type':'application/json'},json=request,timeout=aiohttp.ClientTimeout(total=self.timeout_seconds)) as response:
-            if response.status!=200:raise RuntimeError('planner_http_error')
+            if response.status!=200:
+                error=RuntimeError('planner_http_error');error.status=response.status;raise error
             raw=await response.content.read(1048577)
             if len(raw)>1048576:raise ValueError('planner_response_too_large')
             try:
-                result=json.loads(raw);output=json.loads(result['choices'][0]['message']['content'])
-                if not isinstance(output,dict):raise ValueError()
+                result=json.loads(raw);model_text=result['choices'][0]['message']['content']
+                if not isinstance(model_text,str):raise ValueError()
             except (ValueError,KeyError,IndexError,TypeError):raise ValueError('planner_response_invalid') from None
             request_id=result.get('id')
             if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}',request_id):request_id=None
-            usage={k:v for k,v in (result.get('usage') or {}).items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v>=0}
+            raw_usage=result.get('usage')
+            usage={k:v for k,v in (raw_usage if isinstance(raw_usage,dict) else {}).items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v>=0}
+            candidate={'model_text':model_text,'request_id':request_id,'usage':usage}
+            try:
+                output=json.loads(model_text)
+                if not isinstance(output,dict):raise ValueError()
+            except (ValueError,TypeError):raise PlannerOutputError(candidate) from None
             return {'output':output,'request_id':request_id,'usage':usage}
+

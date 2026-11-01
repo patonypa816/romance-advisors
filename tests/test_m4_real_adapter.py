@@ -34,6 +34,17 @@ class StageOnePromptPolicyTests(unittest.TestCase):
             self.assertNotIn(historical_identity, STAGE1_PROMPT)
 
 
+    def test_anchor_prompt_matches_pinned_contract_and_strict_json_example(self):
+        from hell_inc.real_performance import STAGE1_PROMPT
+        from hell_inc.avatar_compat import freeze_stage1
+        for rule in ('不含标点或空白','不能跨标点拼接','去标点和空白后的整段台词计次',
+                     '只能含anchor、motions、gaze、expression','编译后完整Type9最多200字'):
+            self.assertIn(rule,STAGE1_PROMPT)
+        example=json.loads(next(line for line in STAGE1_PROMPT.splitlines() if line.startswith('{"instruction"')))
+        self.assertEqual(set(example),{'instruction','actions','recovery'})
+        self.assertEqual(freeze_stage1('你好',{'text':'你好',**example}).content['text'],'你好')
+
+
 def wave_fixture(seconds=6):
     pcm = b'\0\0' * (24000 * seconds)
     out = io.BytesIO()
@@ -326,6 +337,93 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
                 await self.adapter.prepare(self.segment, lambda: False, context={**self.context, **change})
         self.assertEqual(self.model.calls, []); self.assertEqual(self.http.calls, [])
         self.assertEqual(self.evidence, [])
+
+
+    def artifact(self,name):
+        paths=list((Path(self.tmp.name)/'private-artifacts').rglob(name))
+        self.assertEqual(len(paths),1)
+        self.assertEqual(paths[0].stat().st_mode & 0o777,0o600)
+        return json.loads(paths[0].read_text())
+
+    async def test_rejected_stage1_candidate_keeps_constraint_usage_and_no_secret_or_tts(self):
+        bad=action();bad['anchor']['quote']='你好，'
+        async def reply(prompt,data):
+            self.model.calls.append((prompt,data))
+            return {'output':{'instruction':'opaque-offline-credential https://private.example/raw?signature=never-store',
+                              'actions':[bad],'recovery':RECOVERY},
+                    'request_id':'candidate-one','usage':{'input_tokens':415,'output_tokens':441,'total_tokens':856},
+                    'headers':{'Authorization':'never-capture-header'}}
+        self.model.complete_json=reply
+        with self.assertRaises(ValueError):await self.prepare()
+        candidate=self.artifact('stage1-candidate.json');error=self.artifact('preparation-error.json')
+        self.assertEqual(candidate['parsed_output']['actions'][0]['anchor']['quote'],'你好，')
+        self.assertEqual(candidate['usage']['total_tokens'],856)
+        self.assertEqual(candidate['usage']['input_tokens'],415)
+        self.assertEqual(candidate['request_id'],'candidate-one')
+        self.assertEqual(candidate['evidence'],'candidate_only_not_final');self.assertFalse(candidate['sent'])
+        self.assertEqual(error['failed_phase'],'stage1_validation')
+        self.assertEqual(error['error_code'],'stage1_validation_failed')
+        self.assertIn('不含标点或空白',error['constraint'])
+        raw=json.dumps(candidate,ensure_ascii=False)+json.dumps(error,ensure_ascii=False)
+        for hidden in ('opaque-offline-credential','https://','never-store','never-capture-header'):
+            self.assertNotIn(hidden,raw)
+        self.assertEqual(len(self.model.calls),1);self.assertEqual(self.http.calls,[])
+        self.assertEqual(self.component._ws.frames,[])
+        self.assertEqual(self.evidence[-1][1]['failed_phase'],'stage1_validation')
+
+    async def test_candidate_property_names_are_redacted_too(self):
+        async def reply(*args):
+            return {'output':{'opaque-offline-credential':'value','https://private.example/?signature=hidden':'value'},
+                    'usage':{'total_tokens':2}}
+        self.model.complete_json=reply
+        with self.assertRaises(ValueError):await self.prepare()
+        raw=json.dumps(self.artifact('stage1-candidate.json'))
+        for hidden in ('opaque-offline-credential','https://','private.example','signature=hidden'):
+            self.assertNotIn(hidden,raw)
+        self.assertEqual(self.http.calls,[])
+
+    async def test_rejected_stage2_candidate_saved_without_repeating_paid_preparation(self):
+        original=self.model.complete_json
+        async def reply(prompt,data):
+            result=await original(prompt,data)
+            if 'input' in data:result['output']={'schedule_id':'not-in-verified-schedules'}
+            return result
+        self.model.complete_json=reply
+        with self.assertRaises(ValueError):await self.prepare()
+        self.assertEqual(self.artifact('stage2-candidate.json')['parsed_output'],{'schedule_id':'not-in-verified-schedules'})
+        error=self.artifact('preparation-error.json')
+        self.assertEqual(error['failed_phase'],'stage2_validation')
+        self.assertEqual(error['constraint'],'invalid_timed_action_schedule_id')
+        self.assertEqual(len(self.model.calls),2);self.assertEqual(len(self.http.calls),1)
+        self.assertEqual(self.component._ws.frames,[])
+
+    async def test_invalid_model_json_retains_only_bounded_model_content(self):
+        from hell_inc.media_http import BailianPlanner
+        class PlannerHTTP:
+            def post(inner,*args,**kwargs):
+                value={'id':'invalid-json-request','usage':{'total_tokens':7},
+                       'choices':[{'message':{'content':'{"broken": "opaque-offline-credential https://private.example/?signature=hidden"'}}],
+                       'headers':{'Authorization':'do-not-store-envelope'}}
+                return Response(json.dumps(value).encode(),'application/json')
+        self.adapter.model=BailianPlanner(PlannerHTTP(),'opaque-offline-credential','test-workspace','test-model')
+        with self.assertRaises(ValueError):await self.prepare()
+        candidate=self.artifact('stage1-candidate.json');error=self.artifact('preparation-error.json')
+        self.assertIn('broken',candidate['model_text']);self.assertIsNone(candidate['parsed_output'])
+        self.assertEqual(candidate['usage']['total_tokens'],7)
+        self.assertEqual(error['error_code'],'planner_output_json_invalid')
+        raw=json.dumps(candidate)
+        for hidden in ('opaque-offline-credential','https://','signature=hidden','do-not-store-envelope'):
+            self.assertNotIn(hidden,raw)
+        self.assertEqual(self.http.calls,[]);self.assertEqual(self.component._ws.frames,[])
+
+    async def test_external_error_text_is_not_a_validator_constraint(self):
+        async def failed(*args):raise ValueError('opaque-offline-credential https://private.example/?signature=hidden')
+        self.model.complete_json=failed
+        with self.assertRaises(ValueError):await self.prepare()
+        error=self.artifact('preparation-error.json')
+        self.assertEqual(error['failed_phase'],'stage1_provider');self.assertEqual(error['error_type'],'ValueError')
+        self.assertNotIn('constraint',error);self.assertNotIn('private.example',json.dumps(error))
+        self.assertEqual(self.http.calls,[])
 
 
 class OriginalComponentCreationTests(unittest.IsolatedAsyncioTestCase):
