@@ -180,7 +180,13 @@ class M4ApiTests(M4Fixture):
         self.assertEqual((await self.record(second['performance_id']))['state'], 'send_completed')
 
     async def test_stale_session_invalid_source_and_auth_origin_guards(self):
-        await self.post('/api/performance-session', {**self.session_payload, 'command_id': str(uuid4()), 'session_id': str(uuid4()), 'mode': 'real'}, 400)
+        # Phase2 recognizes real mode but default opt-in remains closed (state conflict).
+        disabled = await self.post('/api/performance-session', {**self.session_payload, 'command_id': str(uuid4()), 'session_id': str(uuid4()), 'mode': 'real'}, 409)
+        self.assertEqual(disabled['error']['code'], 'real_media_disabled')
+        invalid = await self.post('/api/performance-session', {**self.session_payload, 'command_id': str(uuid4()), 'session_id': str(uuid4()), 'mode': 'unrecognized_mode'}, 400)
+        self.assertEqual(invalid['error']['code'], 'validation_error')
+        self.assertEqual((await self.get('/api/performance-session'))['session']['session_id'], self.sid)
+        self.assertIsNone(self.service.runtime.component)
         await self.post('/api/performances', signed_payload(str(uuid4())), 404)
         await self.post('/api/performance-sources/freeze', {'source': {'kind': 'interview_result', 'id': str(uuid4())}}, 404)
         await self.post('/api/performance-sources/freeze', {'source': {'kind': 'fixed_script', 'id': 'm4-demo-v1'}, 'scores': 9}, 400)

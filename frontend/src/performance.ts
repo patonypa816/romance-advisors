@@ -68,7 +68,7 @@ export function setupPerformance(d: Dependencies) {
     get('media-state').textContent = !media?.real_enabled ? '真实媒体未配置 / 禁用；不能启动云场' : `真实媒体 ${media.state} · 付费开关 ${media.paid_enabled ? '已启用（仍需本次授权）' : '关闭'} · 云场结束回读 ${media.cloud_end_confirmed ? '已确认' : '未确认'} · 接收者 ${media.receiver.healthy ? 'client_reported 就绪' : '未就绪'} · 人工确认 ${media.operator_confirmed ? '已记录（非验收）' : '尚无'}`;
     get<HTMLButtonElement>('submit').textContent = real ? '提交真实媒体演出（不自动执行）' : '提交离线演出';
     get<HTMLButtonElement>('execute').textContent = real ? '执行真实演出（可能产生模型 / TTS 费用）' : '执行离线协议演练（不播放音画）';
-    get('freshness').textContent = fresh && d.ready() ? '服务器快照已确认 · LOCAL 离线协议' : '快照待确认 / 可能陈旧 · 写入暂停';
+    get('freshness').textContent = fresh && d.ready() ? session?.mode === 'real' ? '服务器快照已确认 · 受控真实媒体（未验收）' : '服务器快照已确认 · LOCAL 离线协议' : '快照待确认 / 可能陈旧 · 写入暂停';
     get('session-state').textContent = session ? `LOCAL ${session.mode} · ${session.status} · ${session.session_id}` : '尚无 LOCAL 演练会话';
     for (const a of ['create','pause','resume','close']) get<HTMLButtonElement>(`session-${a}`).disabled = !e || (a === 'create' ? !!session && session.status !== 'closed' : !session || (a === 'pause' ? session.status !== 'active' : a === 'resume' ? session.status !== 'paused' || real && !realReady : session.status === 'closed' || (real ? (!media || media.creation_attempted && !media.cloud_end_confirmed) || records.some(p => ['sending','preparing'].includes(p.state)) : session.status === 'unknown' || records.some(p => ['sending','unknown'].includes(p.state)))));
     for (const id of ['source-kind','source-id','submission-id','aspect','expiry']) (get(id) as HTMLInputElement).disabled = busy || !!pending;
@@ -137,7 +137,7 @@ export function setupPerformance(d: Dependencies) {
       if (ae !== d.epoch() || le !== localEpoch) return;
       const status = (err as {status?: number}).status;
       if (status && status < 500) pending = null;
-      fresh = false; notice(`${d.failure(err)} ${pending ? queryOnly ? '执行结果待查；只查询，不自动重播。' : '原编号和完整载荷已保留，只可原样确认。' : '操作未采纳。'}`);
+      fresh = false; notice(`${d.failure(err)} ${pending ? queryOnly ? url.endsWith('/media/start') ? '云场创建尝试待查；不自动重建。' : '执行结果待查；只查询，不自动重播。' : '原编号和完整载荷已保留，只可原样确认。' : '操作未采纳。'}`);
     } finally {busy = false; render(); d.changed(); if (d.ready()) await refresh();}
   }
   async function freeze(source?: PerformanceSource) {
