@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Check configuration and read Vidu avatar endpoint
+      - name: Check Bailian and Vidu read-only endpoints
         env:
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           BAILIAN_WORKSPACE_ID: ${{ vars.BAILIAN_WORKSPACE_ID }}
@@ -26,36 +26,52 @@ jobs:
           import json
           import os
           import re
-          import socket
           import sys
           import urllib.error
           import urllib.request
 
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
           failures = []
           key = os.environ.get('DASHSCOPE_API_KEY', '').strip()
           workspace = os.environ.get('BAILIAN_WORKSPACE_ID', '').strip()
-          if not key.startswith('sk-') or not re.fullmatch(r'[A-Za-z0-9-]+', workspace):
+          if (not key.startswith('sk-') or any(c.isspace() for c in key)
+                  or not re.fullmatch(r'[A-Za-z0-9-]+', workspace)):
               print('Bailian: missing or invalid key/workspace format')
               failures.append('bailian-config')
           else:
-              print('Bailian: key/workspace format present (authentication not tested)')
+              request = urllib.request.Request(
+                  'https://' + workspace + '.cn-beijing.maas.aliyuncs.com/api/v1/models?page_no=1&page_size=1',
+                  headers={'Authorization': 'Bearer ' + key, 'Accept': 'application/json'},
+                  method='GET',
+              )
               try:
-                  socket.getaddrinfo(workspace + '.cn-beijing.maas.aliyuncs.com', 443)
-              except OSError:
-                  print('Bailian: workspace DNS resolution failed')
-                  failures.append('bailian-dns')
+                  with urllib.request.build_opener(NoRedirect()).open(request, timeout=20) as response:
+                      status = response.status
+                      raw = response.read(1024 * 1024 + 1)
+                      if status != 200 or len(raw) > 1024 * 1024:
+                          raise ValueError('unexpected response')
+                      value = json.loads(raw)
+                      if (not isinstance(value, dict) or value.get('success') is not True
+                              or not isinstance(value.get('output'), dict)
+                              or not isinstance(value['output'].get('models'), list)):
+                          raise ValueError('unexpected response')
+              except urllib.error.HTTPError as error:
+                  print(f'Bailian: read-only request failed (HTTP {error.code})')
+                  failures.append('bailian-http')
+              except Exception:
+                  print('Bailian: read-only request failed or response was invalid')
+                  failures.append('bailian-request')
               else:
-                  print('Bailian: workspace DNS resolved (API not called)')
+                  print('Bailian: authenticated read-only model list request succeeded (HTTP 200)')
 
           vidu_key = os.environ.get('VIDU_API_KEY', '').strip()
           if not vidu_key.startswith('vda_') or len(vidu_key) < 20 or any(c.isspace() for c in vidu_key):
               print('Vidu: missing or invalid key format')
               failures.append('vidu-config')
           else:
-              class NoRedirect(urllib.request.HTTPRedirectHandler):
-                  def redirect_request(self, req, fp, code, msg, headers, newurl):
-                      return None
-
               request = urllib.request.Request(
                   'https://api.vidu.cn/live/v1/avatars?pager.page=0&pager.pagesz=1',
                   headers={'Authorization': 'Token ' + vidu_key, 'Accept': 'application/json'},
