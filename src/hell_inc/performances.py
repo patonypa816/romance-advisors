@@ -438,14 +438,23 @@ class PerformanceService:
         async with self.sender_lock:
             async with self._tx() as (conn,rev,now):
                 s=await self._session(conn,id)
-                if s['status']=='closed':return
+                if s['status']=='closed':return {**s['media'],'stop_requested':True}
                 if s['media'].get('cloud_end_confirmed') and not patch.get('cloud_end_confirmed'):
-                    return  # Positive end readback is monotonic; stale failures cannot erase it.
+                    return deepcopy(s['media'])  # Positive end readback is monotonic.
                 if patch.get('owned_live_id') and s['media'].get('owned_live_id') not in (None,patch['owned_live_id']):raise PerformanceError('owned_live_id_conflict')
                 s['media'].update(deepcopy(patch))
+                if s['media'].get('stop_requested') and s['media']['state'] in ('creating','connecting','waiting_receiver','ready'):
+                    s['media']['state']='stopping'
                 if patch.get('state')=='unknown':s['status']='unknown'
                 elif patch.get('state')=='ended':s['status']='paused'
                 await self._save_session(conn,s,now);await self._revision(conn)
+                return deepcopy(s['media'])
+
+    async def _media_start_allowed(self,id):
+        async with self.sender_lock:
+            async with self._tx() as (conn,rev,now):
+                s=await self._session(conn,id)
+                return not self.gate and not self.stop_requested and s['status']=='paused' and s['media'].get('state')=='creating' and not s['media'].get('stop_requested') and s['media'].get('creation_attempted') is True
 
     async def persist_preparation(self,context,evidence):
         async with self.sender_lock:
@@ -478,13 +487,16 @@ class PerformanceService:
             media=s['media'];owned=media.get('owned_live_id')
             if action=='start':
                 if data['confirm_paid'] is not True:raise ValidationError('需要明确收费确认。')
+                if media.get('stop_requested'):raise PerformanceError('media_stop_latched')
                 self.runtime.ensure_configured()
                 if media.get('creation_attempted'):raise PerformanceError('media_already_attempted')
                 media.update(state='creating',creation_attempted=True);s['status']='paused';launch=True
             elif action in ('stop','reconcile'):
                 self.runtime.pause()
                 if s['status']!='unknown':s['status']='paused'
-                if action=='stop' and self.runtime.component is not None:self.runtime.component.latch_stop()
+                if action=='stop':
+                    media['stop_requested']=True
+                    self.runtime.latch_stop(id)
                 await self._pause_rows(conn,id,now)
                 if not media.get('creation_attempted'):
                     media.update(state='not_started',cloud_end_confirmed=False);s['status']='paused'
@@ -501,7 +513,12 @@ class PerformanceService:
             async def execute():
                 try:
                     if action=='start':
-                        async def created(live_id,metadata):await self._update_media(id,{'owned_live_id':live_id,'state':'connecting'})
+                        if not await self._media_start_allowed(id):
+                            self.runtime.latch_stop(id)
+                            return
+                        async def created(live_id,metadata):
+                            media=await self._update_media(id,{'owned_live_id':live_id,'state':'connecting'})
+                            return media.get('stop_requested') is True
                         await self.runtime.start(id,created,lambda patch:self._update_media(id,patch))
                     else:
                         patch=await (self.runtime.stop(id,owned) if action=='stop' else self.runtime.reconcile(id,owned))
@@ -518,7 +535,7 @@ class PerformanceService:
         async with self.sender_lock:
             async with self._tx() as (conn,rev,now):
                 s=await self._session(conn,id)
-                if s['mode']!='real' or s['status']=='closed' or not s['media'].get('owned_live_id'):raise PerformanceError('rtc_not_ready')
+                if s['mode']!='real' or s['status']=='closed' or s['media'].get('stop_requested') or not s['media'].get('owned_live_id'):raise PerformanceError('rtc_not_ready')
                 claim=self.runtime.claim(id,data['receiver_id'])
                 s['status']='paused';await self._pause_rows(conn,id,now)
                 await self._save_session(conn,s,now);rev=await self._revision(conn)

@@ -85,7 +85,9 @@ async def _read_timestamp_stream(response: Any, out: Path, secret: str) -> tuple
     data_lines: list[bytes] = []
     event_bytes = total = log_bytes = 0
     stopped = False
-    with private_open(out / "events-safe.jsonl", "x", encoding="utf-8") as log:
+    done = False
+    # Original bytes only: sequential SSE chunks, no header synthesis or repair.
+    with private_open(out / "stream-audio.wav.part", "xb") as audio_file, private_open(out / "events-safe.jsonl", "x", encoding="utf-8") as log:
         def log_entry(entry: dict) -> None:
             nonlocal log_bytes
             raw = json.dumps(_safe(entry, secret), ensure_ascii=False) + "\n"
@@ -95,11 +97,14 @@ async def _read_timestamp_stream(response: Any, out: Path, secret: str) -> tuple
                 log_bytes += size
 
         def consume() -> None:
-            nonlocal stopped
+            nonlocal stopped, done
             if not data_lines:
                 return
             raw = b"\n".join(data_lines)
             if raw.strip() == b"[DONE]":
+                if not stopped or done:
+                    raise _StreamError("tts_not_finished")
+                done = True
                 return
             try:
                 event = json.loads(raw)
@@ -122,15 +127,17 @@ async def _read_timestamp_stream(response: Any, out: Path, secret: str) -> tuple
             audio = output.get("audio")
             if isinstance(audio, dict):
                 chunk = audio.get("data")
-                if chunk:
+                if chunk is not None and chunk != "":
                     try:
                         decoded = base64.b64decode(chunk, validate=True)
                     except (ValueError, TypeError):
                         state["reason"] = "stream_audio_invalid"
+                        raise _StreamError("stream_audio_invalid") from None
                     else:
                         state["audio_bytes"] += len(decoded)
                         if state["audio_bytes"] > MAX_AUDIO_BYTES:
                             raise _StreamError("audio_too_large")
+                        audio_file.write(decoded)
                         state["audio_hash"].update(decoded)
                 if isinstance(audio.get("url"), str):
                     body["output"]["audio"]["url"] = audio["url"]
@@ -202,13 +209,46 @@ async def _read_timestamp_stream(response: Any, out: Path, secret: str) -> tuple
             # A disconnected partial event must never count as final completion.
             if pending or data_lines or not stopped:
                 raise _StreamError("tts_not_finished")
+        except _StreamError as exc:
+            exc.safe_body = _safe(body, secret)
+            raise
         finally:
             log_entry({"summary": True, "events": state["events"],
                        "audio_bytes_received": state["audio_bytes"],
                        "sentence_indices": sorted(state["sentence_indices"]),
                        "sentence_end": state["sentence_end"], "reason": state["reason"],
-                       "final_words": state["words"]})
+                       "final_words": state["words"], "finish_reason_stop": stopped, "done_marker": done})
     return body, state
+
+
+def _complete_inline_wav(path: Path, expected_bytes: int, expected_hash: str) -> str:
+    """Require the exact, finite RIFF container advertised by the stream bytes.
+
+    ffprobe alone can accept truncated WAV, so check every chunk extent and
+    declared data size before conversion. Unknown-length/concatenated/repaired
+    containers are unsupported rather than guessed or silently trimmed.
+    """
+    data=path.read_bytes()
+    if (not data or len(data)!=expected_bytes or hashlib.sha256(data).hexdigest()!=expected_hash
+            or len(data)<12 or data[:4]!=b'RIFF' or data[8:12]!=b'WAVE'
+            or int.from_bytes(data[4:8],'little')+8!=len(data)):
+        raise _StreamError('stream_audio_unverified')
+    position=12; formats=[]; payloads=[]
+    while position<len(data):
+        if position+8>len(data):raise _StreamError('stream_audio_unverified')
+        tag=data[position:position+4];size=int.from_bytes(data[position+4:position+8],'little')
+        start=position+8;end=start+size
+        if end+(size%2)>len(data):raise _StreamError('stream_audio_unverified')
+        if tag==b'fmt ':formats.append(data[start:end])
+        if tag==b'data':payloads.append(data[start:end])
+        position=end+(size%2)
+    if len(formats)!=1 or len(payloads)!=1 or len(formats[0])<16 or not payloads[0]:
+        raise _StreamError('stream_audio_unverified')
+    fmt=formats[0]
+    fields=[int.from_bytes(fmt[a:b],'little') for a,b in ((0,2),(2,4),(4,8),(8,12),(12,14),(14,16))]
+    if fields!=[1,1,24000,48000,2,16] or len(payloads[0])%2 or len(payloads[0])>MAX_AUDIO_SECONDS*48000:
+        raise _StreamError('stream_audio_unverified')
+    return hashlib.sha256(payloads[0]).hexdigest()
 
 
 def _verified_alignment(state: dict, text: str, seconds: float,
@@ -288,12 +328,15 @@ def _audio_metadata(probe: dict) -> tuple[dict, float]:
 async def synthesize_segment(
     http: aiohttp.ClientSession, api_key: str, workspace: str, out: Path,
     text: str, instruction: str, *, long_speech_test: bool = False,
-    word_timestamps: bool = False, voice: str | None = None,
+    word_timestamps: bool = False, voice: str | None = None, audio_source: str = "inline",
 ) -> dict:
     """Make exactly one paid synthesis request, without retries or credential reads.
 
     The caller provides authorization and credentials. Each segment uses an empty
     output directory; a reserved request.json also prevents concurrent duplicates.
+    Inline SSE audio is the default; explicit audio_source="download" keeps the
+    existing approved-URL route but is never an automatic fallback. Complete
+    chunks are consumed in order exactly once; no second synthesis is issued.
     All returned errors are fixed codes; server/HTTP exceptions can contain secrets.
     With word_timestamps=True, unavailable alignment never invalidates otherwise
     verified audio. Consumers must require alignment.status == 'ok' and match its
@@ -307,6 +350,9 @@ async def synthesize_segment(
         "wav_path": None, "pcm_path": None, "wav_sha256": None,
         "pcm_sha256": None, "usage_verified": False,
     }
+    if audio_source not in ("inline","download") or (audio_source=="inline" and word_timestamps is not True):
+        result["status"]="invalid_arguments"
+        return result
     if word_timestamps is True:
         result["alignment"] = _unavailable("audio_unavailable")
     if (not isinstance(api_key, str) or not 1<=len(api_key)<=8192 or any(c in api_key for c in "\r\n\x00") or not isinstance(workspace, str)
@@ -380,6 +426,13 @@ async def synthesize_segment(
                     "http_status": http_status, "body": _safe(body, api_key),
                 })
         except _StreamError as exc:
+            evidence=getattr(exc,"safe_body",{})
+            result["request_id"]=evidence.get("request_id")
+            usage=evidence.get("usage",{})
+            for key in ("input_tokens","output_tokens","total_tokens"):
+                result[key]=_token(usage.get(key))
+            result["usage_verified"]=all(result[key] is not None for key in ("input_tokens","output_tokens"))
+            _save(out / "response-safe.json", {"http_status":http_status,"body":evidence})
             result["status"] = str(exc)
             return result
         except Exception:
@@ -410,63 +463,78 @@ async def synthesize_segment(
             ) / 1_000_000
         audio = output.get("audio")
         audio_url = audio.get("url") if isinstance(audio, dict) else None
-        if not isinstance(audio_url, str) or not audio_url.startswith(("https://", "http://")):
-            result["status"] = "audio_url_missing"
-            return result
         wav = out / "sample.wav"
-        partial = out / "sample.wav.part"
-        evidence = {"status": "not_started", "http_status": None,
-                    "expected_bytes": None, "received_bytes": 0,
-                    "content_type": None, "complete": False,
-                    "partial_sha256": None, "error_type": None}
-        try:
-            # Override any session default Authorization: signed media needs no Key.
-            async with http.get(
-                audio_url, headers={}, allow_redirects=False,
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as response:
-                evidence["http_status"] = response.status
-                evidence["expected_bytes"] = response.content_length
-                evidence["content_type"] = response.content_type
-                if response.status != 200:
+        inline_pcm_hash = None
+        if audio_source == "inline":
+            inline=out / "stream-audio.wav.part"
+            try:
+                inline_pcm_hash = _complete_inline_wav(inline,timestamp_state["audio_bytes"],timestamp_state["audio_hash"].hexdigest())
+                inline.replace(wav)
+            except _StreamError as exc:
+                result["status"]=str(exc)
+                _save(out / "inline-evidence.json", {"source":"sse_inline","complete":False,
+                    "status":result["status"],"received_bytes":timestamp_state["audio_bytes"]})
+                return result
+            _save(out / "inline-evidence.json", {"source":"sse_inline","complete":True,
+                "finish_reason":"stop","received_bytes":timestamp_state["audio_bytes"],
+                "sha256":timestamp_state["audio_hash"].hexdigest()})
+        else:
+            if not isinstance(audio_url, str) or not audio_url.startswith(("https://", "http://")):
+                result["status"] = "audio_url_missing"
+                return result
+            partial = out / "sample.wav.part"
+            evidence = {"status": "not_started", "http_status": None,
+                        "expected_bytes": None, "received_bytes": 0,
+                        "content_type": None, "complete": False,
+                        "partial_sha256": None, "error_type": None}
+            try:
+                # Override any session default Authorization: signed media needs no Key.
+                async with http.get(
+                    audio_url, headers={}, allow_redirects=False,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as response:
+                    evidence["http_status"] = response.status
+                    evidence["expected_bytes"] = response.content_length
+                    evidence["content_type"] = response.content_type
+                    if response.status != 200:
+                        result["status"] = "download_failed"
+                        evidence["status"] = "http_error"
+                        return result
+                    if response.content_length is not None and response.content_length > MAX_AUDIO_BYTES:
+                        result["status"] = "audio_too_large"
+                        evidence["status"] = "size_limit_from_header"
+                        return result
+                    with private_open(partial, "xb") as handle:
+                        async for chunk in response.content.iter_chunked(65536):
+                            if evidence["received_bytes"] + len(chunk) > MAX_AUDIO_BYTES:
+                                result["status"] = "audio_too_large"
+                                evidence["status"] = "size_limit_during_download"
+                                return result
+                            handle.write(chunk)
+                            evidence["received_bytes"] += len(chunk)
+                if partial.stat().st_size == 0:
                     result["status"] = "download_failed"
-                    evidence["status"] = "http_error"
+                    evidence["status"] = "empty_audio"
                     return result
-                if response.content_length is not None and response.content_length > MAX_AUDIO_BYTES:
-                    result["status"] = "audio_too_large"
-                    evidence["status"] = "size_limit_from_header"
+                if (evidence["expected_bytes"] is not None
+                        and evidence["expected_bytes"] != evidence["received_bytes"]):
+                    result["status"] = "download_failed"
+                    evidence["status"] = "incomplete_audio"
                     return result
-                with private_open(partial, "xb") as handle:
-                    async for chunk in response.content.iter_chunked(65536):
-                        if evidence["received_bytes"] + len(chunk) > MAX_AUDIO_BYTES:
-                            result["status"] = "audio_too_large"
-                            evidence["status"] = "size_limit_during_download"
-                            return result
-                        handle.write(chunk)
-                        evidence["received_bytes"] += len(chunk)
-            if partial.stat().st_size == 0:
+                partial.replace(wav)
+                evidence["status"] = "downloaded"
+                evidence["complete"] = True
+            except Exception as exc:
                 result["status"] = "download_failed"
-                evidence["status"] = "empty_audio"
+                evidence["status"] = "exception"
+                evidence["error_type"] = type(exc).__name__
                 return result
-            if (evidence["expected_bytes"] is not None
-                    and evidence["expected_bytes"] != evidence["received_bytes"]):
-                result["status"] = "download_failed"
-                evidence["status"] = "incomplete_audio"
-                return result
-            partial.replace(wav)
-            evidence["status"] = "downloaded"
-            evidence["complete"] = True
-        except Exception as exc:
-            result["status"] = "download_failed"
-            evidence["status"] = "exception"
-            evidence["error_type"] = type(exc).__name__
-            return result
-        finally:
-            # Keep bounded partial audio and evidence for failures; never delete
-            # files from an earlier attempt or silently retry a paid request.
-            if partial.exists():
-                evidence["partial_sha256"] = hashlib.sha256(partial.read_bytes()).hexdigest()
-            _save(out / "download-evidence.json", _safe(evidence, api_key))
+            finally:
+                # Keep bounded partial audio and evidence for failures; never delete
+                # files from an earlier attempt or silently retry a paid request.
+                if partial.exists():
+                    evidence["partial_sha256"] = hashlib.sha256(partial.read_bytes()).hexdigest()
+                _save(out / "download-evidence.json", _safe(evidence, api_key))
         result["wav_path"] = str(wav)
         result["wav_sha256"] = hashlib.sha256(wav.read_bytes()).hexdigest()
         try:
@@ -482,6 +550,8 @@ async def synthesize_segment(
                 "-vn", "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
                 "-f", "s16le", "pipe:1",
             )
+            if inline_pcm_hash is not None and hashlib.sha256(pcm_bytes).hexdigest()!=inline_pcm_hash:
+                raise ValueError("inline_pcm_bytes_changed")
             with private_open(pcm, "xb") as handle:
                 handle.write(pcm_bytes)
             pcm_probe = await _probe(pcm, pcm=True)

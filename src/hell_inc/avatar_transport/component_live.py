@@ -656,6 +656,23 @@ class PersistentComponent:
         if first:
             self._event("stop_requested")
 
+    def bind_owned_for_stop(self, live_id: str, api_key: str) -> None:
+        """Stop-only recovery of caller-verified durable ownership; never create.
+
+        Reuses the original _finish -> _connect/type5/close/GET flow. This object
+        cannot start or become receiver-ready and is never installed as a sender.
+        """
+        if self._attempted or self.live_id is not None or self.state != 'idle':
+            raise RuntimeError('stop_only_component_already_used')
+        if not isinstance(live_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',live_id):
+            raise ValueError('invalid_owned_live_id')
+        if not isinstance(api_key,str) or not api_key or len(api_key)>8192 or any(c in api_key for c in '\r\n\x00'):
+            raise ValueError('invalid_opaque_credential')
+        self.live_id=live_id;self._key=api_key;self._attempted=True
+        self.creation_attempted=True;self.creation_unknown=False
+        self.diagnostics.register_secret(api_key)
+        self.latch_stop()
+
     async def stop(self, reason: str = "用户停止") -> dict:
         # A stop before the owner task begins prevents even session creation.
         self.latch_stop()

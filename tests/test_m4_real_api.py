@@ -192,3 +192,68 @@ class M4RealLifecycleTests(M4Fixture):
         await self.media('confirm-ready',receiver_id=claim['receiver_id'],confirm_audio_video=True)
         await self.post('/api/performance-session/'+self.sid+'/resume',{'command_id':str(uuid4())})
         self.assertEqual((await self.session())['session']['status'],'active')
+
+
+    async def test_stop_before_start_is_durable_and_replay_cannot_allow_later_creation(self):
+        command=str(uuid4())
+        stopped=await self.media('stop',command=command)
+        self.assertTrue(stopped['session']['media']['stop_requested'])
+        await self.media('start',confirm_paid=True,status=409)
+        again=await self.media('stop',command=command)
+        self.assertEqual(again['session'],stopped['session'])
+        self.assertEqual(self.components,[]);self.assertEqual(self.http.calls,[])
+        await self.restart()
+        self.assertTrue((await self.session())['media']['stop_requested'])
+        await self.media('start',confirm_paid=True,status=409)
+        self.assertEqual(self.components,[])
+
+    async def test_stop_after_start_reservation_before_worker_prevents_provider_creation(self):
+        saved=[];launch=self.service._launch_media
+        self.service._launch_media=saved.append
+        try:await self.media('start',confirm_paid=True)
+        finally:self.service._launch_media=launch
+        self.assertEqual(len(saved),1)
+        self.assertTrue((await self.session())['media']['creation_attempted'])
+        await self.media('stop');await self.media_drained()
+        launch(saved.pop());await self.media_drained()
+        snap=await self.session()
+        self.assertTrue(snap['media']['stop_requested'])
+        self.assertEqual(self.components,[]);self.assertEqual(self.http.calls,[])
+        self.assertNotEqual(snap['media']['state'],'ready')
+        await self.media('start',confirm_paid=True,status=409)
+
+    async def test_stop_during_create_retains_owned_id_and_never_opens_receiver(self):
+        entered,released,committed=asyncio.Event(),asyncio.Event(),asyncio.Event()
+        factory=self.service.runtime.component_factory
+        def delayed_factory(*args,**kwargs):
+            component=factory(*args,**kwargs);original_stop=component.stop
+            async def start(key,*,avatar_id):
+                component.calls.append(('create',avatar_id));component.state='creating'
+                entered.set();await released.wait()
+                component.live_id='owned-live-test'
+                await component.on_created(component.live_id,{'safe':True})
+                committed.set()
+                if component.stop_latched:return await original_stop()
+                component.calls.append(('connect_after_durable_callback',));component.state='waiting_stage'
+                return component.public()
+            async def stop():
+                await committed.wait()
+                return await original_stop()
+            component.start=start;component.stop=stop;return component
+        self.service.runtime.component_factory=delayed_factory
+        await self.media('start',confirm_paid=True);await asyncio.wait_for(entered.wait(),2)
+        stop_command=str(uuid4());await self.media('stop',command=stop_command)
+        await self.post('/api/performance-session/'+self.sid+'/receiver/claim',{'receiver_id':str(uuid4())},409)
+        released.set();await self.media_drained()
+        snap=await self.session();self.assertEqual(snap['media']['owned_live_id'],'owned-live-test')
+        self.assertTrue(snap['media']['stop_requested']);self.assertTrue(snap['media']['cloud_end_confirmed'])
+        self.assertNotIn(('connect_after_durable_callback',),self.components[0].calls)
+        self.assertEqual(sum(c[0]=='create' for c in self.components[0].calls),1)
+        await self.media('stop',command=stop_command)
+        await self.media('start',confirm_paid=True,status=409)
+        await self.post('/api/performance-session/'+self.sid+'/receiver/claim',{'receiver_id':str(uuid4())},409)
+
+    async def test_stop_rejects_caller_owned_id_override(self):
+        await self.post('/api/performance-session/'+self.sid+'/media/stop',{'command_id':str(uuid4()),'owned_live_id':'not-owned'},400)
+        await self.post('/api/performance-session/'+self.sid+'/media/reconcile',{'command_id':str(uuid4()),'owned_live_id':'not-owned'},400)
+        self.assertEqual(self.components,[]);self.assertEqual(self.http.calls,[])

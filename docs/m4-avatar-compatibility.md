@@ -59,3 +59,9 @@
 `RealPerformanceAdapter` 用原 `tts_live.synthesize_segment`、受限 `timed_action_planner` 和原 `MotionComponent.send_aligned_expression`。stage1 请求只能返回表达计划；stage2 只能选择完整合法 schedule ID；台词、声音 instruction、动作数及内容、恢复姿态被冻结。实际 SDK、供应商和形象操作仍未执行。RTC 心跳与人工确认是两道门，心跳失效后必须重新确认及显式恢复；正常取消允许当前段完成，不宣称远端已中止。
 
 实际本地模拟验证包含原 SSE→ffmpeg/ffprobe→PCM/锚点→完整合法规划→原 scheduler/假 socket，以及假时钟下 Type9 间隔、PCM 不被动作等待阻塞；这些不等于真实网络、实际音画或旧 idle 资源效果验证。运行时/HTTP/数据库完整证据以本轮最终 CI 记录为准。
+
+### 停止闩锁与重启止费修复
+
+`component_live.bind_owned_for_stop` 只给一个全新、未启动的本地对象绑定本场已持久化 ID；它只能调用原 `stop/_finish` 的同 ID Type1 → Type5 → 关闭 → GET 回读路径，不调用创建/RTC/发音方法。调度器未改写。运行时及数据库均保留 stop latch；在途创建返回 ID 后先持久化再立即停止。模拟测试实际执行了原 `_finish` 与假 WSS 帧，断言无 POST、无音频，未确认结束仍 unknown；这不是实际供应商止费证明。
+
+TTS 默认使用完整 SSE inline 音频而非未知下载主机，保留一次合成、完整性/容器/PCM hash/时间戳核验及私有证据。完整性失败不补第二次 TTS，不自动回退下载；来源适配的具体修改与 SHA 见 `avatar_transport/MANIFEST.md`。

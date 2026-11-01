@@ -102,7 +102,7 @@ class OriginalTTSRegressionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['pcm_sha256'], hashlib.sha256(pcm).hexdigest())
             self.assertEqual(result['alignment']['status'], 'ok')
             self.assertTrue(result['alignment']['text_matches_script'])
-            self.assertEqual([c[0] for c in http.calls], ['POST', 'GET'])
+            self.assertEqual([c[0] for c in http.calls], ['POST'])
             request = http.calls[0][2]
             self.assertEqual(request['json']['input']['text'], ' 你好\n')
             self.assertEqual(request['json']['input']['voice'], 'approved-test-voice')
@@ -151,7 +151,7 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
             receipt = await self.adapter.send(prepared, {'mode': 'real', 'session_id': self.context['session_id']}, lambda: True)
             network.assert_not_called()
         self.assertEqual(len(self.model.calls), 2)
-        self.assertEqual([c[0] for c in self.http.calls], ['POST', 'GET'])
+        self.assertEqual([c[0] for c in self.http.calls], ['POST'])
         self.assertIn('回答声音自然清晰、松弛、正常语速，按语义生成重音与停顿。', self.model.calls[0][0])
         self.assertEqual(self.model.calls[0][1]['persona'], '经批准的运行时人设')
         self.assertEqual(prepared.semantic.content['instruction'], '自然平静说话')
@@ -174,7 +174,7 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(e for e in self.evidence if e[1]['phase'] == 'tts')[3], 0)
         self.assertEqual(next(e for e in self.evidence if e[1]['phase'] == 'stage2')[2], 1)
         with self.assertRaises(FileExistsError): await self.prepare()
-        self.assertEqual(len(self.model.calls), 2); self.assertEqual(len(self.http.calls), 2)
+        self.assertEqual(len(self.model.calls), 2); self.assertEqual(len(self.http.calls), 1)
 
     async def test_cancel_during_tts_retains_request_usage_hash_and_never_stage2_or_send(self):
         cancelled = False
@@ -185,14 +185,14 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'preparation_cancelled'):
             await self.prepare(lambda: cancelled)
         self.assertEqual(len(self.model.calls), 1)
-        self.assertEqual([c[0] for c in self.http.calls], ['POST', 'GET'])
+        self.assertEqual([c[0] for c in self.http.calls], ['POST'])
         evidence = self.evidence[-1][1]
         self.assertTrue(evidence['attempted']); self.assertEqual(evidence['request_id'], 'offline-tts-request')
         self.assertTrue(evidence['usage']['usage_verified']); self.assertEqual(evidence['usage']['total_tokens'], 13)
         self.assertEqual(evidence['pcm_sha256'], hashlib.sha256(self.pcm).hexdigest())
         self.assertEqual(self.component._ws.frames, []); self.assertEqual(self.component._ws.bytes, [])
         with self.assertRaises(FileExistsError): await self.prepare()
-        self.assertEqual(len(self.http.calls), 2)
+        self.assertEqual(len(self.http.calls), 1)
 
     async def test_no_action_skips_second_model_but_tts_still_requests_word_timestamp_limit(self):
         self.model.actions = False
@@ -262,7 +262,7 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(evidence['usage']['usage_verified'])
         self.assertEqual(evidence['pcm_sha256'], hashlib.sha256(self.pcm).hexdigest())
         self.assertEqual(len(self.model.calls), 1)
-        self.assertEqual([c[0] for c in self.http.calls], ['POST', 'GET'])
+        self.assertEqual([c[0] for c in self.http.calls], ['POST'])
         self.assertEqual(self.component._ws.frames, [])
 
     async def test_full_chain_uses_real_bailian_client_and_proxy_http_wrapper_not_mocked_planner(self):
@@ -290,7 +290,7 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
             prepared = await self.prepare()
             receipt = await self.adapter.send(prepared, {'mode': 'real', 'session_id': self.context['session_id']}, lambda: True)
             network.assert_not_called()
-        self.assertEqual([c[0] for c in provider.calls], ['POST', 'POST', 'GET', 'POST'])
+        self.assertEqual([c[0] for c in provider.calls], ['POST', 'POST', 'POST'])
         for method, url, kwargs in provider.calls:
             self.assertEqual(kwargs['proxy'], 'http://approved-proxy.example:8080')
             self.assertTrue(kwargs['ssl']); self.assertFalse(kwargs['allow_redirects'])
@@ -312,7 +312,7 @@ class RealAdapterChainTests(unittest.IsolatedAsyncioTestCase):
         self.model.complete_json = invalid_second
         with self.assertRaisesRegex(ValueError, 'invalid_timed_action_result'): await self.prepare()
         self.assertEqual(len(self.model.calls), 2)
-        self.assertEqual([c[0] for c in self.http.calls], ['POST', 'GET'])
+        self.assertEqual([c[0] for c in self.http.calls], ['POST'])
         self.assertEqual(self.component._ws.frames, []); self.assertEqual(self.component._ws.bytes, [])
         self.assertEqual(self.evidence[-1][1]['phase'], 'failed')
         self.assertTrue(self.evidence[-1][1]['usage']['usage_verified'])
@@ -410,3 +410,85 @@ class OriginalComponentCreationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(method == 'POST' for method, _, _ in self.http.calls), 1)
         receipt = (self.component.out / 'component-owned-id.json').read_text()
         self.assertNotIn('opaque-test-vidu-key', receipt); self.assertNotIn('offline-rtc-token-only', receipt)
+
+
+class InlineSSETTSIntegrityTests(unittest.IsolatedAsyncioTestCase):
+    async def synthesize(self, raw, *, audio_source='inline', wav=None):
+        owner=self
+        class HTTP:
+            def __init__(self):self.calls=[]
+            def post(self,url,**kwargs):
+                self.calls.append(('POST',kwargs))
+                return Response(raw,'text/event-stream')
+            def get(self,url,**kwargs):
+                self.calls.append(('GET',kwargs))
+                if audio_source!='download':raise AssertionError('inline must never download')
+                owner.assertNotIn('Authorization',kwargs['headers'])
+                return Response(wav,'audio/wav')
+        http=HTTP()
+        with tempfile.TemporaryDirectory() as tmp, patch('aiohttp.ClientSession',side_effect=AssertionError('real network forbidden')):
+            out=Path(tmp)/'tts'
+            result=await tts_live.synthesize_segment(http,'offline-opaque-key','test-workspace',out,
+                ' 你好\n','自然声音',word_timestamps=True,voice='approved-voice',audio_source=audio_source)
+            files={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+            for p in out.iterdir():self.assertEqual(p.stat().st_mode&0o777,0o600)
+        return result,http.calls,files
+
+    def stream(self,wav,*,stop=True,done=False,url=None):
+        events=[]
+        for start in range(0,len(wav),10001):
+            events.append({'request_id':'inline-request','output':{'type':'sentence-synthesis',
+                'audio':{'data':base64.b64encode(wav[start:start+10001]).decode()}}})
+        events.append({'request_id':'inline-request','output':{'type':'sentence-end','sentence':{'index':0,
+            'words':[{'text':'你好','begin_index':0,'end_index':2,'begin_time':2000,'end_time':2500}]}}})
+        if stop:events.append({'request_id':'inline-request','usage':{'input_tokens':5,'output_tokens':8,'total_tokens':13},
+            'output':{'finish_reason':'stop','audio':{'data':'',**({'url':url} if url else {})}}})
+        raw=''.join('data: '+json.dumps(e,ensure_ascii=False)+'\n\n' for e in events).encode()
+        return raw+(b'data: [DONE]\n\n' if done else b'')
+
+    async def test_ordered_chunks_without_url_or_done_marker_are_exact_original_wav_and_pcm(self):
+        wav,pcm=wave_fixture()
+        result,calls,files=await self.synthesize(self.stream(wav))
+        self.assertEqual(result['status'],'ok',result)
+        self.assertEqual(files['sample.wav'],wav);self.assertEqual(files['sample.pcm'],pcm)
+        self.assertEqual(result['alignment']['pcm_sha256'],hashlib.sha256(pcm).hexdigest())
+        self.assertEqual(result['alignment']['status'],'ok')
+        self.assertEqual([c[0] for c in calls],['POST'])
+        self.assertTrue(json.loads(files['inline-evidence.json'])['complete'])
+
+    async def test_unknown_signed_download_host_is_not_contacted_when_inline_complete(self):
+        wav,pcm=wave_fixture()
+        result,calls,files=await self.synthesize(self.stream(wav,done=True,url='https://unapproved.example/audio?secret-query'))
+        self.assertEqual(result['status'],'ok');self.assertEqual(len(calls),1)
+        self.assertEqual(files['sample.pcm'],pcm)
+        self.assertNotIn(b'secret-query',b''.join(v for k,v in files.items() if k.endswith(('.json','.jsonl'))))
+
+    async def test_missing_finish_stop_even_with_done_is_not_completion(self):
+        wav,_=wave_fixture()
+        for done in (False,True):
+            with self.subTest(done=done):
+                result,calls,files=await self.synthesize(self.stream(wav,stop=False,done=done))
+                self.assertEqual(result['status'],'tts_not_finished');self.assertEqual(len(calls),1)
+                self.assertNotIn('sample.pcm',files);self.assertNotIn('sample.wav',files)
+
+    async def test_truncated_wav_declared_size_or_sse_event_fails_without_url_fallback(self):
+        wav,_=wave_fixture()
+        for raw in (self.stream(wav[:-2],url='https://approved-audio.example/audio'),self.stream(wav)[:-1]):
+            result,calls,files=await self.synthesize(raw)
+            self.assertIn(result['status'],('stream_audio_unverified','tts_not_finished'))
+            self.assertEqual(len(calls),1);self.assertNotIn('sample.pcm',files)
+
+    async def test_invalid_base64_or_missing_inline_audio_never_downloads_or_resynthesizes(self):
+        wav,_=wave_fixture()
+        invalid=b'data: {"output":{"audio":{"data":"!bad-base64!"}}}\n\n'+self.stream(wav)
+        empty=self.stream(b'',url='https://approved-audio.example/audio')
+        for raw,expected in ((invalid,'stream_audio_invalid'),(empty,'stream_audio_unverified')):
+            result,calls,files=await self.synthesize(raw)
+            self.assertEqual(result['status'],expected);self.assertEqual(len(calls),1)
+            self.assertNotIn('sample.pcm',files)
+
+    async def test_explicit_approved_download_path_remains_headerless_and_not_a_fallback(self):
+        wav,pcm=wave_fixture()
+        result,calls,files=await self.synthesize(self.stream(wav,url='https://approved-audio.example/audio'),audio_source='download',wav=wav)
+        self.assertEqual(result['status'],'ok');self.assertEqual([c[0] for c in calls],['POST','GET'])
+        self.assertEqual(files['sample.pcm'],pcm)

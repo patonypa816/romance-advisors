@@ -23,6 +23,7 @@ class FakeComponent:
         self.live_id='owned-live-test'
         await self.on_created(self.live_id, {'safe': True})
         if self.after_created: await self.after_created()
+        if self.stop_latched:return await self.stop()
         self.calls.append(('connect_after_durable_callback',)); self.state='waiting_stage'
         return self.public()
     def public(self): return {'state':self.state,'ready':self.state=='ready' and not self.stop_latched,'cloud_end_confirmed':self.cloud_end_confirmed}
@@ -222,3 +223,157 @@ class MediaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.paused)
         self.assertEqual(self.runtime.session_id,new_sid);self.assertEqual(self.runtime.owned_live_id,'new-owned')
         service._update_media.assert_awaited_once_with(old_sid,{'state':'unknown','cloud_end_confirmed':False})
+
+
+class StopOnlyHTTP:
+    """Original component I/O shape; local barriers and frames, zero sockets."""
+    def __init__(self,*,allow_create=False,confirm_end=True):
+        self.allow_create=allow_create;self.confirm_end=confirm_end;self.ended=False
+        self.calls=[];self.frames=[];self.audio=[];self.started=asyncio.Event();self.release=asyncio.Event()
+        if not allow_create:self.release.set()
+    def request(self,method,url,**kwargs):
+        self.calls.append((method,url))
+        if method=='POST':
+            if not self.allow_create:raise AssertionError('stop-only must never POST')
+            owner=self
+            class Created:
+                status=200
+                async def __aenter__(inner):owner.started.set();await owner.release.wait();return inner
+                async def __aexit__(inner,*args):pass
+                async def json(inner,**kwargs):return {'live':{'id':'durable-owned-test'},'managed_rtc':{'token':'private-rtc','user_id':'test'}}
+            return Created()
+        owner=self
+        class Readback:
+            status=200
+            async def __aenter__(inner):return inner
+            async def __aexit__(inner,*args):pass
+            async def json(inner,**kwargs):return {'live':{'id':'durable-owned-test','status':'ended' if owner.ended else 'running'}}
+        return Readback()
+    def get(self,url,**kwargs):return self.request('GET',url,**kwargs)
+    async def ws_connect(self,url,**kwargs):
+        self.calls.append(('WSS',url));owner=self
+        if hasattr(self,'events'):self.events.append(('wss',url))
+        class Socket:
+            closed=False
+            def __aiter__(inner):return inner
+            async def __anext__(inner):await asyncio.Future()
+            async def send_json(inner,frame):
+                owner.frames.append(frame)
+                if frame['type']==5 and owner.confirm_end:owner.ended=True
+            async def send_bytes(inner,data):owner.audio.append(data);raise AssertionError('cleanup cannot send audio')
+            async def close(inner):inner.closed=True
+        return Socket()
+    async def close(self):pass
+
+
+class StopLatchRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stop_before_runtime_start_is_sticky_and_never_constructs_provider(self):
+        runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=True,allow_paid_media=True))
+        sid=str(uuid4());runtime.latch_stop(sid)
+        with self.assertRaisesRegex(PerformanceError,'media_stop_latched'):
+            await runtime.start(sid,None,None)
+        self.assertIsNone(runtime.component);self.assertIsNone(runtime.http)
+
+    async def test_inflight_create_retains_id_then_original_finish_without_receiver_or_audio(self):
+        from hell_inc.avatar_transport.motion_component import MotionComponent
+        with tempfile.TemporaryDirectory() as tmp:
+            http=StopOnlyHTTP(allow_create=True);events=[];http.events=events
+            config=MediaConfig('opaque-test','tts-test','workspace','123','model','voice','persona',Path(tmp))
+            runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=True,allow_paid_media=True),component_factory=MotionComponent,http=http,config=config)
+            sid=str(uuid4())
+            async def created(live_id,meta):events.append(('durable',live_id));return True
+            async def persist(meta):events.append(('state',meta['state']))
+            await runtime.start(sid,created,persist)
+            await asyncio.wait_for(http.started.wait(),2)
+            runtime.latch_stop(sid)
+            stopping=asyncio.create_task(runtime.stop(sid,None))
+            with self.assertRaises(PerformanceError):runtime.claim(sid,str(uuid4()))
+            http.release.set()
+            result=await asyncio.wait_for(stopping,3)
+            await asyncio.wait_for(runtime.component._task,3)
+            self.assertIn(('durable','durable-owned-test'),events)
+            self.assertLess(events.index(('durable','durable-owned-test')),next(i for i,e in enumerate(events) if e[0]=='wss'))
+            self.assertEqual(runtime.owned_live_id,'durable-owned-test')
+            self.assertEqual([f['type'] for f in http.frames],[1,5])
+            self.assertEqual(sum(c[0]=='POST' for c in http.calls),1)
+            self.assertEqual(http.audio,[]);self.assertFalse(runtime.ready(sid));self.assertEqual(runtime.component.rtc(),{})
+            self.assertTrue(result['cloud_end_confirmed'])
+            await runtime.shutdown()
+
+    async def test_restart_owned_stop_uses_original_hangup_no_post_tts_sdk_or_paid_gate(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ,{'VIDU_API_KEY':'opaque-test','HELL_INC_MEDIA_DIR':tmp},clear=True):
+            http=StopOnlyHTTP();runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=False,allow_paid_media=False),http=http)
+            sid=str(uuid4());result=await runtime.stop(sid,'durable-owned-test')
+            self.assertTrue(result['cloud_end_confirmed'])
+            self.assertEqual([f['type'] for f in http.frames],[1,5]);self.assertEqual(http.audio,[])
+            self.assertTrue(all(method in ('GET','WSS') for method,_ in http.calls))
+            self.assertTrue(all('durable-owned-test' in url for _,url in http.calls))
+            self.assertIsNone(runtime.component);self.assertIsNone(runtime.session_id)
+            with self.assertRaises(PerformanceError):runtime.claim(sid,str(uuid4()))
+            await runtime.shutdown()
+
+    async def test_stop_without_positive_end_stays_unknown_and_old_cleanup_does_not_pause_new_owner(self):
+        from hell_inc.avatar_transport.component_live import PersistentComponent
+        with tempfile.TemporaryDirectory() as tmp:
+            config=MediaConfig('opaque-test','tts-test','workspace','123','model','voice','persona',Path(tmp))
+            http=StopOnlyHTTP(confirm_end=False);runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=False,allow_paid_media=False),http=http,config=config)
+            old,new=str(uuid4()),str(uuid4());runtime.session_id=new;runtime.paused=False;runtime.operator_confirmed=True
+            with patch.object(PersistentComponent,'END_TIMEOUT',.01),patch.object(PersistentComponent,'POLL_INTERVAL',.001):
+                result=await runtime.stop(old,'durable-owned-test')
+            self.assertEqual(result,{'state':'unknown','cloud_end_confirmed':False})
+            self.assertFalse(runtime.paused);self.assertTrue(runtime.operator_confirmed)
+            self.assertEqual(runtime.session_id,new);self.assertIn(old,runtime.stopped_sessions)
+            with self.assertRaisesRegex(PerformanceError,'media_stop_latched'):await runtime.start(old,None,None)
+            before=list(http.calls);unknown=await runtime.stop(str(uuid4()),None)
+            self.assertEqual(http.calls,before);self.assertEqual(unknown['reconciliation_required'],'provider_console')
+            await runtime.shutdown()
+
+
+    async def test_restart_slow_get_precheck_cannot_delay_active_hangup_indefinitely(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            http=StopOnlyHTTP()
+            class HungReadback:
+                async def __aenter__(self):await asyncio.Future()
+                async def __aexit__(self,*args):pass
+            http.get=lambda *args,**kwargs:HungReadback()
+            config=MediaConfig('opaque-test','tts-test','workspace','123','model','voice','persona',Path(tmp))
+            runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=False,allow_paid_media=False),http=http,config=config)
+            with patch.object(runtime,'STOP_PREFLIGHT_TIMEOUT',.01):
+                result=await asyncio.wait_for(runtime.stop(str(uuid4()),'durable-owned-test'),1)
+            self.assertTrue(result['cloud_end_confirmed'])
+            self.assertEqual([f['type'] for f in http.frames],[1,5]);self.assertEqual(http.audio,[])
+            await runtime.shutdown()
+
+
+    async def test_cleanup_only_http_never_poison_next_paid_runtime_workspace(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            env={'VIDU_API_KEY':'opaque-vidu-test','DASHSCOPE_API_KEY':'opaque-bailian-test','BAILIAN_WORKSPACE_ID':'approved-workspace',
+                 'HELL_INC_AVATAR_ID':'123','HELL_INC_PLANNER_MODEL':'model','HELL_INC_TTS_VOICE':'voice','HELL_INC_VOICE_PERSONA':'persona','HELL_INC_MEDIA_DIR':tmp}
+            clients=[]
+            def transport(*,workspace,proxy=None,audio_hosts=()):
+                client=FakeReadback();client.workspace=workspace;client.closed=False
+                async def close():client.closed=True
+                client.close=close;clients.append(client);return client
+            settings=SimpleNamespace(real_media_enabled=False,allow_paid_media=False)
+            runtime=RealMediaRuntime(settings,component_factory=FakeComponent)
+            with patch.dict(os.environ,env,clear=True),patch('hell_inc.media_runtime.MediaHTTP',side_effect=transport):
+                old,new=str(uuid4()),str(uuid4())
+                ended=await runtime.stop(old,'durable-owned-test')
+                self.assertTrue(ended['cloud_end_confirmed'])
+                self.assertIsNone(runtime.http)
+                self.assertEqual(clients[0].workspace,'cleanup-only')
+                # Restart cleanup has no runtime.session_id, so service close need
+                # not call release_ended. Isolation must work even without it.
+                self.assertIsNone(runtime.session_id)
+                self.assertIs(runtime._cleanup_http,clients[0])
+                settings.real_media_enabled=True;settings.allow_paid_media=True
+                async def created(live_id,meta):pass
+                async def persist(meta):pass
+                await runtime.start(new,created,persist)
+                self.assertEqual(runtime.http.workspace,'approved-workspace')
+                self.assertIs(runtime.http,clients[1]);self.assertIsNot(runtime.http,clients[0])
+                self.assertEqual(len(clients),2)
+                await runtime.shutdown()
+                self.assertTrue(clients[1].closed);self.assertTrue(clients[0].closed)

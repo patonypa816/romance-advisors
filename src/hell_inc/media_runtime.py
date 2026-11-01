@@ -12,6 +12,7 @@ import secrets
 import time
 import hashlib
 from uuid import uuid4
+from types import SimpleNamespace
 from .media_http import MediaHTTP,validate_secret,validate_workspace,validate_proxy,BailianPlanner
 from .performance_contract import PerformanceError
 
@@ -59,9 +60,11 @@ def empty_receiver():
 
 class RealMediaRuntime:
     RECEIVER_TTL=10.0
+    STOP_PREFLIGHT_TIMEOUT=5.0
     def __init__(self,settings,*,component_factory=None,http=None,config=None,clock=time.monotonic):
         self.settings=settings;self.component_factory=component_factory;self.http=http;self.config=config;self.clock=clock
-        self.component=None;self.session_id=None;self.epoch=str(uuid4())
+        self._cleanup_http=None
+        self.component=None;self.session_id=None;self.epoch=str(uuid4());self.stopped_sessions=set()
         self.receiver_id=None;self.receiver_token=None;self.receiver_deadline=0
         self.receiver=empty_receiver();self.operator_confirmed=False;self.paused=True;self.needs_pause_sync=False
         self.owned_live_id=None;self.tasks=set();self._adapter=None;self.persist=None
@@ -72,7 +75,7 @@ class RealMediaRuntime:
     def paid_enabled(self):return self.settings.allow_paid_media is True
 
     def default_media(self):
-        return {'state':'not_started','owned_live_id':None,'creation_attempted':False,'cloud_end_confirmed':False,'receiver':empty_receiver(),'operator_confirmed':False,'real_enabled':self.real_enabled,'paid_enabled':self.paid_enabled}
+        return {'state':'not_started','owned_live_id':None,'creation_attempted':False,'stop_requested':False,'cloud_end_confirmed':False,'receiver':empty_receiver(),'operator_confirmed':False,'real_enabled':self.real_enabled,'paid_enabled':self.paid_enabled}
 
     def view(self,media=None):
         result={**self.default_media(),**(media or {})}
@@ -97,7 +100,14 @@ class RealMediaRuntime:
             if not getattr(self.settings,'rtc_connect_origins',()) or not sdk.is_file() or hashlib.sha256(sdk.read_bytes()).hexdigest()!='8100338351ce622a1d25e26997247e55b09135f458b90e748995b357ce26e376':
                 raise PerformanceError('rtc_transport_not_configured')
 
+    def latch_stop(self,session_id):
+        self.stopped_sessions.add(session_id)
+        if self.session_id==session_id:
+            self.pause();self.operator_confirmed=False
+            if self.component is not None:self.component.latch_stop()
+
     async def start(self,session_id,on_created,persist):
+        if session_id in self.stopped_sessions:raise PerformanceError('media_stop_latched')
         self.ensure_configured()
         if self.component is not None or self.session_id is not None:raise PerformanceError('media_already_attempted')
         self._setup();self.session_id=session_id;self.persist=persist;self.epoch=str(uuid4());self.paused=True
@@ -110,8 +120,10 @@ class RealMediaRuntime:
         else:factory=self.component_factory
         async def created(live_id,safe_metadata):
             # Complete DB ownership before allowing the component to open WSS.
-            await on_created(live_id,{'state':'connecting'})
+            must_stop=await on_created(live_id,{'state':'connecting'})
             self.owned_live_id=live_id
+            if must_stop is True or session_id in self.stopped_sessions:
+                self.latch_stop(session_id)
         self.component=factory(self.http,out,Path('UNUSED'),on_created=created,recording=False)
         await self.component.start(self.config.api_key,avatar_id=self.config.avatar_id)
         task=asyncio.create_task(self._monitor(self.component,self.persist,self.epoch));self.tasks.add(task);task.add_done_callback(self.tasks.discard)
@@ -138,7 +150,7 @@ class RealMediaRuntime:
         return bool(self.receiver_id and self.clock()<self.receiver_deadline and r['joined'] and r['remote_video'] and r['audio_playback'] and not r['autoplay_blocked'])
 
     def ready(self,session_id):
-        return bool(self.real_enabled and self.paid_enabled and session_id==self.session_id and self.owned_live_id and self.component is not None and self.component.public().get('ready') and self.receiver_healthy() and self.operator_confirmed and not self.paused)
+        return bool(session_id not in self.stopped_sessions and self.real_enabled and self.paid_enabled and session_id==self.session_id and self.owned_live_id and self.component is not None and self.component.public().get('ready') and self.receiver_healthy() and self.operator_confirmed and not self.paused)
 
     def assert_ready(self,session_id):
         if not self.ready(session_id):raise PerformanceError('real_media_not_ready')
@@ -160,7 +172,7 @@ class RealMediaRuntime:
         self.needs_pause_sync=False
 
     def claim(self,session_id,receiver_id):
-        if session_id!=self.session_id or not self.owned_live_id or self.component is None:raise PerformanceError('rtc_not_ready')
+        if session_id in self.stopped_sessions or session_id!=self.session_id or not self.owned_live_id or self.component is None:raise PerformanceError('rtc_not_ready')
         if self.receiver_id is not None and self.receiver_id!=receiver_id:raise PerformanceError('receiver_already_claimed')
         rtc=self.component.rtc()
         if not rtc or not all(rtc.get(k) for k in ('token','user_id')):raise PerformanceError('rtc_not_ready')
@@ -178,7 +190,7 @@ class RealMediaRuntime:
         return self.view()
 
     def confirm(self,session_id,receiver_id):
-        if session_id!=self.session_id or receiver_id!=self.receiver_id or not self.receiver_healthy():raise PerformanceError('receiver_not_healthy')
+        if session_id in self.stopped_sessions or session_id!=self.session_id or receiver_id!=self.receiver_id or not self.receiver_healthy():raise PerformanceError('receiver_not_healthy')
         self.operator_confirmed=True
 
     def adapter(self,persist_preparation):
@@ -189,29 +201,65 @@ class RealMediaRuntime:
                 self.config.tts_key,self.config.workspace,Path(self.config.artifact_dir),persist_preparation)
         return self._adapter
 
+    def _cleanup_resources(self):
+        """Cleanup needs Vidu only, not TTS/persona/SDK or paid opt-in."""
+        if self.config is not None:
+            config=self.config
+        else:
+            key=os.environ['HELL_INC_VIDU_KEY'] if 'HELL_INC_VIDU_KEY' in os.environ else os.getenv('VIDU_API_KEY')
+            key=validate_secret(key)
+            out=Path(os.getenv('HELL_INC_MEDIA_DIR','/tmp/hell-inc-media'))
+            if not out.is_absolute():raise ValueError('media_directory_must_be_absolute')
+            config=SimpleNamespace(api_key=key,artifact_dir=out,proxy=validate_proxy(os.getenv('HTTPS_PROXY') or None))
+        http=self.http
+        if http is None:
+            # Never install the Vidu-only client as the next paid scene's planner/TTS transport.
+            if self._cleanup_http is None:self._cleanup_http=MediaHTTP(workspace='cleanup-only',proxy=config.proxy)
+            http=self._cleanup_http
+        return config,http
+
     async def stop(self,session_id,owned_live_id):
-        self.pause();self.operator_confirmed=False
+        self.latch_stop(session_id)
         if self.component is not None and self.session_id==session_id:
-            self.component.latch_stop()
             try:
                 p=await asyncio.wait_for(self.component.stop(),timeout=110)
                 return {'state':'ended' if p.get('cloud_end_confirmed') is True else 'unknown','cloud_end_confirmed':p.get('cloud_end_confirmed') is True}
             except Exception:return {'state':'unknown','cloud_end_confirmed':False}
-        # No component after restart: GET readback only, never reconnect or adopt.
-        return await self.reconcile(session_id,owned_live_id)
+        if not owned_live_id:return {'state':'unknown','cloud_end_confirmed':False,'reconciliation_required':'provider_console'}
+        # First honor positive readback; otherwise actively stop ONLY this DB-owned ID.
+        try:readback=await asyncio.wait_for(self.reconcile(session_id,owned_live_id),timeout=self.STOP_PREFLIGHT_TIMEOUT)
+        except Exception:readback={'cloud_end_confirmed':False}
+        if readback['cloud_end_confirmed']:return readback
+        config,http=self._cleanup_resources()
+        from .avatar_transport.component_live import PersistentComponent
+        out=Path(config.artifact_dir)/session_id/('stop-only-'+str(uuid4()))
+        out.mkdir(parents=True,exist_ok=False,mode=0o700);out.chmod(0o700);out.parent.chmod(0o700)
+        cleanup=PersistentComponent(http,out,Path('UNUSED'),recording=False)
+        # Private local component is never assigned to runtime.component: no claim,
+        # receiver, stage readiness, model/TTS, media send, or new cloud POST exists.
+        cleanup.bind_owned_for_stop(owned_live_id,config.api_key)
+        try:
+            p=await asyncio.wait_for(cleanup.stop(),timeout=110)
+            ended=p.get('cloud_end_confirmed') is True
+            return {'state':'ended' if ended else 'unknown','cloud_end_confirmed':ended}
+        except Exception:return {'state':'unknown','cloud_end_confirmed':False}
+        finally:
+            await cleanup._close_ws()
 
     async def reconcile(self,session_id,owned_live_id):
-        self.pause()
+        if self.session_id==session_id:self.pause()
         if not owned_live_id:return {'state':'unknown','cloud_end_confirmed':False,'reconciliation_required':'provider_console'}
         if not isinstance(owned_live_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',owned_live_id):raise PerformanceError('invalid_owned_live_id')
-        self._setup()
-        async with self.http.get('https://api.vidu.cn/live/v1/lives/'+owned_live_id,headers={'Authorization':'Token '+self.config.api_key}) as response:
+        config,http=self._cleanup_resources()
+        async with http.get('https://api.vidu.cn/live/v1/lives/'+owned_live_id,headers={'Authorization':'Token '+config.api_key}) as response:
             if response.status!=200:return {'state':'unknown','cloud_end_confirmed':False}
             value=await response.json();live=value.get('live') or {}
             ended=str(live.get('status',live.get('state',''))).lower()=='ended'
             return {'state':'ended' if ended else 'unknown','cloud_end_confirmed':ended}
 
     async def release_ended(self):
+        if self._cleanup_http is not None:
+            await self._cleanup_http.close();self._cleanup_http=None
         for task in tuple(self.tasks):task.cancel()
         if self.tasks:await asyncio.gather(*tuple(self.tasks),return_exceptions=True)
         self.pause();self.receiver_id=None;self.receiver_token=None;self.receiver=empty_receiver();self.operator_confirmed=False
@@ -228,4 +276,6 @@ class RealMediaRuntime:
         for task in tuple(self.tasks):task.cancel()
         if self.tasks:await asyncio.gather(*tuple(self.tasks),return_exceptions=True)
         if self.http is not None and hasattr(self.http,'close'):await self.http.close()
+        if self._cleanup_http is not None:
+            await self._cleanup_http.close();self._cleanup_http=None
         self.receiver_token=None

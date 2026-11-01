@@ -97,3 +97,13 @@ The pinned local RTC SDK is `/vendor/aliyun-rtc-sdk-7.1.9.js`, SHA-256 `81003383
 ### Remaining acceptance
 
 Provider credentials, actual model/TTS/Vidu responses, new avatar resources, RTC audio/video/autoplay, dynamic endpoint completeness, stop/end readback, billing and audience observations remain untested. Mocked provider/scheduler/browser tests cannot close those items. Any actual paid exercise requires separately bounded authorization.
+
+### Fee-safety correction: stop permanently latches this session
+
+`media.stop_requested` is durable, including a stop before any start. That session cannot subsequently create a cloud live, even with a different start command or after restart; a replayed stop receipt does not remove the latch. An accepted start worker rechecks the persisted `paused/creating` state and latch immediately before runtime start. The runtime also retains a session-specific stop latch, including the interval before a component exists.
+
+If the single create POST is already in flight, cancellation does not discard its response: the returned live ID is committed first, then the original component is latched stopped before receiver connection/readiness. Its original bounded `_finish` performs same-ID Type1 connection initialization, Type5 hangup, socket close and GET end readback. No receiver claim, preparation or audio is allowed after this latch. Timeout/unconfirmed end remains unknown and never permits recreation.
+
+After restart, explicit stop can actively clean up the **persisted ID belonging to that session** using a private stop-only component. It never calls start/_run, never POSTs creation, never joins RTC or sends speech/audio. Read-only reconcile remains GET-only. Cleanup requires Vidu authorization, trusted proxy and an absolute artifact directory only—not paid opt-in, SDK, TTS keys or persona. An unknown creation without an ID still requires provider-console reconciliation; no other lives are searched or adopted. Old-session cleanup is target-scoped and cannot pause a new runtime. Positive `ended` is asserted only after provider readback, never merely after hangup or socket close.
+
+Default real TTS now consumes the bounded, complete inline SSE audio stream directly and verifies its container, PCM conversion and timestamps. Missing/invalid/incomplete inline audio fails closed without another paid synthesis or an automatic URL-download fallback. Explicit download mode remains a separately validated transport option; no host is guessed from an unknown signed URL.
