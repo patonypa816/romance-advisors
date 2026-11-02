@@ -78,6 +78,48 @@ class FixedReplayTests(unittest.TestCase):
             with self.subTest(case=i), self.assertRaises(ValueError):
                 FixedReplay(root)
 
+    def test_current_long_receipt_requires_positive_mode_and_matching_delivery(self):
+        root = self.source("current-long")
+        self.mutate(root, "tts/c0001-1/component-send.json",
+                    lambda d: (d.pop("reading_text"), d.pop("reading_audio_seconds")))
+        with self.assertRaises(ValueError):
+            FixedReplay(root)  # A field omission alone cannot identify the sender.
+        receipt_path = "tts/c0001-1/component-send.json"
+        self.mutate(root, receipt_path, lambda d: d.update(long_speech_test=True))
+        original = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        replay = FixedReplay(root)
+        self.assertEqual(original, {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+        self.assertEqual(replay.audio_seconds, 17.36)
+
+        for value in (False, 1, "true"):
+            self.mutate(root, receipt_path, lambda d: d.update(long_speech_test=value))
+            with self.subTest(mode=value), self.assertRaises(ValueError):
+                FixedReplay(root)
+        (root / receipt_path).write_bytes(original[Path(receipt_path)])
+        for role in ("R", "S0"):
+            self.mutate(root, receipt_path, lambda d: d["timeline"][0].update(role=role))
+            with self.subTest(role=role), self.assertRaises(ValueError):
+                FixedReplay(root)
+            (root / receipt_path).write_bytes(original[Path(receipt_path)])
+            self.mutate(root, receipt_path, lambda d: d["motion_events"][0].update(role=role))
+            with self.subTest(event_role=role), self.assertRaises(ValueError):
+                FixedReplay(root)
+            (root / receipt_path).write_bytes(original[Path(receipt_path)])
+        self.mutate(root, "plans/c0001.json", lambda d: d.update(
+            reading={"text": "短读", "instruction": "自然"}))
+        with self.assertRaises(ValueError):
+            FixedReplay(root)
+
+    def test_current_mode_never_overrides_nonzero_or_incomplete_receipt(self):
+        root = self.source("current-bad")
+        receipt_path = "tts/c0001-1/component-send.json"
+        self.mutate(root, receipt_path, lambda d: d.update(long_speech_test=True, reading_audio_seconds=1))
+        with self.assertRaises(ValueError):
+            FixedReplay(root)
+        self.mutate(root, receipt_path, lambda d: (d.pop("reading_audio_seconds"), d.update(reading_text=None)))
+        with self.assertRaises(ValueError):
+            FixedReplay(root)
+
     def test_only_group_interval_changes_and_public_has_no_paths(self):
         root = self.source()
         before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
