@@ -1,0 +1,224 @@
+# M4 performance protocol contract — Phase 1 + Phase 2
+
+> Historical implementation: the game no longer exposes these session, sender or receiver routes. The read-only source freeze endpoint remains available. Current game input uses the original Studio once route; see [Studio once](m4-studio-once.md). Historical data and stop/reconcile rescue remain, but this document is not a prerequisite for the current route.
+
+Real media acceptance remains pending. Fixed script is fetched through the same freeze endpoint with `{source:{kind:"fixed_script",id:"m4-demo-v1"}}`; no extra route or hardcoded client text.
+
+## Implemented offline API contract (same current authenticated, same-Origin `/api` guard)
+
+All UUIDs canonical strings. Unknown fields rejected. `expires_at` explicit UTC RFC3339. New record 201, idempotent repeat 200, conflict 409, invalid 400, missing 404. All snapshots `{revision,server_time,...}` with monotonic world revision. Never return credentials, PCM paths, RTC tokens, raw provider exceptions.
+
+1. `GET /api/performance-session` → `{revision,server_time,session:{session_id,mode,status,media_verified:false,avatar_aspect:null|"16:9"|"4:3"}|null}`. Modes `offline_fixture` / `real`; real unavailable by default. Status `active|paused|closed|unknown`. Aspect is a view preference, no image transformation.
+2. `POST /api/performance-session` body `{command_id,session_id,mode:"offline_fixture",avatar_aspect:null}`. Creates explicit LOCAL session only. Reject if another unclosed session, including unknown, exists. Same command payload replays stored receipt. No paid session creation route in this slice.
+3. `POST /api/performance-session/{session_id}/pause` or `/resume` or `/close`, body `{command_id}`. Pause closes send gate immediately and cancels unstarted segments under sender gate. Return `{session,stop_status:"unstarted_cancelled"|"in_flight"|"unknown",...snapshot}`; never say media fully stopped. Resume manual only, never revives cancelled/expired/unknown records. Close rejects unresolved sending/unknown rather than allowing automatic new session.
+4. `POST /api/performance-sources/freeze` body `{source:{kind:"fixed_script"|"interview_result"|"competition_comment"|"competition_result",id,submission_id?}}` → `{source_ref:{kind,id,submission_id?,source_version,source_hash},segments:[{text,intent}],content_hash}`. Read-only; resolve current persisted accepted/settled data, not caller-supplied scores/results. `competition_comment` only after all accepted reviews, at DISPLAYING or later; no winner/score leak. Persist exact authoritative source snapshot at submission. Fixed script uses `source_ref:{kind:"fixed_script",id:"m4-demo-v1"}` and server-owned source content; independent of players/rounds.
+5. `POST /api/performances` body `{performance_id,session_id,source_ref,segments:[{text,intent}],expires_at,payload_hash}`. intent enum `question|listen|comment|result|neutral`. Server recomputes hash; rejects mismatch. For game references regenerate/compare frozen source and text (never allow arbitrary replacement text to masquerade as game result). Fixed script validated against server-owned canonical script. Return `{performance,...snapshot}`.
+6. `GET /api/performances?session_id=...` → `{performances:[...],...snapshot}` bounded latest 50; `GET /api/performances/{performance_id}` same exact persisted record. Known terminal records still queryable after expiry/session changes.
+7. `POST /api/performances/{performance_id}/execute` body `{command_id}`. Explicit offline execution only (background asyncio task), responds with current durable record, no network in transaction. Repeated command or execution of running/terminal ID never starts second run. No retry endpoint in this slice.
+8. `POST /api/performances/{performance_id}/cancel` body `{command_id}` → `{performance,cancel_outcome:"unstarted_cancelled"|"in_flight"|"already_terminal"|"unknown",...snapshot}`. Current sending segment may finish; all unstarted remainder cancelled. Never promise remote abort.
+
+Frontend uses only these agreed response shapes. `performance` includes `{performance_id,session_id,source_ref,source_snapshot,payload_hash,expires_at,state,segments:[{index,text,intent,state,result}],cancel_requested,mode,evidence,result,error_code,created_at,updated_at}`. `source_snapshot` is current authenticated workbench-only; public output omitted from scope. `evidence` always includes `{execution_kind:"offline_fixture"|"real",media_verified:false,audience_heard:false}`. Fixture final result carries `fixture_receipt`, never provider receipt.
+
+## Persistence, hashing, state
+
+Additive explicit v4 migration, accept v1/v2/v3/v4; startup requires v4 but never migrates. Preserve all M1–M3 records. Tables:
+
+- `performance_sessions`: session_id PK, world_id FK, mode, status, body JSONB (aspect, pause reason, evidence), created_at/updated_at. Partial unique world_id where status != closed. No RTC secrets.
+- `performances`: performance_id UUID PK, world_id FK, session_id FK, payload_hash String64, immutable_payload JSONB, state String32, body JSONB (per-segment states/results, cancellation and execution evidence), created_at/updated_at. CHECK state enum.
+- `performance_commands`: (world_id,command_id) PK, payload JSONB, response JSONB, created_at; reuse existing strict command hashing/receipt pattern rather than generic workflow engine.
+
+Canonical SHA256 over JSON UTF8, sorted keys, compact separators, no NaN: `{session_id,source_ref,segments,expires_at}` after canonical UTC millisecond timestamp normalization (`YYYY-MM-DDTHH:mm:ss.sssZ`); >millisecond precision is rejected. Preserve exact text Unicode and whitespace; no hidden trimming/rewrite. Include source reference/hash and intent. Exclude timestamps generated by server, mode/status, receipt, aspect layout. Same performance_id + same hash returns original persisted record BEFORE current expiry/source/session validation; same ID different hash 409 even after cancellation/unknown. This allows safe reconnection queries/repeats without accepting new work.
+
+State: `accepted → preparing → ready → sending → send_completed`; pre-send failure `failed`; pre-send cancellation/expiry `cancelled|expired`; any uncertain post-attempt outcome `unknown`. Each segment follows same state pattern. A multi-segment performance stays sending after first segment starts; cancellation may leave completed prefix and cancelled suffix. Aggregate final `cancelled` with segment receipts and `result.partial=true`; never erase sent evidence. Any uncertain segment makes aggregate unknown. Check cancel/session/expiry before EVERY segment, not only first.
+
+Persist `sending` and segment sending in short transaction BEFORE any provider write. Release DB transaction before awaiting adapter. One local sender mutex, same mutex for cancel/start decision; don't hold mutex for whole audio send or cancellation will block. Single worker claims one sending job plus at most one prepared next segment; reject excess accepted pending jobs with 409 queue_full (one pending performance in addition to current sufficient). DB busy/exception closes gate. A failed final DB commit after side effects is unknown, not failed/retryable.
+
+Startup: all previous sending → unknown, preparing/ready/accepted retained but session paused and no automatic execution; offline in-flight tasks not silently completed. Real paid preparation interrupted is marked unknown preparation evidence, never automatically charged again. Manual resume permits only safe not-yet-started work; unknown not executable. Existing active game singleton lock remains required; no lease/fencing, distributed worker or automatic takeover.
+
+## Source construction and boundaries
+
+`interviews.py` stores body.evaluation, body.result, task IDs/input_hash/policy_hash. `competitions.py` stores body.submissions[*].evaluation.comment and task references, settled body.result. Use those actual sources; no second scoring or settlement call. Freeze deterministic brief result speech from authoritative decision/awards, preserve source snapshot plus IDs/version/hash. Competition existing comment can be 160 chars while avatar dynamic speech limit is 120: deterministically split exact text into ≤120-codepoint chunks, preferably at punctuation, preserving concatenation exactly; reject only if format cannot be represented safely. Backend policy should state maximum total/chunk count, e.g. 8 chunks / 960 codepoints. Do not silently truncate. Fixture asks no models and generates no real PCM.
+
+Performance module must import no RecordService asset mutator and must not call settle/evaluation. Media status never opens voting, confirms presentation or changes game assets. Game pause stops future game performance submissions and requests performance pause; if confirmation unavailable show pending, not fully stopped. Add linkage only without changing current M2/M3 legal phase transitions.
+
+
+## Phase 1 implementation boundaries (superseded for explicit real mode below)
+
+No real session creation, provider clients, TTS, Vidu, RTC or paid preparation is wired. `offline_fixture` performs deterministic protocol calls without audio. Session aspect is layout metadata only; final broadcast context is 9:16 and avatar subregion is optionally landscape 16:9 / 4:3, unset by default.
+
+Service: `PerformanceService(engine,world_id,adapter=None)`. Injectable adapters implement async `prepare(segment,cancellation)` and `send(prepared,session,still_valid)`; callbacks are synchronous booleans. The durable sending commit precedes adapter send. Known terminal IDs remain queryable. Pause/cancel can cancel only unstarted material, and in-flight completion is retained. Shutdown attempts unknown persistence; if the database is unavailable, sending rows are made unknown at next recovery. Manual execute commands are not auto-replayed after restart.
+
+Game pause routes include `performance_pause` receipt after game pause commits. If its DB operation fails, HTTP returns unavailable rather than claiming media stopped; game pause remains durable. Game resume does not auto-resume the performance session.
+
+
+## Phase 2: explicit real runtime, default OFF
+
+Code supports an owned `RealMediaRuntime` and `RealPerformanceAdapter`; normal launch remains offline. This is mocked integration, **not real media acceptance**. No live provider or RTC requests were made during this implementation. No schema change beyond v4 is required: lifecycle facts reside in the session JSON body and per-segment preparation evidence.
+
+### Stable API additions
+
+All existing auth/origin/strict-field guards apply. `GET /api/performance-session` always adds top-level `media`, even with `session:null`; real sessions mirror it as `session.media`. Fields:
+
+```
+{state, owned_live_id, creation_attempted, cloud_end_confirmed,
+ receiver:{claimed,healthy,joined,remote_video,audio_playback,autoplay_blocked,evidence_source:"client_reported"},
+ operator_confirmed,real_enabled,paid_enabled}
+```
+
+States: `not_started|creating|connecting|waiting_receiver|ready|stopping|ended|unknown`. `media_verified` and `audience_heard` remain false. Receiver state is client-reported, operator confirmation is a separate manual observation—not audience proof.
+
+- POST session with `mode:"real"` requires real opt-in and creates only a **local paused** row, never a cloud scene.
+- POST `.../{id}/media/start` `{command_id,confirm_paid:true}` requires both opt-ins and validated configuration. It commits creation-attempted/creating and command receipt before one create call. Returns **202**, including command replay. A different command never creates again after any attempted/unknown outcome.
+- POST `.../{id}/media/stop` `{command_id}` closes future preparation/send, cancels unstarted work, and performs original owned-component stop plus bounded end readback. **202**. This remains permitted after paid opt-in revocation/receiver loss. Pause alone does not end the cloud session.
+- POST `.../{id}/media/reconcile` `{command_id}` performs provider **GET only**, using the persisted owned ID. **202**. Missing ID after ambiguous create reports `reconciliation_required:"provider_console"`; no arbitrary ID adoption or second create.
+- POST `.../{id}/receiver/claim` `{receiver_id}` → **200** `{revision,server_time,receiver_id,receiver_token,epoch,rtc}`. `rtc` contains original provider join grant (`provider/app_id/channel_id/user_id/token/token_expire_at` when supplied), pinned local `sdk_url` and `sdk_integrity`. Only this authenticated no-store response carries tokens; never command receipts, DB, normal snapshots or browser storage. Same receiver refresh rotates the token and pauses; another receiver is rejected even after timeout.
+- POST `.../{id}/receiver/heartbeat` `{receiver_id,receiver_token,joined,remote_video,audio_playback,autoplay_blocked}` → **200** session snapshot. All four flags strictly Boolean. Monotonic TTL is 10 seconds. Expiry/unhealthy state latches pause and invalidates operator confirmation; a late healthy heartbeat cannot resume automatically.
+- POST `.../{id}/media/confirm-ready` `{command_id,receiver_id,confirm_audio_video:true}` → **200**. Requires current healthy claim; existing `/resume` remains separately required and also requires original component ready, durable ownership, current epoch and no unresolved performance.
+- Real `/close` requires confirmed provider end if creation was attempted, and no in-flight worker. A never-started local session can close without inventing end evidence. After confirmed end, unknown performance records remain unknown/non-replayable but do not block closing the ended session. Historical close-command replay never clears a later runtime.
+
+Late callbacks cannot reopen closed sessions or downgrade positive end readback. Runtime monitors capture their original component/epoch and are cancelled before releasing ownership.
+
+### Preparation, sending and restart
+
+Real adapter receives explicit `{performance_id,session_id,segment_index,payload_hash}`. Before every chargeable stage it durably records `preparation.attempted/phase/request_id` plus bounded history. Stage 1 output may contain **only instruction/actions/recovery**; text is composed from the authoritative frozen input. TTS is called exactly once with original whitespace, explicit configured voice and timestamps. Exact PCM hash/alignment is verified before the original constrained schedule-ID planner. No-action plans skip stage 2. No automatic provider retry or third fallback exists.
+
+Per-segment preparation histories retain returned usage/PCM identity even when cancelled; no RTC tokens, private paths or raw provider exceptions are persisted. Restart during real preparation is unknown, never newly charged automatically. Real success uses `result.transport_receipt`, not `fixture_receipt`; it means local transport sent only. The original scheduler owns speech/socket locks and Type9/PCM sequencing; no direct Type9 shortcuts or old asset-bound idle resources are installed.
+
+### Configuration and secure transport
+
+Defaults: `HELL_INC_REAL_MEDIA_ENABLED=0`, `HELL_INC_ALLOW_PAID_MEDIA=0`. Both must be exactly `1` for create/prepare/send. Cleanup/reconciliation of already owned IDs does not depend on those flags.
+
+Credentials use existing deployment variables `VIDU_API_KEY`, `DASHSCOPE_API_KEY`, `BAILIAN_WORKSPACE_ID`. Optional overrides are `HELL_INC_VIDU_KEY`, `HELL_INC_BAILIAN_KEY`, `HELL_INC_BAILIAN_WORKSPACE`: if present—even empty—they take precedence; explicit empty values fail, never fall back. Opaque nonempty header-safe keys are preserved without prefix assumptions, placeholder expansion, local CSV fallback or logging.
+
+Required business configuration: `HELL_INC_AVATAR_ID`, `HELL_INC_PLANNER_MODEL`, `HELL_INC_TTS_VOICE`, `HELL_INC_VOICE_PERSONA`. There is no historical avatar/voice/persona default and no account asset ID in Git. `HELL_INC_MEDIA_DIR` defaults to `/tmp/hell-inc-media`, must be absolute, and should remain outside the checkout. Directories/files use 0700/0600. `HELL_INC_AUDIO_HOSTS` is an explicit comma-separated download-host allowlist, with HTTPS only, no credentials/userinfo/private IP/redirect. `HTTPS_PROXY` is explicitly injected into both HTTPS and WSS; ambient netrc/default auth is forbidden. Bailian uses Bearer, Vidu Token, and downloads get no Authorization. TLS verification remains on. Signed query strings are scrubbed.
+
+The pinned local RTC SDK is `/vendor/aliyun-rtc-sdk-7.1.9.js`, SHA-256 `8100338351ce622a1d25e26997247e55b09135f458b90e748995b357ce26e376`. Both the serving route and production create preflight verify it. `HELL_INC_RTC_CONNECT_ORIGINS` defaults empty; only these pinned-source production candidates are accepted: `wss://rs.rtn.aliyuncs.com`, `https://rs.rtn.aliyuncs.com`, `https://gw.rtn.aliyuncs.com`. Real creation is unavailable without explicit origins and the SDK. These candidates were read from that SDK, **not verified by actual RTC connectivity**; no wildcard/preproduction/telemetry fallback is enabled. Browser CSP stays self-only by default. Any additional real endpoint must be independently reviewed before extension.
+
+`MediaHTTP` uses a narrow aiohttp session override to force redirects off at `_request`, including the WebSocket HTTP Upgrade (aiohttp 3.14.4 `_ws_connect` otherwise uses default request redirects). An injected ordinary aiohttp session without that redirect policy is rejected for WSS. Fake sessions exist only for tests.
+
+### Remaining acceptance
+
+Provider credentials, actual model/TTS/Vidu responses, new avatar resources, RTC audio/video/autoplay, dynamic endpoint completeness, stop/end readback, billing and audience observations remain untested. Mocked provider/scheduler/browser tests cannot close those items. Any actual paid exercise requires separately bounded authorization.
+
+### Fee-safety correction: stop permanently latches this session
+
+`media.stop_requested` is durable, including a stop before any start. That session cannot subsequently create a cloud live, even with a different start command or after restart; a replayed stop receipt does not remove the latch. An accepted start worker rechecks the persisted `paused/creating` state and latch immediately before runtime start. The runtime also retains a session-specific stop latch, including the interval before a component exists.
+
+If the single create POST is already in flight, cancellation does not discard its response: the returned live ID is committed first, then the original component is latched stopped before receiver connection/readiness. Its original bounded `_finish` performs same-ID Type1 connection initialization, Type5 hangup, socket close and GET end readback. No receiver claim, preparation or audio is allowed after this latch. Timeout/unconfirmed end remains unknown and never permits recreation.
+
+After restart, explicit stop can actively clean up the **persisted ID belonging to that session** using a private stop-only component. It never calls start/_run, never POSTs creation, never joins RTC or sends speech/audio. Read-only reconcile remains GET-only. Cleanup requires Vidu authorization, trusted proxy and an absolute artifact directory only—not paid opt-in, SDK, TTS keys or persona. An unknown creation without an ID still requires provider-console reconciliation; no other lives are searched or adopted. Old-session cleanup is target-scoped and cannot pause a new runtime. Positive `ended` is asserted only after provider readback, never merely after hangup or socket close.
+
+Default real TTS now consumes the bounded, complete inline SSE audio stream directly and verifies its container, PCM conversion and timestamps. Missing/invalid/incomplete inline audio fails closed without another paid synthesis or an automatic URL-download fallback. Explicit download mode remains a separately validated transport option; no host is guessed from an unknown signed URL.
+
+
+### Recording request correction
+
+The pinned original `avatar-studio/studio/component_live.py` at `2e076b66` (blob `5233b000ff5a6e743d0087bf4cda55c9e5ccb318`) constructs `managed_rtc.enable_recording: true` in `start`. M4 Phase 2 mistakenly coupled disabling automatic recording downloads with `recording=False` for cloud creation. This was a migration configuration deviation, not a user instruction to disable recording.
+
+`HELL_INC_MEDIA_RECORDING_ENABLED` now defaults to `1`; an explicit `0` requests no recording. Other values, including empty, fail configuration validation before creation. `MediaConfig.recording_enabled` is passed to the original component's create body. The persisted/session-public **`media.recording_requested`** is the exact effective request configuration, retained before dispatch for auditing—not confirmation that the provider enabled recording or produced a video. Mock component request-body tests cover both true and explicit false; they do not prove the body of any earlier real session was captured.
+
+Automatic download is a separate component option (`collect_recording`, default false). Requesting cloud recording does not automatically download or transcode artifacts, and `recording_saved` stays false without independently saved-video evidence. Provider `recording.enabled` readback and an actual `video_url` are separate evidence still requiring verification. Stop-only recovery never creates a live or changes historical recording settings. This code correction creates no new scene and cannot retroactively record a completed session.
+
+### Manual bounded M3 record-only integration diagnostic
+
+Not a production API or browser acceptance path. After the real isolated M3 flow
+(two simulated players → model evaluations → display confirmation → voting →
+settlement), export existing freeze API responses in fixed order: two distinct
+`competition_comment` submissions and one `competition_result` from the same round.
+With separately approved fee scope:
+
+```
+PYTHONPATH=src python tools/m4_record_only.py --sources /private/frozen.json --out /private/new-attempt --max-total-seconds 90 --confirm-paid
+```
+
+No flag means no calls. Before invocation, the operator must confirm there is no
+existing active/unknown paid scene; this isolated tool does not discover/adopt
+other scenes. The new absolute directory refuses reuse. The tool verifies
+export consistency (source refs, each content hash, optional snapshot hash), not
+provenance authentication: the Cloud operator must preserve actual protected HTTP
+flow and recheck source authenticity. No DB access, new game schema, or arbitrary
+text generation is added. Original sources/split segments are stored privately.
+
+At most eight original split segments, each ≤120 codepoints/30 PCM seconds, total
+PCM ≤ the separately approved maximum (never above 90s). Roughly one minute is a
+target, not a minimum. There is no stretching, truncation, padding or repeated TTS.
+Each segment gets one stage1 and one TTS; only nonempty actions require one stage2.
+No retry; the exact segment count bounds each provider stage before creation.
+Short result segments may have no action, but the complete scenario must contain
+at least one valid action group. All segments, exact PCM hashes and timelines are
+revalidated before the only create. Any preparation failure means zero Vidu create.
+
+All segments use the same original aligned sender in order, including each drain
+and Q recovery; failure stops remaining segments. Completion or failure/cancellation
+requests immediate stop of the same owned scene, retaining an in-flight create ID.
+Only positive provider `ended` confirms stop; unknown never auto-recreates. Then
+recording metadata is queried once. Signed URLs remain memory-only; evidence stores
+host/availability/status, not the URL. No unknown host is downloaded automatically;
+later approved same-recording retrieval requires no new scene. Recording requested
+is not video generated. The tool does not fake browser joins, heartbeats or ready
+confirmations. Actual audio, visible motion, continuity, and browser acceptance
+remain separate evidence, not transport success. CLI exit zero means only this
+transport attempt finished with confirmed ended, never full M4 acceptance.
+
+Diagnostic audit files: `frozen-sources.json` retains exported game provenance;
+`preparation.jsonl` retains stage1 plans and provider request/usage evidence;
+`prepared-manifest.json` is fsynced before create and contains final stage2 content,
+alignment, compiled timeline, source mapping, PCM hashes and actual durations.
+`send-N.json`, original component diagnostics (`ws_attempt` / `ws_sent` /
+`ws_failed`) and motion events distinguish planned commands from successful local
+writes and audio-relative times. Renderer/recording/visual evidence stays separate.
+Credentials are scrubbed; no PCM body, handshake token or signed recording URL is
+added to these reports. ffmpeg/ffprobe availability is checked before provider calls.
+A fixed 180-second local deadline surrounds create/readiness/ordered sends and then
+requests stop; it cannot guarantee provider `ended` or billing termination by that
+second. Operator monetary authorization/monitoring is still required.
+
+### M3 evaluation provenance for the isolated integration round
+
+The default remains the exact existing `chatgpt_native_manual` policy. Before
+starting a **new** test competition, the server may explicitly set
+`HELL_INC_M3_EVALUATION_PROVIDER=bailian_manual_api` and
+`HELL_INC_M3_EVALUATION_MODEL=<actual approved model>`.
+Only provider/model metadata changes; policy instructions, rubric, response schema,
+validation and settlement rules stay identical. The existing policy ID is retained
+as the rule revision identifier, not a claim about which provider executed it.
+The new competition freezes this copy and normal policy/input hashes at creation.
+Existing competitions/tasks retain their original policies/hashes, including after
+server restart with different configuration. There is no provider client or
+automatic evaluation call here; the manual export/import flow is unchanged.
+Actual provider execution must still be evidenced by its real call/receipt.
+
+### CLI-only independent fee watchdog
+
+The manual CLI now takes one fixed per-user local `flock` across attempt directories
+before any paid preparation. A separate, new-session subprocess inherits the locked
+file descriptor, so abrupt parent exit does not release concurrency ownership while
+cleanup is running. It receives only the Vidu credential/proxy and Python runtime
+environment, not Bailian credentials or a create/TTS entry point. The parent waits
+for its readiness handshake before starting preparation.
+
+Before create, `attempt.json` fsyncs `create_attempted` and a monotonic start time.
+The watchdog watches only that attempt's atomic manifest and emergency owned-ID
+receipt. A parent-liveness pipe EOF or 180 elapsed seconds latches a local stop file;
+the main CLI also cancels its active work. The independent process binds the already
+owned ID to the original stop-only component (Type1/Type5/GET), never creates, sends
+speech, queries unrelated sessions or guesses an ID. Positive ended exits normally.
+A live parent's in-flight create response may supply the ID during bounded cleanup;
+a dead parent with a lost create response remains unknown with no stop claimed.
+
+`watchdog.json` retains ended/unknown/no-cloud-attempt evidence. The lock metadata
+blocks a later attempt when the previous attempt has unresolved creation ownership;
+operator reconciliation must resolve that evidence, not silently delete the lock.
+The lock is local to the operating-system user/host, not a distributed service or a
+provider monetary cap. Host death, network loss and provider delay can still leave
+an unknown scene. Stop request at 180 seconds is not proof of ended by 180 seconds.
+Production HTTP and source/settlement schemas are unchanged. Calling the internal
+Python runner directly does not install this process supervisor; actual operator
+runs must use the CLI.
+
+Before reporting readiness, the watchdog preconstructs the original stop-only
+component in a private `<attempt>.watchdog-cleanup` sibling directory. Allocation
+failure therefore refuses paid preparation. Later inability to write latch/audit
+files cannot prevent an already-owned hangup; the stop object needs no new directory
+at that point. A failure saving original provider readback can still leave unknown
+rather than a durable ended confirmation, which deliberately blocks automatic reuse.

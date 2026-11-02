@@ -1,6 +1,6 @@
 type Obj = Record<string, unknown>;
 type Person = {player_id: string; display_name: string; role?: string};
-type Work = {id: string; player: Person; revision: number; text: string; task: {id: string; status: string; attempt_no: number; error_code: string | null} | null; comment: string | null; display_confirmed_at: string | null; evaluation: unknown};
+type Work = {id: string; player: Person; revision: number; text: string; task: {id: string; status: string; attempt_no: number; error_code: string | null} | null; comment: string | null; comment_warning?: boolean; display_confirmed_at: string | null; evaluation: unknown};
 type Competition = {id: string; version: number; status: string; paused_from: string | null; pause_reason: string | null; rule: Obj; deadline_at: string | null; submissions: Work[]; allowed_actions: string[]; result: {settlement_id: string; awards: {player_id: string; submission_id: string; award_type: string; performance_delta: number}[]; rankings: {submission_id: string; total: number; votes: number}[]} | null};
 type Envelope = {task_id: string; attempt_no: number; input_hash: string; policy_hash: string; frozen_input: Obj};
 type Dependencies = {api: <T>(url: string, body?: unknown) => Promise<T>; acceptRevision: (revision: number) => boolean; epoch: () => number; ready: () => boolean; authenticated: () => boolean; failure: (error: unknown) => string; refreshPlayer: (id: string) => Promise<void>};
@@ -72,7 +72,9 @@ export function setupCompetition(d: Dependencies) {
       card.append(workButton(w,'export','导出此稿评估任务'),workButton(w,'retry','仅重试此稿失败评估')); get('works').append(card);
       if (displayable()) {
         const display = text('article','','competition-work'); display.dataset.submissionId = w.id; display.dataset.testid = 'competition-display-work';
-        display.append(text('h3',w.player.display_name),text('p',w.text,'answer-copy'),text('h4','ChatGPT 描述性短评'),text('p',w.comment!,'answer-copy'),workButton(w,'confirm-display',w.display_confirmed_at ? '此稿与短评已确认展示' : '已核对短评，确认此完整作品与短评已在本页展示')); get('display').append(display);
+        display.append(text('h3',w.player.display_name),text('p',w.text,'answer-copy'),text('h4','AI 描述性短评'),text('p',w.comment!,'answer-copy'));
+        if (w.comment_warning) display.append(text('p','短评含可能涉及分数或名次的词，请人工核对是否提前透露本轮结果。','feedback'));
+        display.append(workButton(w,'confirm-display',w.display_confirmed_at ? '此稿与短评已确认展示' : '已核对短评，确认此完整作品与短评已在本页展示')); get('display').append(display);
       }
     }
     if (!displayable()) get('display').append(text('p','展示尚未开放。必须全部作品评价有效采纳，才可逐稿展示与确认；不以零分代替失败。','empty'));
@@ -138,6 +140,7 @@ export function setupCompetition(d: Dependencies) {
         if (data.accepted && frozen.url.endsWith('/submissions') && integer(data.submission_revision)) authorRevision = data.submission_revision;
         d.acceptRevision(data.revision); voterState = null; ++voteRequest;
       } else { if (!valid(data.competition)) throw new Error('操作回执格式无效，结果未知。'); chosen = data.competition.id; adopt(data); notice(data.replayed ? '原操作结果已确认，未重复执行。' : '操作已由服务器确认。'); }
+      if (frozen.url.endsWith('/pause')) notice('比赛已暂停；原工作台的演出需单独控制。');
       pending = null;
       if (current?.status === 'COMPLETED') for (const w of current.submissions) await d.refreshPlayer(w.player.player_id);
     } catch (e) {
@@ -160,7 +163,7 @@ export function setupCompetition(d: Dependencies) {
       const e = await d.api<unknown>(`/api/competitions/${id}/submissions/${work}/evaluation-request`);
       if (auth !== d.epoch() || current?.id !== id || !d.ready()) return;
       if (!obj(e) || typeof e.task_id !== 'string' || !integer(e.attempt_no) || typeof e.input_hash !== 'string' || typeof e.policy_hash !== 'string' || !obj(e.frozen_input)) throw new Error('冻结任务格式无效。');
-      exported = {work,envelope: e as Envelope}; get<HTMLTextAreaElement>('evaluation-request').value = JSON.stringify(e,null,2); get<HTMLTextAreaElement>('evaluation-result').value = ''; notice('此稿冻结任务已导出；请原生 ChatGPT 评价后人工导入 criteria 与 comment。');
+      exported = {work,envelope: e as Envelope}; get<HTMLTextAreaElement>('evaluation-request').value = JSON.stringify(e,null,2); get<HTMLTextAreaElement>('evaluation-result').value = ''; notice('此稿冻结任务已导出；请按冻结评估策略取得 AI 评价后人工导入 criteria 与 comment。');
     } catch (e) { if (auth === d.epoch()) { fresh = false; notice(d.failure(e)); } } finally { busy = false; controls(); }
   }
   async function loadVote() {

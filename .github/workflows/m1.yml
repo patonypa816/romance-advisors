@@ -1,4 +1,4 @@
-name: M1, M2 and M3 PostgreSQL and browser acceptance
+name: M1–M4 offline PostgreSQL and browser acceptance
 on:
   push:
     branches: [main, 'codex/**']
@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   # A PR update supersedes a matching branch run instead of repeating expensive tests.
-  group: m1-m2-m3-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: m1-m2-m3-m4-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   acceptance:
@@ -40,6 +40,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
+      - name: Install offline audio fixture conversion tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install exact Python requirements
         run: python -m pip install -r requirements-lock.txt
       - name: Install locked frontend dependencies
@@ -67,7 +69,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: m1-m2-m3-browser-evidence
+          name: m1-m2-m3-m4-browser-evidence
           path: |
             playwright-report/
             test-results/

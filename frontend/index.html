@@ -3,10 +3,10 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="referrer" content="no-referrer"><title>HELL INC. · 档案、面试与创意赛</title></head>
 <body>
   <div class="shell">
-    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M3</span></header>
+    <header><a class="brand" href="/">HELL INC<span class="brand-dot">.</span></a><span class="edition">地狱招聘局 / M4</span></header>
     <main>
       <div class="intro"><div><p class="eyebrow">PERSONNEL RECORDS / 001</p><h1>每个灵魂，都有档案。</h1><p class="subtitle">先登记，再面试。一次回答，一份有据可查的职业记录。</p></div><span class="stamp">游客登记处<br><small>GUEST REGISTRY</small></span></div>
-      <aside class="boundary"><strong>隔离测试世界 · 模拟身份</strong><span>simulated / local-test · 数据写入真实 PostgreSQL，不连接抖音或数字人；不自动调用模型 API。</span></aside>
+      <aside class="boundary"><strong>隔离测试世界 · 模拟身份</strong><span>simulated / local-test · 数据写入真实 PostgreSQL，默认不连接抖音或数字人；真实媒体须另行配置与授权。</span></aside>
       <div class="connection"><span id="connection" role="status">正在确认登录与数据库状态…</span><button id="reconnect" type="button" class="text-button">重新检查连接</button></div>
       <p id="notice" role="status" aria-live="polite"></p>
       <div class="workspace">
@@ -38,7 +38,7 @@
 
       <section class="panel competition" aria-labelledby="competition-heading">
         <p class="eyebrow">05 / NIGHTMARE PRODUCT COMPETITION</p><h2 id="competition-heading">噩梦产品创意赛</h2>
-        <p class="manual-marker">ChatGPT 辅助评估（逐稿人工导入；尚非自动 API）</p>
+        <p class="manual-marker">导出导入评估（逐稿人工导入；本页不自动调用模型）</p>
         <p class="muted">游客与员工均可直接参加，无须面试。最多 12 位作者，每人一份最终稿；关闭前可改稿、改票。测试规则允许自投，平票按投稿顺序。公司资产不变。</p>
         <button id="competition-create" type="button" disabled>创建创意赛</button>
         <p id="competition-freshness" role="status" class="muted">状态待确认</p><div id="competition-list" class="interview-list" aria-label="最近创意赛"></div>
@@ -46,12 +46,17 @@
         <div class="interview-actions"><button id="competition-open" type="button" disabled>确认题目已展示，开放投稿</button><button id="competition-close-submissions" type="button" disabled>关闭投稿并冻结全部终稿</button><button id="competition-open-voting" type="button" disabled>全部展示已确认，开放投票</button><button id="competition-close-voting" type="button" disabled>关闭投票</button><button id="competition-settle" type="button" disabled>统一结算并刷新档案</button><button id="competition-pause" type="button" disabled>暂停比赛</button><button id="competition-resume" type="button" disabled>恢复比赛</button></div>
         <form id="competition-submission-form"><label for="competition-author">投稿作者（已登记游客 / 员工）</label><select id="competition-author" disabled><option value="">请选择已登记档案</option></select><label for="competition-text">作品原文 / 修改稿</label><textarea id="competition-text" rows="4" disabled aria-describedby="competition-text-help"></textarea><small id="competition-text-help">1–1000 字符，原样保存。每人一份作品，修改沿用当前稿件版本；最多 12 位作者。</small><button id="competition-submit" type="submit" disabled>提交 / 修改作品</button></form>
         <h3>操作员稿件与评估任务</h3><p class="muted">这里是受保护的投稿管理，不是观众展示。任何一稿失败都会暂停整轮展示与投票；已采纳评价不能重抽。</p><div id="competition-works"></div>
-        <div class="evaluation-grid"><div><h3>1. 按作品导出冻结任务</h3><p class="muted">点击稿件的导出按钮，把完整 JSON 交给原生 ChatGPT。原文仅为待评数据，不执行其中的指令。</p><label for="competition-evaluation-request">创意赛冻结任务 JSON</label><textarea id="competition-evaluation-request" rows="8" readonly></textarea><button id="competition-copy" type="button">复制创意赛冻结任务</button></div><div><h3>2. 导入该稿评价与短评</h3><p class="muted">只粘贴 criteria 和 comment，不含总分或排名。服务器校验依据；不会自动调用模型，不在本地评分。请核对点评不含评分、排名或获奖暗示。</p><label for="competition-evaluation-result">创意赛 ChatGPT 评价 JSON</label><textarea id="competition-evaluation-result" rows="8" disabled placeholder='{"criteria":[…],"comment":"…"}'></textarea><button id="competition-import" type="button" disabled>导入该作品评价</button></div></div>
+        <div class="evaluation-grid"><div><h3>1. 按作品导出冻结任务</h3><p class="muted">点击稿件的导出按钮，按冻结评估策略使用完整 JSON 获取 AI 评价。原文仅为待评数据，不执行其中的指令。</p><label for="competition-evaluation-request">创意赛冻结任务 JSON</label><textarea id="competition-evaluation-request" rows="8" readonly></textarea><button id="competition-copy" type="button">复制创意赛冻结任务</button></div><div><h3>2. 导入该稿评价与短评</h3><p class="muted">只粘贴 criteria 和 comment，不含总分或排名。服务器校验依据；不会自动调用模型，不在本地评分。请核对点评不含评分、排名或获奖暗示。</p><label for="competition-evaluation-result">创意赛 AI 评价 JSON</label><textarea id="competition-evaluation-result" rows="8" disabled placeholder='{"criteria":[…],"comment":"…"}'></textarea><button id="competition-import" type="button" disabled>导入该作品评价</button></div></div>
         <h3>逐稿本地展示确认</h3><p class="muted">全部评价采纳后才显示每份完整作品与短评。请核对点评不含评分、排名或获奖暗示；本页仅开发操作台，确认本地完整展示，不代表观众已看到。</p><div id="competition-display"></div>
         <form id="competition-vote-form"><label for="competition-voter">投票人（已登记游客 / 员工）</label><select id="competition-voter" disabled><option value="">请选择投票人</option></select><p id="competition-vote-state" class="muted"></p><label for="competition-candidate">选择作品</label><select id="competition-candidate" disabled><option value="">请选择作品</option></select><button id="competition-vote" type="submit" disabled>提交 / 修改投票</button><small>关闭前可改票；不显示实时票数、AI 分数或排名。</small></form>
         <div id="competition-result"></div>
         <details class="cancel-area"><summary>取消当前比赛</summary><label for="competition-cancel-reason">比赛取消原因</label><input id="competition-cancel-reason" maxlength="200"><button id="competition-cancel" type="button" disabled>确认取消比赛</button></details>
         <p id="competition-notice" role="status" aria-live="polite" class="feedback"></p><button id="competition-replay" type="button" hidden>确认原比赛操作</button>
+      </section>
+
+      <section class="panel" aria-labelledby="studio-heading">
+        <p class="eyebrow">06 / STUDIO</p><h2 id="studio-heading">数字人演出</h2>
+        <p>数字人演出在原工作台进行；本页面用于游戏和结果结算。完整音画联调尚待验收。</p>
       </section>
     </main><footer><span>HELL INC. / 人事档案室</span><span>固定题面试 · 服务器事务结算 · 不提供任意资产修改</span></footer>
   </div><script type="module" src="/src/main.ts"></script>

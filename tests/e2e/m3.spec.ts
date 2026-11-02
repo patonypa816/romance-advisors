@@ -53,7 +53,7 @@ test('M3 three guests: revision, failed review gate, retry, all-display gate, vo
   const result = page.locator('#competition-evaluation-result');
   const fixture = (i: number) => ({
     criteria: ['originality', 'coherence', 'setting'].map(id => ({ id, score: 2, evidence: [texts[i].trim()], reason: '离线契约样例：证据为该作品原文，不代表真实模型判断。' })),
-    comment: ['考勤钟将迟到转为时间倒流，客服提供清醒假。', '枕头退回老板的梦，并提供替换芯。', '复印机用影子加班，客服负责删除并归还睡眠。'][i],
+    comment: ['考勤钟将迟到转为时间倒流，客服提供清醒假。', '枕头退回老板的冠军梦，并提供替换芯。', '复印机用影子加班，客服负责删除并归还睡眠。'][i],
   });
   // Export is an asynchronous GET. Observe this work AND attempt, rather than
   // treating a click or a nonempty textarea left by a previous work as completion.
@@ -102,6 +102,7 @@ test('M3 three guests: revision, failed review gate, retry, all-display gate, vo
   await result.fill(JSON.stringify(fixture(1)));
   await page.locator('#competition-import').click();
   await expect(card).toContainText('DISPLAYING');
+  await expect(page.locator('#competition-display')).toContainText('短评含可能涉及分数或名次的词，请人工核对');
   for (let i = 0; i < 3; i++) {
     await expect(page.locator('#competition-display')).toContainText(texts[i].trim());
     await expect(page.locator('#competition-display')).toContainText(fixture(i).comment);

@@ -104,6 +104,7 @@ export function setupInterview(d: Dependencies) {
         if (!valid(data.interview)) throw new Error('操作回执格式无效。');
         chosen = data.interview.id; adopt(data); notice(data.replayed ? '原操作结果已确认，未重复执行。' : '操作已由服务器确认。');
       }
+      if (frozen.url.endsWith('/pause')) notice('面试已暂停；原工作台的演出需单独控制。');
       pending = null;
       if (current?.result) await d.refreshPlayer(current.player.player_id);
     } catch (e) {

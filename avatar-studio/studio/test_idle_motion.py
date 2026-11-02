@@ -141,14 +141,12 @@ class IdleMotionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(c._ws.binary), 1)
 
     async def test_all_content_entries_share_exactly_one_q_and_guard(self):
-        for kind in ("semantic", "reading", "expression", "motion", "legacy"):
+        for kind in ("semantic", "expression", "motion", "legacy"):
             c = self.component()
             await self.start(c, once=True)
-            pcm, _ = fixture(2 if kind == "reading" else .1)
-            if kind in ("semantic", "reading"):
-                coro = c.send_aligned_expression(pcm, "甲", [], 1, action_kind="S", ge_lead_seconds=1.1,
-                    recovery=GE if kind == "reading" else None,
-                    reading={"text": "读弹幕", "pcm": b"\0\0" * 7200} if kind == "reading" else None)
+            pcm, _ = fixture(.1)
+            if kind == "semantic":
+                coro = c.send_aligned_expression(pcm, "甲", [], 1, action_kind="S", ge_lead_seconds=1.1)
             elif kind == "expression":
                 coro = c.send_expression(pcm, "甲", [], 1)
             elif kind == "motion":

@@ -168,9 +168,8 @@ function renderComments(items, generation) {
       addText(article, 'p', `${kind}：${display(item.text)}`);
       if (!(operator && item.operator_mode === 'motion')) addText(article, 'p', `${operator ? '台词' : '回答'}：${display(item.answer, '等待回复')}`, 'answer');
       if (item.error) addText(article, 'p', `原因：${display(item.error)}`, 'hint');
-      const reading = operator ? (item.operator_mode === 'motion' ? '纯动作' : '主持演绎') : !Object.hasOwn(item, 'reading') ? '尚未计划' : item.reading === null ? '直接接话' : typeof item.reading === 'object' ? '整套阅读' : display(item.reading, '尚未确定');
-      const segmentInfo = operator && item.operator_mode === 'motion' ? '' : ` · 已发送片段：${display(item.segments_sent, '0')}`;
-      addText(article, 'p', `方式：${reading}${segmentInfo} · 动作：${formatActions(item.actions)}`, 'meta');
+      const segmentInfo = operator && item.operator_mode === 'motion' ? '' : `已发送片段：${display(item.segments_sent, '0')} · `;
+      addText(article, 'p', `${segmentInfo}动作：${formatActions(item.actions)}`, 'meta');
       if (item.semantic_speech) {
         const groups = (item.delivery || []).flatMap(segment => (segment.actions || []).map(action => {
           const point = (segment.timeline || []).find(node => ['S', 'L'].includes(node.role) && node.group_index === segment.actions.indexOf(action) + 1);
@@ -531,7 +530,7 @@ function render(data) {
   $('directorText').disabled = $('directorSubmit').disabled = busy || !connected || !acceptsInput;
   renderDirector(topic, {enabled: !busy && connected && acceptsDirector});
   $('audioSeconds').textContent = totals.audio_seconds == null ? '—' : `${fixed(totals.audio_seconds, 1)} 秒`;
-  $('cost').textContent = totals.cost_cny == null ? '—' : `¥ ${fixed(totals.cost_cny, 6)}`;
+  $('cost').textContent = totals.cost_cny == null ? '—' : `¥ ${fixed(totals.cost_cny, 6)}${totals.usage_unverified_segments ? '（不含未核实用量）' : ''}`;
   $('cloudCost').textContent = cloud.credits_cost == null && cloud.billed_seconds == null ? '—' : `${display(cloud.credits_cost)} 积分 / ${fixed(cloud.billed_seconds, 1)} 秒`;
   $('obsStatus').textContent = player.connected ? `已连接 · 音频${player.audio_live ? '正常' : '未就绪'} / 画面${player.video_live ? '正常' : '未就绪'}` : '未连接';
   $('obsDot').className = `dot ${player.connected ? 'good' : 'bad'}`;

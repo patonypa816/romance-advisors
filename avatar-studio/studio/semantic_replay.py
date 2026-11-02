@@ -13,9 +13,20 @@ from pathlib import Path
 import re
 import wave
 
-from fixed_replay import FixedReplay, _identifier, _json_bytes, _sha
+from fixed_replay import FixedReplay, _identifier, _json_bytes, _sha, _no_reading_receipt
 from semantic_speech import (_actions, _normalized, _occurrences, compile_semantic_timeline,
-                             parse_semantic_plan, validate_alignment)
+                             parse_game_semantic_plan, parse_semantic_plan, validate_alignment)
+
+
+def _parse_replay_plan(plan):
+    """Recognize exact current or legacy shape without adding archived fields."""
+    if not isinstance(plan, dict):
+        raise ValueError("原计划必须为对象")
+    if set(plan) == {"emotion", "segments"}:
+        return parse_game_semantic_plan(plan), True
+    if set(plan) == {"emotion", "observation", "reading", "segments"}:
+        return parse_semantic_plan(plan), False
+    raise ValueError("原计划字段不匹配已知的当前或历史格式")
 
 
 def _same_timeline(actual, expected):
@@ -50,14 +61,13 @@ class SemanticFixedReplay(FixedReplay):
         self._original_plan = self._read(f"plans/{self.comment_id}.json", 100_000)
         original = json.loads(self._original_plan)
         if (not isinstance(original, dict) or original.get("comment_id") != self.comment_id
-                or not {"emotion", "observation", "reading", "segments"} <= set(original)
                 or set(original) - {"comment_id", "comment", "emotion", "observation", "reading", "segments"}):
             raise ValueError("原计划评论身份或字段不匹配")
-        fields = ("emotion", "observation", "reading", "segments")
-        canonical = parse_semantic_plan({key: original[key] for key in fields})
-        if canonical != {key: original[key] for key in fields}:
+        source_plan = {key: value for key, value in original.items() if key not in {"comment_id", "comment"}}
+        canonical, current_plan = _parse_replay_plan(source_plan)
+        if canonical != source_plan:
             raise ValueError("原计划必须已经通过规范化，不在回放中改写原文")
-        if canonical["reading"] is not None or len(canonical["segments"]) != 1:
+        if canonical.get("reading") is not None or len(canonical["segments"]) != 1:
             raise ValueError("语义短动作对照只接受一段且无reading的原样本")
         source_part = canonical["segments"][0]
         if len(source_part["actions"]) != 2:
@@ -119,7 +129,7 @@ class SemanticFixedReplay(FixedReplay):
             raise ValueError("原最终锚点、L时间线与发送计划不一致")
         if (sent.get("comment_id") != self.comment_id or sent.get("segment_index") != 1
                 or sent.get("send_complete") is not True or sent.get("actions_sent_complete") is not True
-                or sent.get("reading_text") is not None or sent.get("reading_audio_seconds") != 0
+                or not _no_reading_receipt(sent, current_plan=current_plan)
                 or sent.get("pcm_transport_sent_bytes") != len(self.pcm)):
             raise ValueError("原样本未完整发送或评论身份不匹配")
         events = sent.get("motion_events")
@@ -267,8 +277,8 @@ class PreparedSemanticReplay(SemanticFixedReplay):
     def __init__(self, preparation: Path, *, ge_lead_seconds=1.1):
         manifest, verified = self._load_preparation(preparation, ge_lead_seconds)
         original = json.loads(verified["prepared-plan.json"])
-        canonical = parse_semantic_plan(original)
-        if (canonical != original or canonical["reading"] is not None
+        canonical, _ = _parse_replay_plan(original)
+        if (canonical != original or canonical.get("reading") is not None
                 or len(canonical["segments"]) != 1
                 or not 3 <= len(canonical["segments"][0]["actions"]) <= 6):
             raise ValueError("准备素材必须为规范单段无reading计划，包含3至6个动作组")
@@ -339,9 +349,9 @@ class PreparedMinuteSemanticReplay(PreparedSemanticReplay):
         from tts_live import MODEL, VOICE
         manifest, verified = self._load_preparation(preparation, 1.1)
         original = json.loads(verified["prepared-plan.json"])
-        canonical = parse_semantic_plan(original)  # Each source segment retains the ordinary 120-character contract.
+        canonical, _ = _parse_replay_plan(original)  # Each segment retains the ordinary 120-character contract.
         parts = canonical["segments"]
-        if (canonical != original or canonical["reading"] is not None or len(parts) != 2
+        if (canonical != original or canonical.get("reading") is not None or len(parts) != 2
                 or any(len(part["actions"]) != 3 for part in parts)
                 or parts[0]["instruction"] != parts[1]["instruction"]
                 or parts[0]["recovery"] != parts[1]["recovery"]):

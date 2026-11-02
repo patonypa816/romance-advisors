@@ -138,6 +138,18 @@ class AlignmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(log.stat().st_size, MAX_EVENT_LOG_BYTES)
         self.assertEqual(json.loads(log.read_text().splitlines()[-1])["final_words"], WORDS)
 
+    async def test_verified_pcm_survives_missing_usage_without_retry(self):
+        items = events()
+        items[-1].pop("usage")
+        http = HTTP(items)
+        result = await self.call(http, name="unverified-usage")
+        self.assertEqual(result["status"], "usage_unverified")
+        self.assertFalse(result["usage_verified"])
+        self.assertIsNone(result["cost_cny"])
+        self.assertEqual(result["pcm_sha256"], hashlib.sha256(Path(result["pcm_path"]).read_bytes()).hexdigest())
+        self.assertEqual(result["alignment"]["pcm_sha256"], result["pcm_sha256"])
+        self.assertEqual((http.posts, http.gets), (1, 1))
+
     async def punctuation_result(self, punctuation, *, width=None, changes=None, name="punctuation"):
         width = len(punctuation) if width is None else width
         words = [

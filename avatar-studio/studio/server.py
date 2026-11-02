@@ -20,11 +20,11 @@ import uuid
 
 from aiohttp import web
 
-from action_schema import (parse_plan, parse_director_plan, validate_short_performance_plan,
+from action_schema import (parse_plan, parse_director_plan, parse_game_motion_plan, validate_short_performance_plan,
                            short_performance_input_mode, validate_continuous_speech_plan,
                            continuous_speech_input_mode, parse_long_speech_plan,
                            long_speech_input_mode, validate_long_speech_plan, validate_long_action_replay_plan)
-from semantic_speech import (parse_dialogue_semantic_plan, DIALOGUE_ACTION_KIND,
+from semantic_speech import (parse_game_semantic_plan, DIALOGUE_ACTION_KIND,
                              DIALOGUE_GE_LEAD_SECONDS, DIALOGUE_S_TO_Q_SECONDS)
 from avatar_library import AvatarLibrary
 from idle_action_library import IdleActionLibrary, IdleActionError
@@ -486,7 +486,7 @@ class Studio:
                      and not any(c["status"] in IN_FLIGHT for c in self.current.comments))
         plan = self.replay_fixture.plan
         return {**self.replay_fixture.public(), "available": bool(available),
-                "timeline": plan["segments"][0]["timeline"], "interaction_context": plan["observation"]}
+                "timeline": plan["segments"][0]["timeline"], "interaction_context": plan.get("observation", "")}
 
     async def replay(self, request):
         body = await request.json()
@@ -1085,7 +1085,7 @@ class Studio:
         c = {"id": f"c{self.comment_sequence:04d}", "nickname": name.strip(), "text": text.strip(),
              "input_kind": "viewer",
              "status": "pending", "answer": "", "emotion": "", "error": "", "segments_sent": 0,
-             "motion_receipts": [], "reading_segments_sent": 0,
+             "motion_receipts": [],
              "usage": {"input_tokens": 0, "output_tokens": 0, "cost_cny": 0.0}, "created_at": time.time(),
              "persona_epoch": s.persona_epoch, **metadata}
         s.comments.append(c)
@@ -1094,13 +1094,9 @@ class Studio:
         return c
 
     def reply_history(self, s, current=None):
-        motion = s.component.public().get("motion_events", [])
         return [{"nickname": c["nickname"], "comment": c["text"], "answer": c["answer"],
                  "input_kind": c.get("input_kind", "viewer"), "operator_mode": c.get("operator_mode"),
-                 "emotion": c["emotion"], "status": c["status"], "reading": c.get("reading"),
-                 "reading_status": c.get("reading_status"),
-                 "reading_segments_sent": c.get("reading_segments_sent", 0),
-                 "reading_motion_sent": any(e.get("comment_id") == c["id"] and e.get("role") == "R" for e in motion)}
+                 "emotion": c["emotion"], "status": c["status"]}
                 for c in s.comments if c is not current and c["answer"] and c["status"] == "sent"
                 and c.get("persona_epoch", 0) == s.persona_epoch][-6:]
 
@@ -1133,8 +1129,10 @@ class Studio:
             else:
                 plan = parse_long_speech_plan(body)
         elif self.semantic_speech and not (operator and c.get("operator_mode") == "motion"):
-            plan = parse_dialogue_semantic_plan(body, source_text=None if operator else c["text"],
-                                       mode=c.get("operator_mode") if operator else None)
+            plan = parse_game_semantic_plan(body, source_text=None if operator else c["text"],
+                                            mode=c.get("operator_mode") if operator else None)
+        elif self.semantic_speech and operator and c.get("operator_mode") == "motion":
+            plan = parse_game_motion_plan(body)
         else:
             plan = parse_director_plan(body, mode=c["operator_mode"]) if operator else parse_plan(body, source_text=c["text"])
         if self.short_performance_test:
@@ -1146,11 +1144,17 @@ class Studio:
         fingerprint = hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if c.get("fingerprint"):
             raise ValueError("reply_already_accepted")
-        segments, reading = plan.get("segments", []), plan.get("reading")
-        c.update(plan=plan, fingerprint=fingerprint, emotion=plan["emotion"], observation=plan["observation"],
+        segments = plan.get("segments", [])
+        c.update(plan=plan, fingerprint=fingerprint, emotion=plan["emotion"],
                  answer="".join(p["text"] for p in segments), delivery=segments, status="ready",
-                 reading=reading, reading_status="pending" if reading else "skipped",
                  validation_status="accepted")
+        # Existing fixed replay plans are read as archived; do not manufacture
+        # old presentation fields for new game plans.
+        if self.replay_fixture:
+            if "observation" in plan:c["observation"] = plan["observation"]
+            if "reading" in plan:
+                c["reading"] = plan["reading"]
+                c["reading_status"] = "pending" if plan["reading"] else "skipped"
         if self.semantic_speech and segments:
             c.update(semantic_speech=True, generated_text_chars=len(c["answer"]),
                      action_group_count=sum(len(part["actions"]) for part in segments))
@@ -1161,9 +1165,10 @@ class Studio:
             c["motion_actions"] = plan["actions"]
         (s.out / "plans").mkdir(exist_ok=True)
         save(s.out / "plans" / (c["id"] + ".json"), {"comment_id": c["id"], "comment": c["text"], **plan})
-        s.event("replay_plan_accepted" if self.replay_fixture else "llm_plan_accepted",
-                comment_id=c["id"], input_kind=c.get("input_kind", "viewer"),
-                reading=reading, segments=segments, motion_actions=plan.get("actions", []))
+        event_fields={"comment_id":c["id"], "input_kind":c.get("input_kind", "viewer"),
+                      "segments":segments, "motion_actions":plan.get("actions", [])}
+        if self.replay_fixture and "reading" in plan:event_fields["reading"]=plan["reading"]
+        s.event("replay_plan_accepted" if self.replay_fixture else "llm_plan_accepted", **event_fields)
         s.checkpoint()
         if enqueue:
             s.work.put_nowait(c)
@@ -1217,11 +1222,15 @@ class Studio:
             return web.json_response(self.snapshot())
 
         async def stop(request):
-            self.director.stop("session_stop")
-            self.automation.invalidate("operator_stop", replies=True)
             self.current.latch_stop()
             self.current.spawn(self.current.request_stop("工作台结束会话"))
-            await self.automation.disconnect("operator_stop")
+            # Cleanup and diagnostics must not prevent stopping an owned live.
+            with contextlib.suppress(Exception):
+                self.director.stop("session_stop")
+            with contextlib.suppress(Exception):
+                self.automation.invalidate("operator_stop", replies=True)
+            with contextlib.suppress(Exception):
+                await self.automation.disconnect("operator_stop")
             return web.json_response({"requested": True})
 
         async def new(request):

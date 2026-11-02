@@ -48,7 +48,7 @@ class EnvironmentCredentialsTest(unittest.TestCase):
                     credentials.load_bailian()
 
     def test_invalid_explicit_key_does_not_fall_back_to_alias(self):
-        with patch.dict(os.environ, {"BAILIAN_API_KEY": "invalid-dummy",
+        with patch.dict(os.environ, {"BAILIAN_API_KEY": "invalid\r\ndummy",
                                     "DASHSCOPE_API_KEY": "sk-dummy-alias",
                                     "BAILIAN_WORKSPACE_ID": "dummy-workspace"}, clear=True), \
                 patch.object(credentials, "config", side_effect=AssertionError("legacy read")):

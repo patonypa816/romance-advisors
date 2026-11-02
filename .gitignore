@@ -39,3 +39,12 @@ test-results-m2/
 
 playwright-report-m3/
 test-results-m3/
+
+playwright-report-m4/
+test-results-m4/
+
+# Verified RTC SDK is fetched locally, never committed.
+frontend/public/vendor/
+
+playwright-report-m4-phase2/
+test-results-m4-phase2/

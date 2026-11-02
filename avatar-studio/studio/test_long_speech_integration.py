@@ -203,7 +203,7 @@ class LongSpeechIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(args[1]), 120)
         self.assertEqual(len(args[2]), 4)
         self.assertEqual(args[3], 1)
-        self.assertIsNone(sender.await_args.kwargs["reading"])
+        self.assertNotIn("reading", sender.await_args.kwargs)
         self.assertEqual(comment["motion_receipts"], [receipt])
         out = studio.current.out
         saved = json.loads((out / "tts" / f'{comment["id"]}-1/component-send.json').read_text())

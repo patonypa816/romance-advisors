@@ -1,4 +1,4 @@
-"""Explicit additive schema v3 migration. Never called by web startup."""
+"""Explicit additive schema v4 migration. Never called by web startup."""
 from sqlalchemy import (MetaData, Table, Column, String, BigInteger, DateTime,
                         UniqueConstraint, ForeignKey, CheckConstraint, Integer, text)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -38,17 +38,17 @@ def make_engine(url: str):
 
 
 async def migrate(engine):
-    """Explicit, transactional fresh baseline or v1/v2 -> v3; never startup."""
+    """Explicit, transactional fresh baseline or v1/v2/v3 -> v4; never startup."""
     async with engine.begin() as conn:
         await conn.execute(text("SELECT pg_advisory_xact_lock(721023061)"))
         await conn.run_sync(lambda sync: versions.create(sync, checkfirst=True))
         existing = (await conn.execute(versions.select())).scalars().all()
-        if existing not in ([], [1], [2], [3]):
+        if existing not in ([], [1], [2], [3], [4]):
             raise RuntimeError("未知数据库版本，拒绝迁移。")
         await conn.run_sync(metadata.create_all)
-        if existing != [3]:
+        if existing != [4]:
             await conn.execute(versions.delete())
-            await conn.execute(versions.insert().values(version=3))
+            await conn.execute(versions.insert().values(version=4))
 
 
 # M2 is additive: M1 tables and original command receipts remain untouched.
@@ -131,4 +131,32 @@ competition_events = Table('competition_events', metadata,
     Column('player_id', UUID(as_uuid=False), ForeignKey('players.player_id'), primary_key=True),
     Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
     Column('event_type', String(32), nullable=False), Column('payload', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False))
+
+
+# M4 is additive; game rows and settlement ownership are unchanged.
+performance_sessions = Table('performance_sessions', metadata,
+    Column('session_id', UUID(as_uuid=False), primary_key=True),
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
+    Column('mode', String(32), nullable=False), Column('status', String(32), nullable=False),
+    Column('body', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False),
+    Column('updated_at', DateTime(timezone=True), nullable=False),
+    CheckConstraint("status IN ('active','paused','closed','unknown')"),
+    CheckConstraint("mode IN ('offline_fixture','real')"))
+Index('one_unclosed_performance_session', performance_sessions.c.world_id, unique=True,
+      postgresql_where=performance_sessions.c.status != 'closed')
+performances = Table('performances', metadata,
+    Column('performance_id', UUID(as_uuid=False), primary_key=True),
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), nullable=False),
+    Column('session_id', UUID(as_uuid=False), ForeignKey('performance_sessions.session_id'), nullable=False),
+    Column('payload_hash', String(64), nullable=False), Column('immutable_payload', JSONB, nullable=False),
+    Column('state', String(32), nullable=False), Column('body', JSONB, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False),
+    Column('updated_at', DateTime(timezone=True), nullable=False),
+    CheckConstraint("state IN ('accepted','preparing','ready','sending','send_completed','failed','cancelled','expired','unknown')"))
+performance_commands = Table('performance_commands', metadata,
+    Column('world_id', String(128), ForeignKey('worlds.world_id'), primary_key=True),
+    Column('command_id', UUID(as_uuid=False), primary_key=True),
+    Column('payload', JSONB, nullable=False), Column('response', JSONB, nullable=False),
     Column('created_at', DateTime(timezone=True), nullable=False))

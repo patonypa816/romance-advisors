@@ -12,7 +12,7 @@ import live_session
 
 
 def speech(text="咱先说这一句。"):
-    return {"emotion": "平静", "observation": "没有实时姿态证据", "reading": None,
+    return {"emotion": "平静",
             "segments": [{"text": text, "instruction": "自然清晰", "actions": [], "recovery": None}]}
 
 
@@ -288,7 +288,7 @@ class DirectorScheduling(unittest.IsolatedAsyncioTestCase):
     async def test_pure_motion_uses_director_contract_and_never_tts(self):
         self.ai.generate_director.side_effect = None
         self.ai.generate_director.return_value = {
-            "emotion": "平静", "observation": "姿态未知",
+            "emotion": "平静",
             "actions": [{"kind": "S", "delay_seconds": 0,
                          "motions": [{"part": "head", "description": "轻轻点头一次"}],
                          "hold_seconds": 0, "gaze": "看向镜头", "expression": "神情平静"}],

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
-from action_schema import ACTION_POST_SEND_SECONDS, compile_reading_timeline, compile_timeline as real_compile_timeline, parse_director_plan, parse_plan
+from action_schema import ACTION_POST_SEND_SECONDS, compile_reading_timeline, compile_timeline as real_compile_timeline, parse_director_plan, parse_game_motion_plan, parse_plan
 
 GE = {"gaze": "自然看向镜头", "expression": "神情温和"}
 READING = {"text": "最近粮价", "instruction": "正常清晰，轻短念出原文片段。"}
@@ -26,6 +26,28 @@ def plan(actions=None):
 
 
 class ActionSchemaTests(unittest.TestCase):
+    def test_game_motion_uses_only_current_contract_and_preserves_compilation(self):
+        body = {"emotion": "认真", "actions": [long(hold=5), short(delay=5)], "recovery": dict(GE)}
+        original = copy.deepcopy(body)
+        parsed = parse_game_motion_plan(body)
+        self.assertEqual(body, original)
+        self.assertEqual(set(parsed), {"emotion", "actions", "recovery", "timeline"})
+        self.assertEqual(parsed["timeline"], real_compile_timeline(body["actions"], body["recovery"]))
+        self.assertEqual([node["role"] for node in parsed["timeline"]], ["L", "S", "Q"])
+        self.assertEqual([node["at_seconds"] for node in parsed["timeline"]], [0, 5, 6.5])
+
+    def test_game_motion_rejects_historical_fields_and_invalid_contract(self):
+        body = {"emotion": "认真", "actions": [short()], "recovery": dict(GE)}
+        for extra in ({"reading": None}, {"observation": "未知"}, {"segments": []}, {"timeline": []}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                parse_game_motion_plan({**body, **extra})
+        for actions in ([], None, [short(delay=1)], [short()] + [short(delay=2) for _ in range(6)]):
+            with self.subTest(actions=actions), self.assertRaises(ValueError):
+                parse_game_motion_plan({**body, "actions": actions})
+        for recovery in (None, {}, {**GE, "text": "别说话"}, {**GE, "gaze": ""}):
+            with self.subTest(recovery=recovery), self.assertRaises(ValueError):
+                parse_game_motion_plan({**body, "recovery": recovery})
+
     def test_director_speech_has_no_reading_and_keeps_strict_speech_contract(self):
         body = plan([short()])
         for mode in ("once", "topic"):
@@ -230,10 +252,11 @@ class ActionSchemaTests(unittest.TestCase):
         self.assertEqual(result["segments"][0]["actions"][0]["motions"][0]["description"], "轻轻点头一次")
 
     def test_brain_context_example_matches_contract(self):
+        from semantic_speech import parse_game_semantic_plan
         body = json.loads(Path(__file__).with_name("brain-context.json").read_text(encoding="utf-8"))["plan_contract"]
-        result = parse_plan(body)
+        result = parse_game_semantic_plan(body)
         self.assertEqual(len(result["segments"][0]["actions"][0]["motions"]), 1)
-        self.assertEqual([node["role"] for node in result["segments"][0]["timeline"]], ["R", "S0", "S", "S", "Q"])
+        self.assertEqual(set(result), {"emotion", "segments"})
 
     def test_reading_is_required_strict_and_matches_contiguous_source(self):
         body = plan()

@@ -212,6 +212,32 @@ def validate_dialogue_actions(actions, text=None):
     return clean
 
 
+def parse_game_semantic_plan(body, source_text=None, mode=None):
+    """Current game speech contract; the historical reader remains separate."""
+    if source_text is not None and not isinstance(source_text, str):
+        raise ValueError("source_text必须为文字或None")
+    if mode not in (None, "once", "topic"):
+        raise ValueError("语义台词只接受观众、一次安排或主讲话题")
+    if not isinstance(body, dict) or set(body) != {"emotion", "segments"}:
+        raise ValueError("游戏语义计划必须且只能包含emotion、segments")
+    segments = body["segments"]
+    if not isinstance(segments, list) or not 1 <= len(segments) <= 2:
+        raise ValueError("每轮需要1至2段完整台词")
+    clean = []
+    for segment in segments:
+        if not isinstance(segment, dict) or set(segment) != {"text", "instruction", "actions", "recovery"}:
+            raise ValueError("每段必须且只能包含text、instruction、actions、recovery")
+        text = _text(segment["text"], MAX_TEXT, "text")
+        try:
+            actions = validate_dialogue_actions(_normalize_input_actions(segment["actions"]), text)
+            recovery = _validate_recovery(segment["recovery"], actions)
+        except ValueError as error:
+            raise _dialogue_parse_error(error) from None
+        clean.append({"text": text, "instruction": _text(segment["instruction"], 160, "语音instruction"),
+                      "actions": actions, "recovery": recovery})
+    return {"emotion": _text(body["emotion"], 24, "emotion"), "segments": clean}
+
+
 def parse_dialogue_semantic_plan(body, source_text=None, mode=None):
     """Formal dialogue uses A short gestures; historical parsing is unchanged."""
     try:
@@ -381,8 +407,7 @@ def compile_semantic_timeline(actions, recovery, alignment, audio_seconds, *, ac
     clean = _actions(actions)
     if action_kind == "S" and any(m["part"] == "whole_body" for g in clean for m in g["motions"]):
         raise ValueError("S不得使用whole_body")
-    # A reading-only prelude still needs its recovery although the answer has
-    # no active groups. The plan parser owns whether reading is present.
+    # The game plan parser determines whether a recovery belongs to its actions.
     recovery = _validate_recovery(recovery, clean, required=recovery is not None)
     if not clean:
         return []

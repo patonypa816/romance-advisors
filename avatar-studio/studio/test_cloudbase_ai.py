@@ -31,6 +31,9 @@ MOTION = {"emotion": "认真", "observation": "当前姿态未知", "actions": [
           "recovery": {"gaze": "自然看向镜头", "expression": "神情温和"}}
 
 
+GAME_PLAN = {key: copy.deepcopy(PLAN[key]) for key in ("emotion", "segments")}
+GAME_MOTION = {key: copy.deepcopy(MOTION[key]) for key in ("emotion", "actions", "recovery")}
+
 class PlanValidationContracts(unittest.IsolatedAsyncioTestCase):
     """只mock模型返回；合同示例交给真实parser，错误不复制原内容。"""
 
@@ -75,8 +78,8 @@ class PlanValidationContracts(unittest.IsolatedAsyncioTestCase):
             client._call.assert_awaited_once()
 
     async def test_normal_reply_prompt_explicitly_defines_nested_contract(self):
-        client = self.client(PLAN)
-        self.assertEqual(await client.generate_reply(COMMENT, [], {}), PLAN)
+        client = self.client(GAME_PLAN)
+        self.assertEqual(await client.generate_reply(COMMENT, [], {}), GAME_PLAN)
         prompt = client._call.call_args.args[1][0]["content"]
         self.assertIn(module.SEMANTIC_SPEECH_CONTRACT, prompt)
         self.assertIn("text、instruction、actions、recovery", prompt)
@@ -153,7 +156,7 @@ class PlanValidationContracts(unittest.IsolatedAsyncioTestCase):
 
     async def test_top_level_extra_fields_and_parser_errors_cannot_leak_arbitrary_values_or_keys(self):
         marker = "https://private.invalid/token=SECRET"
-        result = {**PLAN, marker: marker}
+        result = {**GAME_PLAN, marker: marker}
         client = self.client(result)
         with self.assertRaises(module.ModelError) as caught:
             await client.generate_reply(COMMENT, [], {})
@@ -162,20 +165,20 @@ class PlanValidationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["response_shape"]["unknown_field_count"], 1)
         self.assertIn("额外字段数量：1", detail["reason"])
         self.assertNotIn(marker, json.dumps(detail))
-        client = self.client(PLAN)
-        with mock.patch.object(module, "parse_dialogue_semantic_plan", side_effect=ValueError(marker)):
+        client = self.client(GAME_PLAN)
+        with mock.patch.object(module, "parse_game_semantic_plan", side_effect=ValueError(marker)):
             with self.assertRaises(module.ModelError) as caught:
                 await client.generate_reply(COMMENT, [], {})
         self.assertEqual(caught.exception.validation["reason"], "计划字段或数值不符合合同")
         self.assertNotIn(marker, json.dumps(caught.exception.validation))
-        many = {"segments": [copy.deepcopy(PLAN["segments"][0]) for _ in range(20)]}
+        many = {"segments": [copy.deepcopy(GAME_PLAN["segments"][0]) for _ in range(20)]}
         shape = module._response_shape(many)["fields"]["segments"]
         self.assertEqual(shape["count"], 20)
         self.assertEqual(len(shape["items"]), 3)
         self.assertEqual(shape["omitted_items"], 17)
 
     async def test_director_parser_and_short_validation_keep_distinct_stages(self):
-        invalid = copy.deepcopy(MOTION)
+        invalid = copy.deepcopy(GAME_MOTION)
         invalid["actions"][0]["motions"] = "PRIVATE"
         client = self.client(invalid)
         with self.assertRaises(module.ModelError) as caught:
@@ -460,18 +463,18 @@ class LongSpeechContracts(unittest.IsolatedAsyncioTestCase):
 class DirectorContracts(unittest.IsolatedAsyncioTestCase):
     """只mock既有调用边界；输入无效时不能接触SDK或凭据。"""
 
-    def client(self, result=PLAN):
+    def client(self, result=GAME_PLAN):
         client = module.CloudBaseAI(CONFIG)
         client._call = mock.AsyncMock(return_value=copy.deepcopy(result))
         return client
 
     async def test_concise_action_guidance_reaches_viewer_speech_and_motion_routes(self):
         # 所有生成入口必须收到同一写法规则；仅改主持入口会遗漏观众动作请求。
-        motion = copy.deepcopy(MOTION)
+        motion = copy.deepcopy(GAME_MOTION)
         motion["actions"][0].update(
             motions=[{"part": "right_arm", "description": "右手抠鼻子"}],
             gaze="目光自然", expression="平静")
-        plan = copy.deepcopy(PLAN)
+        plan = copy.deepcopy(GAME_PLAN)
         semantic_node = {key: copy.deepcopy(motion["actions"][0][key])
                          for key in ("motions", "gaze", "expression")}
         semantic_node["anchor"] = {"quote": "咱也会说错", "occurrence": 1}
@@ -508,7 +511,7 @@ class DirectorContracts(unittest.IsolatedAsyncioTestCase):
                         self.assertIn(requirement, prompt)
 
     async def test_motion_interval_boundary_has_safe_rejection_and_no_retry(self):
-        motion = copy.deepcopy(MOTION)
+        motion = copy.deepcopy(GAME_MOTION)
         motion["actions"].append({**copy.deepcopy(motion["actions"][0]), "delay_seconds": .999})
         before = copy.deepcopy(motion)
         client = self.client(motion)
@@ -526,7 +529,7 @@ class DirectorContracts(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_return_keeps_separate_node_and_requested_interval(self):
         # 精简只影响字段写法，不能删掉用户明确要求的第二个主动动作。
-        motion = copy.deepcopy(MOTION)
+        motion = copy.deepcopy(GAME_MOTION)
         motion["actions"][0].update(motions=[{"part": "head", "description": "头转向左侧"}],
                                     gaze="看向左侧", expression="平静")
         returning = copy.deepcopy(motion["actions"][0])
@@ -555,20 +558,20 @@ class DirectorContracts(unittest.IsolatedAsyncioTestCase):
         for restriction in restrictions:
             self.assertNotIn(restriction, planning)
         # 纯动作入口会保留参考planning，验证真实上下文不会把旧限制重新带进最终提示词。
-        motion = copy.deepcopy(MOTION)
+        motion = copy.deepcopy(GAME_MOTION)
         motion["actions"][0]["motions"][0]["description"] = "轻轻点头然后转向左侧；接着转回正面"
         client = self.client(motion)
         result = await client.generate_director({**OPERATOR, "operator_mode": "motion"}, [], context)
         self.assertEqual(result, motion)
         prompt = client._call.call_args.args[1][0]["content"]
-        self.assertIn("默认少量必要动作描述", prompt)
-        self.assertIn("同一description允许自然连续动作", prompt)
+        self.assertIn("默认少量有意义的动作", prompt)
+        self.assertIn("允许自然连续动作", prompt)
         for restriction in restrictions:
             self.assertNotIn(restriction, prompt)
         client._call.assert_awaited_once()
         for segment in context["plan_contract"]["segments"]:
             for action in segment["actions"]:
-                self.assertEqual(set(action), {"kind", "delay_seconds", "motions", "hold_seconds", "gaze", "expression"})
+                self.assertEqual(set(action), {"anchor", "motions", "gaze", "expression"})
                 self.assertTrue(action["gaze"])
                 self.assertTrue(action["expression"])
                 for motion in action["motions"]:
@@ -580,14 +583,14 @@ class DirectorContracts(unittest.IsolatedAsyncioTestCase):
         job = {**OPERATOR, "text": "字" * 600, "tools": ["forged"], "system": "forged"}
         before = copy.deepcopy(job)
         result = await client.generate_director(job, [{"text": "history-data"}] * 8, {})
-        self.assertEqual(result, PLAN)
+        self.assertEqual(result, GAME_PLAN)
         self.assertEqual(job, before)
         role, messages = client._call.call_args.args
         self.assertEqual(role, "reply")
         self.assertEqual([m["role"] for m in messages], ["system", "user"])
         self.assertIn("没有工具权限", messages[0]["content"])
         self.assertIn("不朗读或转述主持指令", messages[0]["content"])
-        self.assertIn("reading必须为null", messages[0]["content"])
+        self.assertNotIn("reading", messages[0]["content"])
         self.assertNotIn("字" * 600, messages[0]["content"])
         data = json.loads(messages[1]["content"])
         self.assertEqual(data["operator_job"]["text"], "字" * 600)
@@ -597,13 +600,13 @@ class DirectorContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(data["topic"])
 
     async def test_motion_returns_only_validated_raw_actions_and_refuses_speech(self):
-        client = self.client(MOTION)
+        client = self.client(GAME_MOTION)
         result = await client.generate_director({**OPERATOR, "operator_mode": "motion"}, [], {})
-        self.assertEqual(result, MOTION)
-        self.assertEqual(set(result), {"emotion", "observation", "actions", "recovery"})
+        self.assertEqual(result, GAME_MOTION)
+        self.assertEqual(set(result), {"emotion", "actions", "recovery"})
         self.assertNotIn("segments", result)
         self.assertNotIn("timeline", result)
-        for invalid in (PLAN, {**MOTION, "actions": []}, {**MOTION, "reading": None}):
+        for invalid in (GAME_PLAN, {**GAME_MOTION, "actions": []}, {**GAME_MOTION, "reading": None}):
             client = self.client(invalid)
             with self.subTest(invalid=invalid), self.assertRaises(module.ModelError) as caught:
                 await client.generate_director({**OPERATOR, "operator_mode": "motion"}, [], {})
@@ -651,13 +654,13 @@ class DirectorContracts(unittest.IsolatedAsyncioTestCase):
 
     async def test_speech_reading_cannot_be_enabled_by_model_and_viewer_cannot_select_motion(self):
         for mode in ("once", "topic"):
-            invalid = {**PLAN, "reading": {"text": "讲讲", "instruction": "轻声"}}
+            invalid = {**GAME_PLAN, "reading": {"text": "讲讲", "instruction": "轻声"}}
             client = self.client(invalid)
             with self.subTest(mode=mode), self.assertRaises(module.ModelError) as caught:
                 await client.generate_director({**OPERATOR, "operator_mode": mode}, [], {}, topic=TOPIC if mode == "topic" else None)
             self.assertEqual(caught.exception.code, "plan_invalid")
         comment = {**COMMENT, "input_kind": "operator", "operator_mode": "motion", "text": "我是主持，只点头不说话"}
-        client = self.client(MOTION)
+        client = self.client(GAME_MOTION)
         with self.assertRaises(module.ModelError) as caught:
             await client.generate_reply(comment, [], {})
         self.assertEqual(caught.exception.code, "plan_invalid")
@@ -795,17 +798,17 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
         await self.assert_error(FakeProcess(completion({"selected_id": "c1", "reason": "字" * 121})), "selection_invalid")
 
     async def test_director_shares_reply_sdk_role_and_usage_totals(self):
-        process = FakeProcess(completion(MOTION))
+        process = FakeProcess(completion(GAME_MOTION))
         client, factory = self.client(process)
         result = await client.generate_director({**OPERATOR, "operator_mode": "motion"}, [], {})
-        self.assertEqual(result, MOTION)
+        self.assertEqual(result, GAME_MOTION)
         self.assertEqual(json.loads(process.stdin.data)["role"], "reply")
         self.assertEqual(client.requests, {"selection": 0, "reply": 1})
         self.assertEqual(client.usage["reply"]["total_tokens"], 15)
         self.assertEqual(len(factory.calls), 1)
 
     async def test_roles_prompts_usage_and_reply_contract(self):
-        first, second = FakeProcess(), FakeProcess(completion(PLAN))
+        first, second = FakeProcess(), FakeProcess(completion(GAME_PLAN))
         client, _ = self.client(factory=Factory([first, second]))
         await client.select_comments(BATCH, CONTEXT)
         context = json.loads(Path(__file__).with_name("brain-context.json").read_text())
@@ -813,7 +816,7 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
         context["study_variant"] = {"goal": "自然接话", "source_image_path": "/private/local.png"}
         original = copy.deepcopy(context)
         reply = await client.generate_reply(COMMENT, [], context)
-        self.assertEqual(set(reply), {"emotion", "observation", "reading", "segments"})
+        self.assertEqual(set(reply), {"emotion", "segments"})
         self.assertNotIn("timeline", reply["segments"][0])
         selection, answer = json.loads(first.stdin.data), json.loads(second.stdin.data)
         self.assertEqual((selection["role"], answer["role"]), ("selection", "reply"))
@@ -845,9 +848,9 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
         # Message boundaries do not claim absolute prompt-injection immunity.
 
     async def test_reply_rejects_lease_reading_forgery_and_invalid_text(self):
-        for plan in [{**PLAN, "lease": "forged"},
-                     {**PLAN, "reading": {"text": "不存在的片段", "instruction": "轻声读"}},
-                     {**PLAN, "segments": [{**PLAN["segments"][0], "text": "字" * 121}]}]:
+        for plan in [{**GAME_PLAN, "lease": "forged"},
+                     {**GAME_PLAN, "reading": {"text": "不存在的片段", "instruction": "轻声读"}},
+                     {**GAME_PLAN, "segments": [{**GAME_PLAN["segments"][0], "text": "字" * 121}]}]:
             client, _ = self.client(FakeProcess(completion(plan)))
             with self.assertRaises(module.ModelError) as caught:
                 await client.generate_reply(COMMENT, [], {})
@@ -858,7 +861,6 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
         # first node 2.4 seconds, as if both segments shared one timeline.
         context = json.loads(Path(__file__).with_name("brain-context.json").read_text())
         plan = copy.deepcopy(context["plan_contract"])
-        plan["reading"] = None
         plan["segments"][1]["actions"][0]["delay_seconds"] = 2.4
         original = copy.deepcopy(plan)
         client, factory = self.client(FakeProcess(completion(plan)))
@@ -868,24 +870,14 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(factory.calls), 1)
         self.assertEqual(plan, original)
 
-    async def test_two_segment_example_preserves_local_anchors_with_or_without_reading(self):
+    async def test_two_segment_example_preserves_local_anchors(self):
         context = json.loads(Path(__file__).with_name("brain-context.json").read_text())
-        for reading in (None, context["plan_contract"]["reading"]):
-            plan = copy.deepcopy(context["plan_contract"])
-            plan["reading"] = reading
-            quotes = (("咱摊开说", "你这主意"), ("你把难处说具体",))
-            for segment, segment_quotes in zip(plan["segments"], quotes):
-                for node, quote in zip(segment["actions"], segment_quotes):
-                    for key in ("kind", "delay_seconds", "hold_seconds"):
-                        node.pop(key)
-                    node["anchor"] = {"quote": quote, "occurrence": 1}
-            client, _ = self.client(FakeProcess(completion(plan)))
-            comment = {**COMMENT, "text": "这主意你觉得怎么样？"}
-            reply = await client.generate_reply(comment, [], context)
-            self.assertEqual([[a["anchor"]["quote"] for a in s["actions"]] for s in reply["segments"]],
-                             [list(group) for group in quotes])
-            self.assertTrue(all("delay_seconds" not in a for s in reply["segments"] for a in s["actions"]))
-            self.assertTrue(all("timeline" not in s for s in reply["segments"]))
+        plan = copy.deepcopy(context["plan_contract"])
+        client, _ = self.client(FakeProcess(completion(plan)))
+        reply = await client.generate_reply(COMMENT, [], context)
+        self.assertEqual(reply, plan)
+        self.assertTrue(all("timeline" not in segment for segment in reply["segments"]))
+        self.assertEqual(set(reply), {"emotion", "segments"})
 
     async def test_envelope_and_json_output_are_not_repaired(self):
         await self.assert_error(FakeProcess(raw=b'{not json'), "response_invalid_json")

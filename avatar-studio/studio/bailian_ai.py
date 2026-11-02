@@ -7,6 +7,13 @@ import re
 import aiohttp
 
 try:
+    from .connection import client_session
+    from .credentials import is_environment_bailian_key
+except ImportError:
+    from connection import client_session
+    from credentials import is_environment_bailian_key
+
+try:
     from .cloudbase_ai import (MAX_INPUT_BYTES, MAX_RESPONSE_BYTES, REQUEST_TIMEOUT_SECONDS,
                                ModelError, StructuredBrain, _json, _json_object, _REQUEST_ID)
 except ImportError:
@@ -50,7 +57,7 @@ class BailianAI(StructuredBrain):
     def __init__(self, config: dict, *, credentials_loader=None, session_factory=None):
         super().__init__(config)
         self._credentials_loader = credentials_loader or _load_credentials
-        self._session_factory = session_factory or aiohttp.ClientSession
+        self._session_factory = session_factory or client_session
         self._active = set()
 
     def _validate_config(self):
@@ -64,7 +71,7 @@ class BailianAI(StructuredBrain):
             if not isinstance(value, (tuple, list)) or len(value) != 2:
                 raise ValueError()
             key, workspace = value
-            if (not isinstance(key, str) or not _KEY.fullmatch(key)
+            if (not isinstance(key, str) or not (_KEY.fullmatch(key) or is_environment_bailian_key(key))
                     or not isinstance(workspace, str) or not _WORKSPACE.fullmatch(workspace)):
                 raise ValueError()
             return key, workspace
@@ -90,7 +97,7 @@ class BailianAI(StructuredBrain):
     async def _request(self, workspace, key, encoded):
         try:
             # A new session gives each attempt its own socket lifetime. It also
-            # avoids pooled stale-connection retries and any ambient HTTP proxy.
+            # avoids pooled stale-connection retries. Only HTTPS_PROXY is opted in.
             async with self._session_factory(
                     trust_env=False, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)) as session:
                 endpoint = f"https://{workspace}.{REGION}.maas.aliyuncs.com/compatible-mode/v1/chat/completions"

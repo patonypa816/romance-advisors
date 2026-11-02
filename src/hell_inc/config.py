@@ -7,6 +7,9 @@ import os
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+    real_media_enabled: bool = False
+    allow_paid_media: bool = False
+    rtc_connect_origins: tuple[str,...] = ()
     world_id: str = "hell-inc-dev"
     host: str = "127.0.0.1"
     port: int = 8080
@@ -16,6 +19,9 @@ class Settings:
     lock_dir: Path = field(default_factory=lambda: Path("/tmp/hell-inc-locks"))
 
     def __post_init__(self):
+        approved={'wss://rs.rtn.aliyuncs.com','https://rs.rtn.aliyuncs.com','https://gw.rtn.aliyuncs.com'}
+        if not isinstance(self.rtc_connect_origins,tuple) or any(origin not in approved for origin in self.rtc_connect_origins):
+            raise ValueError('RTC origins 必须为固定版本 SDK 已核验生产端点。')
         if not self.world_id or len(self.world_id) > 128 or self.world_id != self.world_id.strip():
             raise ValueError("world_id 必须是 1–128 字符且无首尾空白。")
         if not 1 <= self.session_seconds <= 86400:
@@ -38,7 +44,9 @@ class Settings:
         url = os.environ.get("HELL_INC_DATABASE_URL")
         if not url:
             raise ValueError("请设置 HELL_INC_DATABASE_URL（仅隔离开发数据库）。")
-        return cls(database_url=url, world_id=os.getenv("HELL_INC_WORLD_ID", "hell-inc-dev"),
+        return cls(database_url=url, real_media_enabled=os.getenv('HELL_INC_REAL_MEDIA_ENABLED')=='1',
+            allow_paid_media=os.getenv('HELL_INC_ALLOW_PAID_MEDIA')=='1',
+            rtc_connect_origins=tuple(x for x in os.getenv('HELL_INC_RTC_CONNECT_ORIGINS','').split(',') if x), world_id=os.getenv("HELL_INC_WORLD_ID", "hell-inc-dev"),
             host=os.getenv("HELL_INC_HOST", "127.0.0.1"), port=int(os.getenv("HELL_INC_PORT", "8080")),
             origin=os.getenv("HELL_INC_ORIGIN"), session_seconds=int(os.getenv("HELL_INC_SESSION_SECONDS", "3600")),
             frontend_dir=Path(os.getenv("HELL_INC_FRONTEND_DIR", "frontend/dist")),

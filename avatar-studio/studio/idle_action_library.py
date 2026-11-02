@@ -18,9 +18,11 @@ import aiohttp
 
 try:
     from . import credentials
+    from .connection import client_session
     from .action_schema import _instruction
 except ImportError:
     import credentials
+    from connection import client_session
     from action_schema import _instruction
 
 
@@ -108,7 +110,7 @@ class ViduIdleActionClient:
         # Paths are built only by methods below, never accepted from local config.
         try:
             if self._api is None:
-                self._api = aiohttp.ClientSession()
+                self._api = client_session()
             key = credentials.load_vidu()
             async with self._api.get("https://api.vidu.cn" + path, params=params,
                     headers={"Authorization": "Token " + key}, allow_redirects=False,

@@ -673,7 +673,8 @@ class PersistentComponent:
             self._finalized_once = True
             if not self.live_id:
                 self.state = "creation_unknown" if self.creation_unknown else ("error" if self.error else "ended")
-                self._save("component-receipt.json", self.public())
+                with contextlib.suppress(OSError, UnicodeError):
+                    self._save("component-receipt.json", self.public())
                 return
             if not self.cloud_end_confirmed:
                 self.state = "stopping"
@@ -690,11 +691,13 @@ class PersistentComponent:
                     try:
                         response = await self._json("GET", f"/live/v1/lives/{self.live_id}", timeout=min(6.0, max(0.1, deadline - time.monotonic())))
                         self._cloud = self._safe_cloud(response.get("live") or {})
-                        self._save("component-cloud-status.json", self._cloud)
                         status = str(self._cloud.get("status", self._cloud.get("state", ""))).lower()
                         if status == "ended":
                             self.cloud_end_confirmed = True
                             self._ended_at = time.monotonic()
+                        with contextlib.suppress(OSError, UnicodeError):
+                            self._save("component-cloud-status.json", self._cloud)
+                        if self.cloud_end_confirmed:
                             break
                     except Exception as error:
                         self._event("end_readback_error", error_type=type(error).__name__)
@@ -703,7 +706,8 @@ class PersistentComponent:
             self._event("stop_result", live_id=self.live_id, cloud_end_confirmed=self.cloud_end_confirmed)
             if self.cloud_end_confirmed and self._recording_task is None:
                 self._recording_task = asyncio.create_task(self._collect_recording(), name="component-recording")
-            self._save("component-receipt.json", self.public())
+            with contextlib.suppress(OSError, UnicodeError):
+                self._save("component-receipt.json", self.public())
 
     async def _collect_recording(self) -> None:
         target = self.out / "component-cloud.mp4"

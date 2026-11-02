@@ -96,12 +96,11 @@ class ShortPerformanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(c._ws.binary)
 
     async def test_transport_rejects_out_of_scope_before_any_write(self):
-        for actions, reading in (([long()], None), ([short(), short(1)], None), ([short(pair=True)], None),
-                                 ([], None), ([short()], {"text": "短读", "pcm": b"\0\0"})):
-            with self.subTest(actions=actions, reading=reading):
+        for actions in ([long()], [short(), short(1)], [short(pair=True)], []):
+            with self.subTest(actions=actions):
                 c = self.component()
                 with self.assertRaises(ValueError):
-                    await c.send_expression(b"\0\0", "一句话", actions, 1, recovery=GE, reading=reading)
+                    await c.send_expression(b"\0\0", "一句话", actions, 1, recovery=GE)
                 self.assertFalse(c._ws.attempts)
                 self.assertFalse(c._ws.binary)
 

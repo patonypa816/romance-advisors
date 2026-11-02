@@ -166,6 +166,58 @@ class SemanticReplayTests(unittest.TestCase):
         change(data)
         save(path, data)
 
+    def test_current_plan_and_receipt_without_reading_preserve_source(self):
+        source = self.source()
+        self.mutate(source, "plans/c0002.json", lambda d: (d.pop("reading"), d.pop("observation")))
+        self.mutate(source, "tts/c0002-1/component-send.json",
+                    lambda d: (d.pop("reading_text"), d.pop("reading_audio_seconds")))
+        before = {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()}
+        replay = SemanticFixedReplay(source)
+        self.assertTrue({"reading", "observation"}.isdisjoint(replay.plan))
+        self.assertEqual(before, {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()})
+
+    def test_reading_receipt_requires_known_plan_and_consistent_fields(self):
+        for current in (False, True):
+            source = self.source(f"missing-text-{current}")
+            if current:
+                self.mutate(source, "plans/c0002.json", lambda d: (d.pop("reading"), d.pop("observation")))
+            self.mutate(source, "tts/c0002-1/component-send.json", lambda d: d.pop("reading_text"))
+            SemanticFixedReplay(source)
+        cases = ((False, "both_missing"), (False, "half_missing"), (True, "half_missing"),
+                 (True, "nonempty"), (True, "nonzero"), (True, "unknown_plan"))
+        for i, (current, mutation) in enumerate(cases):
+            source = self.source(f"reading-{i}")
+            if current:
+                self.mutate(source, "plans/c0002.json", lambda d: (d.pop("reading"), d.pop("observation")))
+            if mutation == "unknown_plan":
+                self.mutate(source, "plans/c0002.json", lambda d: d.update(observation="partial legacy"))
+            else:
+                def change(d):
+                    if mutation in {"both_missing", "half_missing"}:
+                        d.pop("reading_audio_seconds")
+                        if mutation == "both_missing":
+                            d.pop("reading_text")
+                    elif mutation == "nonempty":
+                        d["reading_text"] = "旧短读"
+                    else:
+                        d["reading_audio_seconds"] = 1
+                self.mutate(source, "tts/c0002-1/component-send.json", change)
+            with self.subTest(current=current, mutation=mutation), self.assertRaises(ValueError):
+                SemanticFixedReplay(source)
+
+    def test_prepared_sources_preserve_current_plan_shape(self):
+        for name, make, fixture in (("short", make_preparation, PreparedSemanticReplay),
+                                     ("minute", make_minute_preparation, PreparedMinuteSemanticReplay)):
+            source = make(self.root / name)
+            self.mutate(source, "prepared-plan.json", lambda d: (d.pop("reading"), d.pop("observation")))
+            manifest = json.loads((source / "manifest.json").read_text())
+            manifest["files"]["prepared-plan.json"] = _sha((source / "prepared-plan.json").read_bytes())
+            save(source / "manifest.json", manifest)
+            before = (source / "prepared-plan.json").read_bytes()
+            replay = fixture(source)
+            self.assertTrue({"reading", "observation"}.isdisjoint(replay.plan))
+            self.assertEqual((source / "prepared-plan.json").read_bytes(), before)
+
     def test_final_anchors_audio_and_all_content_stay_while_short_q_windows_change(self):
         source = self.source()
         before = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}

@@ -1,5 +1,7 @@
 # M3 创意比赛开发验收
 
+> 以下记录当时的验收结果；短评关键词现在仅作为人工提示，不再令已通过结构与原文证据校验的评价失败。当前合同见 [M3 contract](m3-contract.md)。
+
 日期：2026-11-02（UTC+08）。功能与测试修补提交 `3145690ff91145cc4cb6048efbcd456a94810138`，通过 [Actions 41329836090](https://github.com/patonypa816/hell-inc-game/actions/runs/41329836090)。增量交付为 [PR #3](https://github.com/patonypa816/hell-inc-game/pull/3)，依赖 M2 PR #2 与 M1 PR #1，尚未合并。
 
 ## 自动化结果

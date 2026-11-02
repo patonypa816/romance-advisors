@@ -1,19 +1,23 @@
 import asyncio
 import json
 from contextlib import suppress
+from copy import deepcopy
 import hashlib
 import secrets
 import time
 from pathlib import Path
 from aiohttp import web
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from .config import Settings
 from .contracts import ValidationError, validate_registration
-from .db import make_engine, versions
+from .db import make_engine, versions, worlds, performance_sessions
 from .instance import InstanceLock
-from .interviews import InterviewService, InterviewError
+from .interviews import InterviewService, InterviewError, fields, uuid
 from .competitions import CompetitionService
+from .media_runtime import RealMediaRuntime
+from .performance_contract import PerformanceError, iso
+from .performance_sources import freeze_source
 from .records.service import RecordService, PlayerNotFound, CommandConflict
 
 COOKIE_NAME = "hell_inc_session"
@@ -53,6 +57,8 @@ async def guard(request, handler):
         response = await dispatch(request, handler)
     except ValidationError as exc:
         response = error("validation_error", str(exc), 400)
+    except PerformanceError as exc:
+        response = error(exc.code, '演出来源、场次或状态不允许此操作；未知发送不会重播。', exc.status)
     except InterviewError as exc:
         response = error(exc.code, '面试状态或版本不允许此操作。', exc.status)
     except PlayerNotFound:
@@ -68,13 +74,20 @@ async def guard(request, handler):
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    rtc_origins=request.app[STATE]['settings'].rtc_connect_origins if request.app[STATE]['settings'].real_media_enabled else ()
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'" + (" "+" ".join(rtc_origins) if rtc_origins else "") + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
     return response
 
 
 async def dispatch(request, handler):
     state = request.app[STATE]
     if not request.path.startswith('/api/'):
+        return await handler(request)
+    # Stop/reconcile an already owned historical scene without waiting for a
+    # broken game DB recovery or its mutex. Authentication/origin checks above
+    # remain unchanged; this route can never create or adopt a scene.
+    if request.match_info.route.name == 'legacy_media_rescue':
         return await handler(request)
     # This small process-local mutex couples outage detection, recovery and every
     # DB operation. A queued result cannot pass an older pre-lock gate check.
@@ -186,7 +199,7 @@ async def lifecycle(app):
     state["lock"].acquire()
     try:
         async with state["engine"].connect() as conn:
-            if (await conn.execute(select(versions.c.version))).scalars().all() != [3]:
+            if (await conn.execute(select(versions.c.version))).scalars().all() != [4]:
                 raise RuntimeError("请先单独执行 migrate；启动不会修改表结构。")
         await state["service"].initialize_world()
         await state['interviews'].recover('restart')
@@ -212,6 +225,8 @@ async def lifecycle(app):
             timer.cancel()
             with suppress(asyncio.CancelledError):
                 await timer
+            if state['legacy_runtime'] is not None:
+                await state['legacy_runtime'].shutdown()
     finally:
         await state["engine"].dispose()
         state["lock"].release()
@@ -223,6 +238,7 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
     app = web.Application(middlewares=[guard], client_max_size=32768)
     app[STATE] = {"settings": settings, "engine": engine,
         "service": RecordService(engine, settings.world_id),
+        "legacy_runtime": None,
         "competitions": CompetitionService(engine, settings.world_id),
         "interviews": InterviewService(engine, settings.world_id), "game_gate": False, "game_lock": asyncio.Lock(),
         "lock": InstanceLock(settings.database_url, settings.world_id, settings.lock_dir),
@@ -255,6 +271,9 @@ def create_app(settings: Settings, *, startup_token: str | None = None):
         app.router.add_post('/api/competitions/{id}/submissions/{sid}/'+action, competition_submission_command)
     for action in ('open','close-submissions','open-voting','close-voting','settle','pause','resume','cancel'):
         app.router.add_post('/api/competitions/{id}/'+action, competition_command)
+    app.router.add_post('/api/performance-session/{id}/media/{action:stop|reconcile}', legacy_media_rescue,
+                        name='legacy_media_rescue')
+    app.router.add_post('/api/performance-sources/freeze', performance_freeze)
     app.router.add_get("/", index)
     assets = Path(settings.frontend_dir) / "assets"
     if assets.is_dir():
@@ -272,8 +291,10 @@ async def interview_get(request):
     return web.json_response(await request.app[STATE]['interviews'].get(request.match_info['id']))
 
 async def interview_command(request):
-    return web.json_response(await request.app[STATE]['interviews'].command(request.match_info['id'],
-        request.path.rsplit('/',1)[-1], await body(request)))
+    action=request.path.rsplit('/',1)[-1]
+    data=await body(request)
+    result=await request.app[STATE]['interviews'].command(request.match_info['id'],action,data)
+    return web.json_response(result)
 
 async def interview_answer(request):
     return web.json_response(await request.app[STATE]['interviews'].answer(request.match_info['id'],await body(request)))
@@ -292,7 +313,11 @@ async def competition_start(request):
 async def competition_get(request):
     return web.json_response(await request.app[STATE]['competitions'].get(request.match_info['id']))
 async def competition_command(request):
-    return web.json_response(await request.app[STATE]['competitions'].command(request.match_info['id'],request.path.rsplit('/',1)[-1],await body(request)))
+    action=request.path.rsplit('/',1)[-1]
+    data=await body(request)
+    result=await request.app[STATE]['competitions'].command(request.match_info['id'],action,data)
+    return web.json_response(result)
+
 async def competition_submit(request):
     return web.json_response(await request.app[STATE]['competitions'].submit(request.match_info['id'],await body(request)))
 async def competition_vote(request):
@@ -306,3 +331,82 @@ async def competition_import(request):
     return web.json_response(await request.app[STATE]['competitions'].evaluation_result(request.match_info['id'],request.match_info['sid'],await body(request)))
 async def competition_submission_command(request):
     return web.json_response(await request.app[STATE]['competitions'].submission_command(request.match_info['id'],request.match_info['sid'],request.path.rsplit('/',1)[-1],await body(request)))
+
+
+async def performance_freeze(request):
+    state=request.app[STATE];data=fields(await body(request),'source')
+    # Retain the original read-only projection and world/version transaction;
+    # it needs no performance worker, media runtime or provider connection.
+    async with state['engine'].begin() as conn:
+        revision=(await conn.execute(select(worlds.c.revision).where(
+            worlds.c.world_id==state['settings'].world_id).with_for_update())).scalar_one()
+        now=(await conn.execute(text('SELECT clock_timestamp()'))).scalar_one()
+        frozen=await freeze_source(conn,state['settings'].world_id,data['source'])
+    frozen.pop('source_snapshot')
+    return web.json_response({'revision':revision,'server_time':iso(now),**frozen})
+
+
+async def _stored_legacy_session(state,session_id):
+    async with state['engine'].connect() as conn:
+        row=(await conn.execute(select(performance_sessions.c.body).where(
+            performance_sessions.c.world_id==state['settings'].world_id,
+            performance_sessions.c.session_id==session_id))).scalar_one_or_none()
+    return deepcopy(row) if row is not None else None
+
+
+async def _record_legacy_rescue(state,session_id,owned,patch):
+    # Evidence is best effort after provider stop; never overwrite another ID.
+    async with state['engine'].begin() as conn:
+        row=(await conn.execute(select(performance_sessions.c.body).where(
+            performance_sessions.c.world_id==state['settings'].world_id,
+            performance_sessions.c.session_id==session_id).with_for_update())).scalar_one_or_none()
+        if not row or row.get('mode')!='real':return False
+        record=deepcopy(row);media=record.get('media') or {}
+        if media.get('owned_live_id') not in (None,owned) or (owned is None and media.get('owned_live_id')):return False
+        if media.get('cloud_end_confirmed') and not patch.get('cloud_end_confirmed'):return False
+        media.update(patch)
+        if owned is not None:media['owned_live_id']=owned
+        record['media']=media
+        if patch.get('cloud_end_confirmed') is True and record.get('status')!='closed':record['status']='paused'
+        elif patch.get('state')=='unknown' and record.get('status')!='closed':record['status']='unknown'
+        await conn.execute(update(performance_sessions).where(
+            performance_sessions.c.world_id==state['settings'].world_id,
+            performance_sessions.c.session_id==session_id).values(status=record['status'],body=record,
+                updated_at=(await conn.execute(text('SELECT clock_timestamp()'))).scalar_one()))
+        await conn.execute(update(worlds).where(worlds.c.world_id==state['settings'].world_id).values(revision=worlds.c.revision+1))
+    return True
+
+
+async def legacy_media_rescue(request):
+    """Stop/reconcile only a previously owned historical scene; no new scene."""
+    state=request.app[STATE];session_id=uuid(request.match_info['id']);action=request.match_info['action']
+    fields(await body(request),'command_id')
+    runtime=state['legacy_runtime'];owned=None
+    in_process=bool(runtime is not None and runtime.session_id==session_id and
+                    (runtime.component is not None or runtime.owned_live_id))
+    if in_process:
+        component_id=getattr(runtime.component,'live_id',None)
+        if runtime.owned_live_id and component_id and runtime.owned_live_id!=component_id:
+            return web.json_response({'media':{'state':'unknown','cloud_end_confirmed':False},'evidence_persisted':False},status=202)
+        owned=runtime.owned_live_id or component_id
+    else:
+        try:record=await _stored_legacy_session(state,session_id)
+        except (SQLAlchemyError,OSError):record=None
+        if not record or record.get('mode')!='real':
+            return web.json_response({'media':{'state':'unknown','cloud_end_confirmed':False},'evidence_persisted':False},status=202)
+        media=record.get('media') or {};owned=media.get('owned_live_id')
+        if media.get('cloud_end_confirmed') is True:
+            return web.json_response({'media':{'state':'ended','cloud_end_confirmed':True},'evidence_persisted':True},status=202)
+        if not owned:
+            return web.json_response({'media':{'state':'unknown','cloud_end_confirmed':False},'evidence_persisted':False},status=202)
+        if runtime is None:
+            runtime=state['legacy_runtime']=RealMediaRuntime(state['settings'])
+    # An existing in-process owner is stopped before any DB transaction.
+    if action=='stop':runtime.latch_stop(session_id)
+    try:
+        patch=await (runtime.stop(session_id,owned) if action=='stop' else runtime.reconcile(session_id,owned))
+    except Exception:
+        patch={'state':'unknown','cloud_end_confirmed':False}
+    try:persisted=await asyncio.wait_for(_record_legacy_rescue(state,session_id,owned,patch),timeout=2)
+    except Exception:persisted=False
+    return web.json_response({'media':patch,'evidence_persisted':persisted},status=202)

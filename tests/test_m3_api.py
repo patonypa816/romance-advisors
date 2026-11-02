@@ -354,18 +354,20 @@ class M3ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([a['award_type'] for a in result['awards']], ['creativity'])
         self.assertTrue(all(row['votes'] == 0 for row in result['rankings']))
 
-    async def test_comment_score_rank_winner_leak_fails_attempt_and_blocks_entire_round(self):
+    async def test_comment_rank_words_warn_without_discarding_accepted_evaluation(self):
         exports = await self.reviewing()
         await self.accept(self.sids[0], exports[0]); await self.accept(self.sids[2], exports[2])
         payload = self.result_payload(exports[1]); payload['evaluation']['comment'] = '满分冠军，排名第一，领先其他作品。'
         path = self.path + f'/submissions/{self.sids[1]}/evaluation-result'
-        original = await self.post(path, payload, 400)
-        self.assertEqual(await self.post(path, payload, 400), original)
-        snap = await self.snapshot(); self.assertEqual(snap['status'], 'WAITING_REVIEW'); self.hidden(snap)
-        self.assertTrue(all(s['comment'] is None for s in snap['submissions']))
+        original = await self.post(path, payload)
+        self.assertEqual(await self.post(path, payload), {**original, 'replayed': True})
+        snap = await self.snapshot(); self.assertEqual(snap['status'], 'DISPLAYING'); self.hidden(snap)
+        work=next(s for s in snap['submissions'] if s['id']==self.sids[1])
+        self.assertEqual(work['comment'],payload['evaluation']['comment']); self.assertTrue(work['comment_warning'])
+        self.assertEqual(work['task']['status'],'accepted')
         await self.command('open-voting', 409); await self.command('settle', 409)
-        await self.subcommand(self.sids[1], 'retry'); await self.accept(self.sids[1])
-        self.assertEqual((await self.snapshot())['status'], 'DISPLAYING')
+        await self.voting()
+        self.assertEqual((await self.snapshot())['status'], 'VOTING')
 
     async def test_reserved_payload_keys_cannot_override_receipt_route_or_action(self):
         snap = await self.start(); payload = dict(command_id=str(uuid4()), expected_version=snap['version'])

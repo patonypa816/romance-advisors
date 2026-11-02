@@ -3,7 +3,7 @@ import copy
 import unittest
 from itertools import product
 from hell_inc.contracts import ValidationError
-from hell_inc.competition_evaluation import validate_evaluation
+from hell_inc.competition_evaluation import validate_evaluation, comment_needs_review
 
 
 def fixture(scores=(2, 2, 2)):
@@ -32,9 +32,12 @@ class M3EvaluationTests(unittest.TestCase):
         self.assertEqual(validate_evaluation(value, ' é ')['total'], 6)
         with self.assertRaises(ValidationError): validate_evaluation(value, 'e\u0301')
 
-    def test_comment_number_is_not_score_but_explicit_ranking_leak_is_rejected(self):
+    def test_comment_words_trigger_review_without_discarding_evaluation(self):
         value = fixture(); value['comment'] = '产品302号提供3种可选的梦境。'
         self.assertEqual(validate_evaluation(value, '原文引用')['comment'], value['comment'])
-        for comment in ('满分冠军，排名第一，领先其他作品。', '6/6冠军第一名'):
+        self.assertFalse(comment_needs_review(value['comment']))
+        for comment in ('作品名为冠军噩梦。', '满分冠军，排名第一，领先其他作品。', '6/6冠军第一名'):
             value['comment'] = comment
-            with self.subTest(comment=comment), self.assertRaises(ValidationError): validate_evaluation(value, '原文引用')
+            with self.subTest(comment=comment):
+                self.assertEqual(validate_evaluation(value, '原文引用')['comment'], comment)
+                self.assertTrue(comment_needs_review(comment))

@@ -62,13 +62,12 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
         c.DRAIN_SECONDS = 0
         return c
 
-    async def send(self, c, starts=(0,), seconds=3.05, pair=False, reading=None, action_kind="L", ge_lead_seconds=.5):
+    async def send(self, c, starts=(0,), seconds=3.05, pair=False, action_kind="L", ge_lead_seconds=.5):
         pcm, alignment = fixture(seconds, starts)
         actions = [action(char, pair) for char in "甲乙"[:len(starts)]]
         receipt = await c.send_aligned_expression(pcm, "甲乙"[:len(starts)], actions, 1,
-                                                   recovery=GE, alignment=alignment,
-                                                   reading=reading, action_kind=action_kind,
-                                                   ge_lead_seconds=ge_lead_seconds)
+                               recovery=GE, alignment=alignment, action_kind=action_kind,
+                               ge_lead_seconds=ge_lead_seconds)
         return pcm, receipt
 
     async def test_zero_anchor_preroll_then_l_text_and_exact_pcm(self):
@@ -82,6 +81,10 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(text["completed"], zero)
         self.assertGreaterEqual(quiet["started"] - zero, 3.05)
         self.assertEqual(b"".join(r["chunk"] for r in c._ws.binary), pcm)
+        self.assertEqual([r["frame"]["payload"]["text_msg"]["content"]
+                          for r in c._ws.sent if r["frame"]["type"] == 10], ["甲"])
+        self.assertEqual([e["role"] for e in receipt["motion_events"]], ["GE", "L", "Q"])
+        self.assertFalse(any(key.startswith("reading_") for key in receipt))
         self.assertEqual(receipt["motion_events"][1]["simultaneous_count"], 2)
         self.assertLess(receipt["motion_events"][0]["actual_at_seconds"], -.49)
         self.assertLess(abs(receipt["motion_events"][1]["actual_at_seconds"]), .1)
@@ -89,6 +92,14 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(receipt["visual_effect_confirmed"])
         self.assertEqual({r["frame"]["conn_id"] for r in c._ws.sent}, {c._conn_id})
         self.assertEqual(len(c._motion_claims), 3)
+
+    async def test_current_semantic_sender_rejects_reading_parameter_before_writes(self):
+        c = self.component()
+        with self.assertRaises(TypeError):
+            await c.send_aligned_expression(b"\0\0", "甲", [], 1,
+                                            reading={"text": "读", "pcm": b"\0\0"})
+        self.assertEqual(c._ws.sent, [])
+        self.assertEqual(c._ws.binary, [])
 
     async def test_local_anchor_mode_sends_original_pcm_with_unrelated_text_difference(self):
         pcm, alignment = fixture(.2, (0, .1))
@@ -103,7 +114,7 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["role"] for row in receipt["motion_events"]], ["GE", "S", "Q"])
         self.assertEqual(receipt["alignment"]["words"][1]["text"], "错")
 
-    async def test_local_anchor_or_pcm_failure_blocks_even_reading_prelude(self):
+    async def test_local_anchor_or_pcm_failure_blocks_before_send(self):
         pcm, alignment = fixture(.2, (0, .1))
         for changed in ({**alignment, "pcm_sha256": "wrong"},
                         {**alignment, "words": [{**word, "text": "错"} for word in alignment["words"]]},
@@ -111,7 +122,7 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
             c = self.component()
             with self.assertRaises(SemanticSpeechError):
                 await c.send_aligned_expression(pcm, "甲乙", [action()], 1,
-                    recovery=GE, alignment=changed, reading={"text": "读", "pcm": pcm},
+                    recovery=GE, alignment=changed,
                     action_kind="S", ge_lead_seconds=1.1, allow_tail_q_after_audio=True,
                     local_action_anchors=True)
             self.assertEqual(c._ws.sent, [])
@@ -173,7 +184,6 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
                     ({**minute, "ge_lead_seconds": None}, pcm, text, alignment),
                     ({**minute, "ge_lead_seconds": .5}, pcm, text, alignment),
                     ({**minute, "action_kind": "L"}, pcm, text, alignment),
-                    ({**minute, "reading": {"text": "读", "pcm": b"\0\0"}}, pcm, text, alignment),
                     (minute, pcm + b"\0\0" * 24000 * 4, text, alignment),
                     (minute, pcm, "字" * 241, alignment),
                     (minute, pcm, text, {**alignment, "pcm_sha256": "wrong"}),
@@ -285,74 +295,18 @@ class SemanticTransportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((len(c._ws.sent), len(c._ws.binary)), counts)
                 self.assertFalse(c.active_motion_plan.get("is_active", False))
 
-    async def test_reading_preserves_r_pcm_s0_and_answer_relative_times(self):
-        c = self.component()
-        reading = {"text": "读弹幕", "pcm": b"\0\0" * 1200}
-        with patch("motion_component.READING_LEAD_SECONDS", .02):
-            _, receipt = await self.send(c, reading=reading)
-        motions = c._ws.motions()
-        self.assertGreaterEqual(motions[2]["started"]-motions[1]["completed"], 1.0)
-        self.assertEqual([e["role"] for e in receipt["motion_events"]], ["R", "S0", "GE", "L", "Q"])
-        texts = [r["frame"]["payload"]["text_msg"]["content"] for r in c._ws.sent if r["frame"]["type"] == 10]
-        self.assertEqual(texts, ["读弹幕", "甲"])
-        self.assertEqual(receipt["timeline"][1]["audio_at_seconds"], 0)
-        self.assertEqual(len({e["node_index"] for e in receipt["motion_events"]}), 5)
-        self.assertTrue(receipt["reading_sent_complete"])
-        self.assertEqual(c._ws.binary[0]["chunk"], reading["pcm"])
-
-    async def test_stop_reading_r_audio_or_s0_cancels_answer(self):
-        for stage in ("r", "audio", "s0"):
-            with self.subTest(stage=stage):
-                socket = ControlledSocket(stop_motion=1 if stage == "r" else 2 if stage == "s0" else None)
-                c = self.component(socket)
-                reading = {"text": "读弹幕", "pcm": b"\0\0" * 4800}
-                with patch("motion_component.READING_LEAD_SECONDS", .02):
-                    task = asyncio.create_task(self.send(c, reading=reading))
-                    if stage == "audio":
-                        await eventually(lambda: socket.binary)
-                        c.latch_stop()
-                    with self.assertRaisesRegex(RuntimeError, "停止"):
-                        await task
-                self.assertLessEqual(len(socket.motions()), 2)
-                self.assertFalse(any(r["frame"]["type"] == 10 and r["frame"]["payload"]["text_msg"]["content"] == "甲" for r in socket.sent))
-
-    async def test_bad_alignment_reading_and_conflict_send_nothing(self):
+    async def test_bad_alignment_and_conflict_send_nothing(self):
         pcm, alignment = fixture(4, (0, .5))
-        cases = [({**alignment, "pcm_sha256": "wrong"}, [action()], None),
-                 (alignment, [action(), action("乙")], None),
-                 (alignment, [action()], {"text": "读", "pcm": b"x"}),
-                 ({**alignment, "status": "unavailable"}, [action()], None)]
-        for aligned, actions, reading in cases:
+        cases = [({**alignment, "pcm_sha256": "wrong"}, [action()]),
+                 (alignment, [action(), action("乙")]),
+                 ({**alignment, "status": "unavailable"}, [action()])]
+        for aligned, actions in cases:
             c = self.component()
             with self.assertRaises(ValueError):
-                await c.send_aligned_expression(pcm, "甲乙", actions, 1, recovery=GE,
-                                                alignment=aligned, reading=reading)
+                await c.send_aligned_expression(pcm, "甲乙", actions, 1, recovery=GE, alignment=aligned)
             self.assertEqual(c._ws.sent, [])
             self.assertEqual(c._ws.binary, [])
             self.assertEqual(c.utterances_started, 0)
-
-
-    async def test_reading_empty_actions_short_answer_retains_single_s0_timed_q(self):
-        c = self.component()
-        pcm, _ = fixture(.1)
-        reading = {"text": "读弹幕", "pcm": b"\0\0" * 1200}
-        alignment = {"status": "unavailable", "reason": "timestamps_missing"}
-        with patch("motion_component.READING_LEAD_SECONDS", .02):
-            receipt = await c.send_aligned_expression(
-                pcm, "甲", [], 1, recovery=GE, alignment=alignment, reading=reading)
-        self.assertEqual([e["role"] for e in receipt["motion_events"]], ["R", "S0", "Q"])
-        self.assertEqual(receipt["timeline"], [])
-        self.assertEqual([n["role"] for n in receipt["reading_timeline"]], ["R", "S0", "Q"])
-        r, s0, q = c._ws.motions()
-        answer = [row for row in c._ws.sent if row["frame"]["type"] == 10][1]
-        self.assertGreaterEqual(answer["started"]-s0["completed"], 1)
-        self.assertLess(answer["completed"]-s0["completed"], 1.2)
-        self.assertGreaterEqual(q["started"]-s0["completed"], 1.5)
-        self.assertLess(q["completed"]-s0["completed"], 1.7)
-        self.assertGreater(q["started"], c._ws.binary[-1]["time"]+.3)
-        self.assertEqual(b"".join(row["chunk"] for row in c._ws.binary), reading["pcm"]+pcm)
-        self.assertTrue(receipt["actions_sent_complete"])
-        self.assertFalse(receipt["visual_effect_confirmed"])
 
     async def test_empty_actions_still_send_exact_pcm_and_alignment(self):
         c = self.component()
