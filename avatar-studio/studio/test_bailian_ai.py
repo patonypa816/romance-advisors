@@ -11,12 +11,12 @@ from aiohttp import web
 try:
     from . import bailian_ai as module
     from . import cloudbase_ai as shared
-    from .test_cloudbase_ai import COMMENT, BATCH, CONTEXT, PLAN, OPERATOR, MOTION, TOPIC
+    from .test_cloudbase_ai import COMMENT, BATCH, CONTEXT, PLAN, OPERATOR, MOTION, TOPIC, GAME_PLAN, GAME_MOTION
     from .test_timed_action_planner import PART, ALIGNMENT, RESULT
 except ImportError:
     import bailian_ai as module
     import cloudbase_ai as shared
-    from test_cloudbase_ai import COMMENT, BATCH, CONTEXT, PLAN, OPERATOR, MOTION, TOPIC
+    from test_cloudbase_ai import COMMENT, BATCH, CONTEXT, PLAN, OPERATOR, MOTION, TOPIC, GAME_PLAN, GAME_MOTION
     from test_timed_action_planner import PART, ALIGNMENT, RESULT
 
 KEY = "sk-synthetic-offline-not-a-real-key-12345"
@@ -277,11 +277,11 @@ class BailianTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_business_routes_use_shared_validation_over_http(self):
         client, factory, _ = self.client(*(Response(completion(value)) for value in
-                                          (PLAN, PLAN, PLAN, MOTION, RESULT)))
-        self.assertEqual(await client.generate_reply(COMMENT, [], {}), PLAN)
-        self.assertEqual(await client.generate_director(OPERATOR, [], {}), PLAN)
-        self.assertEqual(await client.generate_director({**OPERATOR, "operator_mode": "topic"}, [], {}, topic=TOPIC), PLAN)
-        self.assertEqual(await client.generate_director({**OPERATOR, "operator_mode": "motion"}, [], {}), MOTION)
+                                          (GAME_PLAN, GAME_PLAN, GAME_PLAN, GAME_MOTION, RESULT)))
+        self.assertEqual(await client.generate_reply(COMMENT, [], {}), GAME_PLAN)
+        self.assertEqual(await client.generate_director(OPERATOR, [], {}), GAME_PLAN)
+        self.assertEqual(await client.generate_director({**OPERATOR, "operator_mode": "topic"}, [], {}, topic=TOPIC), GAME_PLAN)
+        self.assertEqual(await client.generate_director({**OPERATOR, "operator_mode": "motion"}, [], {}), GAME_MOTION)
         result = await client.plan_timed_actions(PART, ALIGNMENT, 13, {})
         self.assertEqual(result["planning"]["schedule_id"], "s01")
         self.assertEqual(client.requests, {"selection": 0, "reply": 5})

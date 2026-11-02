@@ -179,8 +179,74 @@ class StudioContracts(unittest.IsolatedAsyncioTestCase):
         return comment
 
     def plan(self, pending):
-        return {"emotion": "平静", "observation": "当前姿态未知", "reading": None,
+        return {"emotion": "平静",
                 "segments": [{"text": "咱先听听你那边的情况。", "instruction": "自然清晰正常语速", "actions": [], "recovery": None}]}
+
+    async def test_game_plan_and_history_do_not_add_legacy_presentation_fields(self):
+        pending = await self.pending()
+        self.control.accept_plan(self.control.current, pending, self.plan(pending), enqueue=False)
+        self.assertEqual(set(pending["plan"]), {"emotion", "segments"})
+        for name in ("reading", "observation", "reading_status", "reading_segments_sent"):
+            self.assertNotIn(name, pending)
+        archived = json.loads((self.control.current.out / "plans" / (pending["id"] + ".json")).read_text())
+        self.assertEqual(set(archived), {"comment_id", "comment", "emotion", "segments"})
+        # Existing archive fields remain on the historical record, but are not
+        # forwarded as current reply context or changed by reading history.
+        pending.update(status="sent", reading={"text": "旧稿"}, observation="旧观察")
+        history = self.control.reply_history(self.control.current)
+        self.assertEqual(len(history), 1)
+        self.assertTrue({"reading", "observation", "reading_status", "reading_motion_sent"}.isdisjoint(history[0]))
+        self.assertEqual(pending["reading"], {"text": "旧稿"})
+        self.assertEqual(pending["observation"], "旧观察")
+
+    async def test_game_motion_accepts_current_contract_without_observation(self):
+        self.control.current.component.state = "ready"
+        item = self.control.enqueue_comment("挥手", "主持指令", input_kind="operator", operator_mode="motion")
+        item["status"] = "processing"
+        body = {"emotion": "平静", "actions": [{"kind": "S", "delay_seconds": 0,
+                "motions": [{"part": "right_arm", "description": "轻轻挥手"}], "hold_seconds": 0,
+                "gaze": "注视镜头", "expression": "平和"}],
+                "recovery": {"gaze": "注视镜头", "expression": "平和"}}
+        self.control.accept_plan(self.control.current, item, body, enqueue=False)
+        self.assertTrue({"emotion", "actions", "recovery", "timeline"}.issubset(item["plan"]))
+        self.assertTrue({"reading", "observation", "reading_status"}.isdisjoint(item))
+        self.assertTrue({"reading", "observation"}.isdisjoint(item["plan"]))
+
+    async def test_legacy_replay_context_reads_old_or_absent_observation(self):
+        previous = self.control.replay_fixture
+        try:
+            fixture = SimpleNamespace(plan={"segments": [{"timeline": []}], "observation": "历史观察"},
+                                      public=lambda: {})
+            self.control.replay_fixture = fixture
+            self.assertEqual(self.control.replay_public()["interaction_context"], "历史观察")
+            fixture.plan.pop("observation")
+            self.assertEqual(self.control.replay_public()["interaction_context"], "")
+        finally:
+            self.control.replay_fixture = previous
+
+    async def test_fixed_replay_retains_archived_plan_without_leaking_to_new_history(self):
+        previous_fixture, previous_mode = self.control.replay_fixture, self.control.semantic_replay
+        archived = {"emotion": "平静", "observation": "历史观察", "reading": None,
+                    "segments": [{"text": "历史台词。", "instruction": "自然", "actions": [],
+                                  "recovery": None, "timeline": []}]}
+        try:
+            fixture = SimpleNamespace(fingerprint="old-fixture", plan=copy.deepcopy(archived))
+            self.control.replay_fixture, self.control.semantic_replay = fixture, True
+            self.control.current.component.state = "ready"
+            item = self.control.enqueue_comment("旧回放", "主持指令", input_kind="operator",
+                                                operator_mode="once", replay_fixture_fingerprint=fixture.fingerprint)
+            item["status"] = "processing"
+            self.control.accept_plan(self.control.current, item, fixture.plan, enqueue=False)
+            self.assertEqual(item["plan"], archived)
+            saved = json.loads((self.control.current.out / "plans" / (item["id"] + ".json")).read_text())
+            self.assertEqual(saved["observation"], "历史观察")
+            self.assertIsNone(saved["reading"])
+            item["status"] = "sent"
+            history = self.control.reply_history(self.control.current)
+            self.assertEqual(len(history), 1)
+            self.assertTrue({"reading", "observation", "reading_status"}.isdisjoint(history[0]))
+        finally:
+            self.control.replay_fixture, self.control.semantic_replay = previous_fixture, previous_mode
 
     async def test_new_session_preserves_urls_and_has_no_paid_start(self):
         old, old_url, old_player = self.control.generation, self.control.prefix, self.control.player_prefix

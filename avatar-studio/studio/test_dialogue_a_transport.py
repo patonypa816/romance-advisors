@@ -53,11 +53,11 @@ class ATransportTests(unittest.IsolatedAsyncioTestCase):
         self.components.append(c)
         return c
 
-    def send(self, c, *, seconds=4, start=.08, actions=True, reading=None, number=1):
+    def send(self, c, *, seconds=4, start=.08, actions=True, number=1):
         pcm, alignment = fixture(seconds, (start,))
         task = asyncio.create_task(c.send_aligned_expression(pcm, "甲", [action()] if actions else [], number,
-            recovery=GE if actions or reading else None, alignment=alignment if actions else {"status": "unavailable"},
-            reading=reading, action_kind="S", ge_lead_seconds=1.1, allow_tail_q_after_audio=True))
+            recovery=GE if actions else None, alignment=alignment if actions else {"status": "unavailable"},
+            action_kind="S", ge_lead_seconds=1.1, allow_tail_q_after_audio=True))
         self.tasks.append(task)
         return pcm, task
 
@@ -75,24 +75,6 @@ class ATransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(receipt["motion_events"][2]["actual_interval_seconds"], 1.5-1e-6)
         self.assertEqual(b"".join(row["chunk"] for row in c._ws.binary), pcm)
 
-    async def test_reading_r_pcm_s0_then_answer_ge_s_q_keeps_both_pcm_streams(self):
-        c = self.component()
-        reading = {"text": "读这句", "pcm": b"\1\0" * 7200}
-        pcm, task = self.send(c, reading=reading)
-        await self.clock.advance(8)
-        receipt = await task
-        self.assertEqual([e["role"] for e in receipt["motion_events"]], ["R", "S0", "GE", "S", "Q"])
-        # The answer group resets its local previous-event field; measure
-        # the reading S0→answer GE boundary from their actual write clocks.
-        self.assertGreaterEqual(receipt["motion_events"][2]["sent_at_monotonic"]-
-                                receipt["motion_events"][1]["sent_at_monotonic"], 1-1e-6)
-        self.assertGreaterEqual(receipt["motion_events"][3]["actual_interval_seconds"], 1.1-1e-6)
-        self.assertGreaterEqual(receipt["motion_events"][4]["actual_interval_seconds"], 1.5-1e-6)
-        self.assertEqual(b"".join(row["chunk"] for row in c._ws.binary), reading["pcm"]+pcm)
-        self.assertEqual([row["frame"]["payload"]["text_msg"]["content"] for row in c._ws.sent if row["frame"]["type"] == 10],
-                         ["读这句", "甲"])
-        self.assertTrue(receipt["reading_sent_complete"])
-
     async def test_two_segments_preserve_each_audio_origin_and_post_q_gate(self):
         c = self.component()
         first, task = self.send(c, seconds=2, start=.4)
@@ -109,29 +91,14 @@ class ATransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(b"".join(row["chunk"] for row in c._ws.binary), first+second)
         self.assertEqual(len([row for row in c._ws.sent if row["frame"]["type"] == 10]), 2)
 
-    async def test_voice_only_and_reading_only_need_no_alignment_or_extra_ge(self):
-        for reading in (None, {"text": "读这句", "pcm": b"\1\0" * 2400}):
-            c = self.component()
-            pcm, task = self.send(c, seconds=.1, actions=False, reading=reading)
-            await self.clock.advance(5)
-            receipt = await task
-            self.assertEqual([e["role"] for e in receipt["motion_events"]], [] if reading is None else ["R", "S0", "Q"])
-            self.assertEqual(receipt["timeline"], [])
-            self.assertEqual(b"".join(row["chunk"] for row in c._ws.binary),
-                             pcm if reading is None else reading["pcm"]+pcm)
-
-    async def test_stop_during_reading_prevents_s0_answer_and_pending_actions(self):
+    async def test_voice_only_needs_no_alignment_or_extra_ge(self):
         c = self.component()
-        _, task = self.send(c, reading={"text": "读这句", "pcm": b"\1\0" * 24000})
-        await self.clock.advance(1.1)
-        self.assertEqual([e["role"] for e in c.motion_events], ["R"])
-        c.latch_stop()
-        counts = (len(c._ws.sent), len(c._ws.binary))
-        await self.clock.advance(10)
-        with self.assertRaises(RuntimeError):
-            await task
-        self.assertEqual((len(c._ws.sent), len(c._ws.binary)), counts)
-        self.assertEqual([e["role"] for e in c.motion_events], ["R"])
+        pcm, task = self.send(c, seconds=.1, actions=False)
+        await self.clock.advance(5)
+        receipt = await task
+        self.assertEqual(receipt["motion_events"], [])
+        self.assertEqual(receipt["timeline"], [])
+        self.assertEqual(b"".join(row["chunk"] for row in c._ws.binary), pcm)
 
 
 class ADynamicEndToEndTests(unittest.IsolatedAsyncioTestCase):
@@ -191,12 +158,11 @@ class ADynamicEndToEndTests(unittest.IsolatedAsyncioTestCase):
         self.temp.cleanup()
 
     @staticmethod
-    def plan(*, groups=1, reading=False, segments=1):
+    def plan(*, groups=1, segments=1):
         part = {"text": "甲乙丙丁戊己", "instruction": "自然清楚。",
             "actions": [action(char) for char in "甲乙丙丁戊己"[:groups]],
-            "recovery": dict(GE) if groups or reading else None}
-        return {"emotion": "温和", "observation": "姿态未知",
-                "reading": {"text": "弹幕", "instruction": "轻声自然短读。"} if reading else None,
+            "recovery": dict(GE) if groups else None}
+        return {"emotion": "温和",
                 "segments": [copy.deepcopy(part) for _ in range(segments)]}
 
     async def model(self, role, messages):
@@ -317,35 +283,29 @@ class ADynamicEndToEndTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.tts_calls), 1)
         self.assertEqual(b"".join(row["chunk"] for row in self.c._ws.binary), self.tts_calls[0]["pcm"])
 
-    async def test_read_comment_then_two_segments_reach_a_with_full_audio(self):
-        self.body = self.plan(reading=True, segments=2)
+    async def test_two_segments_reach_a_with_full_audio(self):
+        self.body = self.plan(segments=2)
         comment = await self.submit()
         self.assertEqual(comment["status"], "sent", comment.get("error"))
         self.assertEqual(comment["segments_sent"], 2)
         self.assertEqual([event["role"] for event in comment["motion_receipts"][0]["motion_events"]],
-                         ["R", "S0", "GE", "S", "Q"])
+                         ["GE", "S", "Q"])
         self.assertEqual([event["role"] for event in comment["motion_receipts"][1]["motion_events"]], ["GE", "S", "Q"])
-        self.assertEqual([call["text"] for call in self.tts_calls], ["弹幕", "甲乙丙丁戊己", "甲乙丙丁戊己"])
+        self.assertEqual([call["text"] for call in self.tts_calls], ["甲乙丙丁戊己", "甲乙丙丁戊己"])
         self.assertEqual(b"".join(row["chunk"] for row in self.c._ws.binary), b"".join(call["pcm"] for call in self.tts_calls))
         self.assertEqual(len(self.candidate_requests), 2)
 
-    async def test_dynamic_voice_only_and_reading_only_skip_candidate_model(self):
-        for reading in (False, True):
-            with self.subTest(reading=reading):
-                self.body = self.plan(groups=0, reading=reading)
-                before = len(self.c._ws.binary)
-                tts_before = len(self.tts_calls)
-                comment = await self.submit()
-                self.assertEqual(comment["status"], "sent", comment.get("error"))
-                self.assertEqual(self.candidate_requests, [])
-                receipt = comment["motion_receipts"][0]
-                self.assertEqual(receipt["timeline"], [])
-                self.assertEqual([event["role"] for event in receipt["motion_events"]],
-                                 ["R", "S0", "Q"] if reading else [])
-                self.assertEqual(b"".join(row["chunk"] for row in self.c._ws.binary[before:]),
-                                 b"".join(call["pcm"] for call in self.tts_calls[tts_before:]))
+    async def test_dynamic_voice_only_skips_candidate_model(self):
+        self.body = self.plan(groups=0)
+        comment = await self.submit()
+        self.assertEqual(comment["status"], "sent", comment.get("error"))
+        self.assertEqual(self.candidate_requests, [])
+        receipt = comment["motion_receipts"][0]
+        self.assertEqual(receipt["timeline"], [])
+        self.assertEqual(receipt["motion_events"], [])
+        self.assertEqual(b"".join(row["chunk"] for row in self.c._ws.binary), self.tts_calls[0]["pcm"])
 
-    async def test_expiry_or_stop_after_same_tts_never_starts_reading_or_answer(self):
+    async def test_expiry_or_stop_after_same_tts_never_starts_answer(self):
         for reason in ("expired", "stopped"):
             with self.subTest(reason=reason):
                 self.tts_effect = reason

@@ -26,7 +26,7 @@ from aiohttp import web
 from connection import client_session
 from motion_component import MotionComponent as PersistentComponent
 from tts_live import synthesize_segment
-from action_schema import (ACTION_POST_SEND_SECONDS, READING_LEAD_SECONDS, compile_reading_timeline, parse_plan,
+from action_schema import (ACTION_POST_SEND_SECONDS,
                            validate_short_performance_plan, short_performance_input_mode,
                            validate_continuous_speech_plan, continuous_speech_input_mode,
                            CONTINUOUS_MIN_AUDIO_SECONDS, CONTINUOUS_SECOND_GE_SECONDS,
@@ -47,8 +47,8 @@ PREVIOUS = ARTIFACTS / "zhuyuanzhang-qwen31-libai-test-20261029"
 STUDY = ARTIFACTS / "zhuyuanzhang-study-ab-20261029"
 ORIGINAL = ARTIFACTS / "zhuyuanzhang-structured-idle-20261029"
 VARIANTS = {
-    "A": {"image": "study-facing-fresh-smile-720x1280-v7.png", "title": "Terra · 整套读弹幕与自然接话",
-          "goal": "结合上下文自然选择整套读弹幕或直接接话；整套保留前倾、眯眼、1秒后轻声短读与回正，不把动作拆开随机。"},
+    "A": {"image": "study-facing-fresh-smile-720x1280-v7.png", "title": "自然接话",
+          "goal": "结合上下文自然接话。"},
 }
 SOURCE_FILES = ("connection.py", "server.py", "automation.py", "cloudbase_ai.py", "bailian_ai.py", "comment_intake.py", "dyhub_client.py", "live_session.py", "credentials.py", "component_live.py", "tts_live.py", "brain-context.json", "brain_bridge.py", "action_schema.py", "motion_component.py", "diagnostics.py", "director.py", "avatar_library.py", "fixed_replay.py", "semantic_replay.py", "semantic_speech.py", "timed_action_planner.py", "idle_motion.py", "idle_action_library.py")
 PREVIOUS_COMPONENT_DIRS = (
@@ -125,15 +125,9 @@ class LiveSession:
         self.image.write_bytes(raw)
         self.variant_info = {"variant": variant, **VARIANTS[variant], "source_image_path": str(selected.resolve()),
                              "used_image_path": str(self.image.resolve()), "image_sha256": hashlib.sha256(raw).hexdigest(),
-                             "rule_version": "R-S0-S-L-Q-GE-3.2-whole-bundle", "max_simultaneous_short_actions": 2,
-                             "gaze_expression_overlay": "every_R_S0_S_L_Q_instruction",
-                             "reading_excerpt_preferred_chars": [2, 6], "reading_preference_is_hard_limit": False,
-                             "reading_can_be_incomplete": True,
-                             "reading_lead_seconds": READING_LEAD_SECONDS,
-                             "reading_selection": "contextual_whole_bundle_or_direct",
-                             "reading_history_window": 6,
+                             "rule_version": "S-L-Q-GE", "max_simultaneous_short_actions": 2,
+                             "gaze_expression_overlay": "every_S_L_Q_instruction",
                              "first_answer_action_after_entry_seconds": 1.0,
-                             "reading_and_first_answer_audio_prepared_before_motion": True,
                              "sequential_node_count_limit": None, "short_to_q_seconds": 1.5,
                              "minimum_post_action_seconds": ACTION_POST_SEND_SECONDS,
                              "post_action_kinds": ["S", "L", "Q"]}
@@ -147,14 +141,12 @@ class LiveSession:
                                      minimum_action_window_seconds=DIALOGUE_S_TO_Q_SECONDS,
                                      semantic_ge_lead_seconds=DIALOGUE_GE_LEAD_SECONDS,
                                      short_to_q_seconds=DIALOGUE_S_TO_Q_SECONDS, max_simultaneous_short_actions=2,
-                                     first_answer_action_after_entry_seconds=None,
-                                     reading_recovery_before_answer_seconds=1.0)
+                                     first_answer_action_after_entry_seconds=None)
         if self.short_performance_test:
             self.variant_info.update(short_performance_test=True,
                                      rule_version="short-performance-GE-0.5-S-1.5-Q",
                                      max_simultaneous_short_actions=1, sequential_node_count_limit=1,
                                      gaze_expression_overlay="GE_lead_then_S_and_Q",
-                                     reading_selection="disabled", reading_lead_seconds=0,
                                      first_answer_action_after_entry_seconds=0.5,
                                      short_performance_lead_seconds=0.5)
         if self.continuous_speech_test:
@@ -162,7 +154,6 @@ class LiveSession:
                                      rule_version="continuous-speech-two-GE-S-Q-groups-v1",
                                      max_simultaneous_short_actions=1, sequential_node_count_limit=2,
                                      gaze_expression_overlay="two_independent_GE_S_Q_groups",
-                                     reading_selection="disabled", reading_lead_seconds=0,
                                      first_answer_action_after_entry_seconds=0.5,
                                      continuous_second_ge_audio_seconds=CONTINUOUS_SECOND_GE_SECONDS,
                                      continuous_second_s_audio_seconds=CONTINUOUS_SECOND_S_SECONDS,
@@ -174,7 +165,6 @@ class LiveSession:
                                      max_simultaneous_short_actions=1,
                                      sequential_node_count_limit=LONG_SPEECH_MAX_GROUPS,
                                      gaze_expression_overlay="independent_GE_S_Q_groups",
-                                     reading_selection="disabled", reading_lead_seconds=0,
                                      first_answer_action_after_entry_seconds=0.5,
                                      speech_text_limit=LONG_SPEECH_MAX_TEXT,
                                      planned_group_interval_seconds=self.long_speech_group_interval,
@@ -686,21 +676,13 @@ class LiveSession:
                     return True
                 try:
                     self._validate_delivery_plan(prepared)
-                    reading_audio, segments = None, []
+                    segments = []
                     if prepared.get("input_kind") == "operator" and prepared.get("operator_mode") == "motion":
                         key, workspace = "", ""
                     else:
                         key, workspace = ("", "") if getattr(self, "replay_fixture", None) else load_bailian()
                         if key:
                             self.diagnostics.register_secret(key)
-                        reading = prepared["plan"]["reading"]
-                        if reading is not None:
-                            reading_audio = await self.prepare_audio(key, workspace, prepared, reading, "read")
-                            if reading_audio is None:
-                                comment["status"] = prepared["status"]
-                                return False
-                            if not preparation_current():
-                                return False
                         for number, part in enumerate(prepared["plan"]["segments"], 1):
                             if not preparation_current():
                                 return False
@@ -722,13 +704,11 @@ class LiveSession:
                     comment["plan"] = prepared["plan"]
                     if "delivery" in comment:
                         comment["delivery"] = prepared["plan"].get("segments", [])
-                    if "reading" in comment:
-                        comment["reading"] = prepared["plan"].get("reading")
                     cache = getattr(self, "_prepared_comments", None)
                     if cache is None:
                         cache = self._prepared_comments = {}
                     cache[comment["id"]] = {"fingerprint": self._preparation_fingerprint(comment),
-                                            "reading": reading_audio, "segments": segments}
+                                            "segments": segments}
                     comment["status"] = "prepared"
                     self.event("answer_preparation_finished", comment_id=comment["id"], segments=len(segments))
                     return True
@@ -799,7 +779,6 @@ class LiveSession:
             return
         if not self._begin_delivery(comment):
             return
-        comment["reading_status"] = "skipped"
         # 保守记录开始尝试；不把此标记误作实际写入或画面完成证据。
         self.checkpoint()
         try:
@@ -848,24 +827,9 @@ class LiveSession:
                 else:
                     key, workspace = load_bailian()
                     self.diagnostics.register_secret(key)
-                reading = comment["plan"]["reading"]
-                reading_pcm = None
-                reading_out = None
-                if reading is not None:
-                    comment["reading_status"] = "synthesizing"
-                    prepared = cached["reading"] if cached else await self.prepare_audio(
-                        key, workspace, comment, reading, "read")
-                    if prepared is None:
-                        comment["reading_status"] = comment["status"]
-                        continue
-                    reading_pcm, reading_out = prepared
-                    comment["reading_status"] = "ready"
-                    comment["reading_audio_seconds"] = len(reading_pcm) / (PersistentComponent.RATE * 2)
                 for number, part in enumerate(comment["plan"]["segments"], 1):
                     if self.cancel_before_delivery(comment):
                         break
-                    # 短读和第一句回答都准备成功后才允许R开始，避免探头后
-                    # 因第二次TTS等待而悬停；这不等于云端播放完成可观测。
                     prepared = cached["segments"][number - 1] if cached else await self.prepare_audio(
                         key, workspace, comment, part, number)
                     if prepared is None:
@@ -920,18 +884,9 @@ class LiveSession:
                     # Once speech has begun, finish the accepted short answer.
                     if number == 1 and comment.get("expires_at", float("inf")) <= time.time():
                         comment["status"] = "expired"
-                        comment["reading_status"] = "expired" if reading else "skipped"
                         break
                     if not self._begin_delivery(comment):
                         break
-                    reading_payload = None
-                    if number == 1 and reading_pcm is not None:
-                        reading_payload = {"text": reading["text"], "pcm": reading_pcm}
-                        if not semantic:
-                            part["timeline"] = compile_reading_timeline(
-                                reading, part["actions"], part["recovery"],
-                                len(reading_pcm) / (PersistentComponent.RATE * 2))
-                        comment["reading_status"] = "sending"
                     comment["status"] = "sending"
                     self.checkpoint()
                     sender = self.component.send_aligned_expression if semantic else self.component.send_expression
@@ -947,17 +902,9 @@ class LiveSession:
                         options["local_action_anchors"] = False
                         options.update(self.semantic_replay_limits())
                     receipt = await sender(pcm, part["text"], part["actions"], number,
-                                           recovery=part["recovery"], reading=reading_payload, **options)
+                                           recovery=part["recovery"], **options)
                     comment.setdefault("motion_receipts", []).append(receipt)
                     save(segment_out / "component-send.json", receipt)
-                    if reading_payload is not None:
-                        comment["reading_status"] = "sent"
-                        comment["reading_segments_sent"] = 1
-                        save(reading_out / "component-send.json", {
-                            "group_id": receipt["group_id"], "reading_text": reading["text"],
-                            "reading_audio_seconds": comment["reading_audio_seconds"],
-                            "reading_sent_complete": receipt.get("reading_sent_complete", False),
-                            "playback_complete_confirmed": False})
                     comment["segments_sent"] += 1
                 else:
                     comment["status"] = "sent"
@@ -1000,9 +947,6 @@ class LiveSession:
                                delivery_error=comment.get("delivery_error"))
             finally:
                 key = ""
-                if (comment is not None and comment.get("status") in {"error", "cancelled"}
-                        and comment.get("reading_status") not in {"sent", "skipped"}):
-                    comment["reading_status"] = comment["status"]
                 owned_delivery = (comment is not None and comment.get("delivery_started")
                                   and self.component.comment_id == comment["id"])
                 self.component.comment_id = None

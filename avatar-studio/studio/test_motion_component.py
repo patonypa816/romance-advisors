@@ -218,6 +218,7 @@ class MotionComponentTests(unittest.IsolatedAsyncioTestCase):
         receipt = await component.send_expression(b"\0\0", "咱听着。", [], 1, recovery=None)
         self.assertEqual(component._ws.motions(), [])
         self.assertEqual(receipt["timeline"], [])
+        self.assertFalse(any(key.startswith("reading_") for key in receipt))
         self.assertTrue(receipt["actions_sent_complete"])
         self.assertEqual([row["frame"]["type"] for row in component._ws.sent], [10])
 
@@ -603,212 +604,14 @@ class MotionComponentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(component._ws.attempts, [])
                 component._audio.assert_not_awaited()
 
-    async def test_reading_real_pcm_then_s0_and_answer_are_one_continuous_group(self):
-        # 保留真实paced _audio和真实1秒/1.5秒等待；立即返回的mock会伪造R→S0时序。
-        component = self.component(mock_audio=False, write_delay=0.02)
-        read_pcm = b"\x01\x00" * int(component.RATE * 0.2)
-        answer_pcm = b"\x02\x00" * int(component.RATE * 1.2)
-        drain_states = []
-        original_wait = component._wait
+    async def test_current_expression_rejects_reading_parameter_before_writes(self):
+        component = self.component()
+        with self.assertRaises(TypeError):
+            await component.send_expression(b"\0\0", "咱听着。", [], 1,
+                                            reading={"text": "读", "pcm": b"\0\0"})
+        self.assertEqual(component._ws.attempts, [])
+        component._audio.assert_not_awaited()
 
-        async def observed_wait(seconds):
-            if component.state == "draining" and seconds == component.DRAIN_SECONDS:
-                drain_states.append(seconds)
-            await original_wait(seconds)
-
-        component._wait = observed_wait
-        receipt = await asyncio.wait_for(component.send_expression(
-            answer_pcm, "粮价这事，咱细说。", [short()], 1, recovery=GE,
-            reading={"text": "最近粮价为何涨", "pcm": read_pcm}), 5)
-        frames = component._ws.sent
-        self.assertEqual([row["frame"]["type"] for row in frames], [9, 10, 9, 10, 9, 9])
-        self.assertEqual([e["role"] for e in component.motion_events], ["R", "S0", "S", "Q"])
-        self.assertEqual([n["index"] for n in receipt["timeline"]], [1, 2, 3, 4])
-        self.assertEqual([n["at_seconds"] for n in receipt["timeline"]], [0, 1.2, 2.2, 3.7])
-        r, s0, s, q = component._ws.motions()
-        read_text, answer_text = [row for row in frames if row["frame"]["type"] == 10]
-        self.assertEqual(read_text["frame"]["payload"]["text_msg"]["content"], "最近粮价为何涨")
-        self.assertEqual(answer_text["frame"]["payload"]["text_msg"]["content"], "粮价这事，咱细说。")
-        self.assertGreaterEqual(read_text["started"] - r["completed"], 0.995)
-        self.assertLess(read_text["started"] - r["completed"], 1.3)
-        self.assertGreaterEqual(s0["started"] - read_text["completed"], 0.195)
-        self.assertGreaterEqual(s0["started"] - r["completed"], 1.215)
-        self.assertGreaterEqual(s["started"] - s0["completed"], 0.995)
-        self.assertLess(s["started"] - s0["completed"], 1.3)
-        self.assertGreaterEqual(q["started"] - s["completed"], 1.495)
-        self.assertGreaterEqual(answer_text["started"], s0["completed"])
-        read_binary = [row for row in component._ws.binary if row["chunk"].startswith(b"\x01\x00")]
-        answer_binary = [row for row in component._ws.binary if row["chunk"].startswith(b"\x02\x00")]
-        self.assertTrue(all(r["completed"] + 0.995 <= row["time"] < s0["started"] for row in read_binary))
-        self.assertTrue(all(row["time"] >= s0["completed"] for row in answer_binary))
-        self.assertTrue(any(row["time"] > s["completed"] for row in answer_binary))
-        self.assertEqual(b"".join(row["chunk"] for row in component._ws.binary), read_pcm + answer_pcm)
-        self.assertEqual(receipt["reading_text"], "最近粮价为何涨")
-        self.assertEqual(receipt["reading_audio_seconds"], 0.2)
-        self.assertAlmostEqual(receipt["audio_seconds"], 1.4)
-        self.assertAlmostEqual(component.audio_seconds, 1.4)
-        self.assertEqual(component.sent_audio_bytes, len(read_pcm) + len(answer_pcm))
-        self.assertTrue(receipt["reading_sent_complete"])
-        self.assertTrue(receipt["send_complete"])
-        self.assertTrue(receipt["actions_sent_complete"])
-        self.assertEqual(len(drain_states), 1)
-        self.assertEqual(component.utterances_started, 1)
-        self.assertEqual(component.utterances_sent, 1)
-        self.assertEqual(len({row["frame"]["conn_id"] for row in frames}), 1)
-        origin = r["completed"]
-        for index, (event, row) in enumerate(zip(component.motion_events, component._ws.motions())):
-            self.assertAlmostEqual(event["actual_at_seconds"], row["completed"] - origin, delta=0.003)
-            previous = component._ws.motions()[index-1]["completed"] if index else row["completed"]
-            self.assertAlmostEqual(event["actual_interval_seconds"], row["completed"] - previous, delta=0.003)
-            self.assertFalse(event["visual_effect_confirmed"])
-            for field in ("gaze", "expression"):
-                self.assertIn(event[field], row["frame"]["payload"]["text_msg"]["content"])
-
-    @patch("motion_component.ACTION_POST_SEND_SECONDS", .02)
-    async def test_same_component_reading_direct_reading_never_leaks_bundle(self):
-        component = self.component(mock_audio=False)
-        waits = []
-        original_wait = component._wait
-
-        async def compressed_wait(seconds):
-            # 只缩短等待，仍经真实校验、调度、Type10和PCM发送路径。
-            waits.append(seconds)
-            await original_wait(min(seconds, 0.003))
-
-        component._wait = compressed_wait
-        rounds = [
-            ("最近粮价为何涨了？", "最近粮价", "粮价这事，咱细说。", b"\x01\x00"),
-            ("为什么百姓辛苦一年仍然吃不饱？" * 4, None, "咱听见百姓的难处了。", b"\x02\x00"),
-            ("近来天气如何？", "近来天气", "天时也得仔细看看。", b"\x03\x00"),
-        ]
-        receipts = []
-        for source, read_text, answer, sample in rounds:
-            body = {"emotion": "平静", "observation": "自然承接当前弹幕",
-                    "reading": None if read_text is None else {
-                        "text": read_text, "instruction": "自然清晰地短读原文。"},
-                    "segments": [{"text": answer, "instruction": "自然清晰。", "actions": [],
-                                  "recovery": None if read_text is None else dict(GE)}]}
-            plan = parse_plan(body, source_text=source)
-            frame_start, pcm_start, event_start = (len(component._ws.sent),
-                                                   len(component._ws.binary), len(component.motion_events))
-            waits.clear()
-            # 不同轮与阅读/回答使用不同PCM，能识别前轮音频是否误入后轮。
-            read_pcm, answer_pcm = sample * 24, (sample + sample) * 24
-            segment = plan["segments"][0]
-            reading = None if plan["reading"] is None else {
-                "text": plan["reading"]["text"], "pcm": read_pcm}
-            receipt = await asyncio.wait_for(component.send_expression(
-                answer_pcm, segment["text"], segment["actions"], 1,
-                recovery=segment["recovery"], reading=reading), 0.5)
-            receipts.append(receipt)
-            frames = [row["frame"] for row in component._ws.sent[frame_start:]]
-            sent_pcm = b"".join(row["chunk"] for row in component._ws.binary[pcm_start:])
-            roles = [event["role"] for event in component.motion_events[event_start:]]
-            spoken = [frame["payload"]["text_msg"]["content"] for frame in frames if frame["type"] == 10]
-            if read_text is None:
-                self.assertEqual([frame["type"] for frame in frames], [10])
-                self.assertEqual(spoken, [answer])
-                self.assertEqual(sent_pcm, answer_pcm)
-                self.assertEqual(roles, [])
-                self.assertEqual(receipt["timeline"], [])
-                self.assertIsNone(receipt["reading_text"])
-                self.assertIsNone(component.active_motion_plan["reading_text"])
-                self.assertEqual(receipt["reading_lead_seconds"], 0)
-                self.assertEqual(receipt["reading_audio_seconds"], 0)
-                # 只允许短PCM自身的节拍等待和drain；不能有阅读提前量或尾Q等待。
-                self.assertTrue(all(seconds <= 0.01 for seconds in waits), waits)
-            else:
-                self.assertEqual([frame["type"] for frame in frames], [9, 10, 9, 10, 9])
-                self.assertEqual(roles, ["R", "S0", "Q"])
-                self.assertEqual(spoken, [read_text, answer])
-                self.assertEqual(sent_pcm, read_pcm + answer_pcm)
-                self.assertEqual(receipt["reading_text"], read_text)
-                self.assertTrue(any(seconds > 0.9 for seconds in waits))
-            self.assertTrue(receipt["send_complete"])
-            self.assertTrue(receipt["actions_sent_complete"])
-            self.assertEqual(component.state, "ready")
-        self.assertEqual(component.utterances_sent, 3)
-        self.assertEqual(len({receipt["group_id"] for receipt in receipts}), 3)
-        self.assertEqual(len({row["frame"]["conn_id"] for row in component._ws.sent}), 1)
-
-    async def test_reading_empty_answer_actions_still_send_s0_and_one_tail_q(self):
-        component = self.component(mock_audio=False)
-        read_pcm = b"\x01\x00" * int(component.RATE * 0.06)
-        receipt = await asyncio.wait_for(component.send_expression(
-            b"\0\0", "咱听着。", [], 1, recovery=GE,
-            reading={"text": "啊", "pcm": read_pcm}), 3.5)
-        self.assertEqual([e["role"] for e in component.motion_events], ["R", "S0", "Q"])
-        _, s0, q = component._ws.motions()
-        self.assertGreaterEqual(q["started"] - s0["completed"], 1.495)
-        self.assertEqual(receipt["timeline"][-1]["delay_seconds"], 1.5)
-        self.assertEqual(receipt["reading_text"], "啊")
-        self.assertTrue(receipt["actions_sent_complete"])
-
-    async def test_stop_during_reading_lead_never_sends_text_pcm_or_recovery(self):
-        component = self.component(mock_audio=False)
-        task = asyncio.create_task(component.send_expression(
-            b"\x02\x00" * 100, "咱听着。", [short()], 1, recovery=GE,
-            reading={"text": "最近粮价", "pcm": b"\x01\x00" * 100}))
-        await eventually(lambda: len(component.motion_events) == 1)
-        component.latch_stop()
-        with self.assertRaises(RuntimeError):
-            await asyncio.wait_for(task, 0.5)
-        self.assertEqual([row["frame"]["type"] for row in component._ws.sent], [9])
-        self.assertEqual(component._ws.binary, [])
-        self.assertFalse(component.last_utterance["reading_sent_complete"])
-        self.assertFalse(component.active_motion_plan["is_active"])
-
-    async def test_stop_during_paced_reading_never_sends_s0_answer_or_q(self):
-        component = self.component(mock_audio=False)
-        task = asyncio.create_task(component.send_expression(
-            b"\x02\x00" * 100, "咱听着。", [short()], 1, recovery=GE,
-            reading={"text": "最近粮价", "pcm": b"\x01\x00" * int(component.RATE * 0.4)}))
-        await eventually(lambda: len(component._ws.binary) >= 2, timeout=2)
-        component.latch_stop()
-        with self.assertRaises(RuntimeError):
-            await asyncio.wait_for(task, 0.5)
-        self.assertEqual([e["role"] for e in component.motion_events], ["R"])
-        self.assertEqual([row["frame"]["type"] for row in component._ws.sent], [9, 10])
-        self.assertFalse(component.last_utterance["reading_sent_complete"])
-        self.assertFalse(component.last_utterance["send_complete"])
-        self.assertFalse(component.last_utterance["actions_sent_complete"])
-        self.assertFalse(component.active_motion_plan["is_active"])
-        count = len(component._ws.attempts)
-        await asyncio.sleep(0.02)
-        self.assertEqual(len(component._ws.attempts), count)
-
-    async def test_failed_r_or_s0_never_continues_to_answer_or_q(self):
-        for failed_index in (1, 2):
-            with self.subTest(failed_index=failed_index):
-                component = self.component(mock_audio=False, fail_motion=failed_index)
-                read_pcm = b"\x01\x00" * int(component.RATE * 0.06)
-                with self.assertRaises(ConnectionError):
-                    await component.send_expression(b"\x02\x00" * 100, "咱听着。", [], 1,
-                                                    recovery=GE, reading={"text": "你好", "pcm": read_pcm})
-                self.assertEqual([e["role"] for e in component.motion_events], ["R"] if failed_index == 2 else [])
-                self.assertEqual([row["frame"]["type"] for row in component._ws.sent], [9, 10] if failed_index == 2 else [])
-                self.assertEqual(b"".join(row["chunk"] for row in component._ws.binary), read_pcm if failed_index == 2 else b"")
-                self.assertEqual(component.last_utterance["reading_sent_complete"], failed_index == 2)
-                self.assertFalse(component.last_utterance["send_complete"])
-                self.assertFalse(component.last_utterance["actions_sent_complete"])
-                self.assertTrue(component._stop.is_set())
-                self.assertFalse(component.active_motion_plan["is_active"])
-
-    async def test_both_pcm_and_reading_contract_validate_before_any_frame(self):
-        invalid_audio = (b"", b"\0", bytearray(b"\0\0"), None)
-        cases = [(audio, {"text": "你好", "pcm": b"\0\0"}, GE) for audio in invalid_audio]
-        cases += [(b"\0\0", {"text": "你好", "pcm": audio}, GE) for audio in invalid_audio]
-        cases += [(b"\0\0", reading, GE) for reading in (
-            {}, [], {"text": "你好"}, {"text": "你好", "pcm": b"\0\0", "instruction": "额外"},
-            {"text": "", "pcm": b"\0\0"}, {"text": "字" * 31, "pcm": b"\0\0"})]
-        cases.append((b"\0\0", {"text": "你好", "pcm": b"\0\0"}, None))
-        for pcm, reading, recovery in cases:
-            with self.subTest(pcm=pcm, reading=reading, recovery=recovery):
-                component = self.component()
-                with self.assertRaises(ValueError):
-                    await component.send_expression(pcm, "咱听着。", [], 1, recovery=recovery, reading=reading)
-                self.assertEqual(component._ws.attempts, [])
-                component._audio.assert_not_awaited()
 
 
 if __name__ == "__main__":

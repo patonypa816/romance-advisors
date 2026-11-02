@@ -122,7 +122,7 @@ class LongActionReplayTests(unittest.IsolatedAsyncioTestCase):
                     {"reading": {"text": "短读", "pcm": b"\0\0"}}]
         for invalid in invalids:
             c = self.component()
-            with self.subTest(invalid=tuple(invalid)), self.assertRaises(ValueError):
+            with self.subTest(invalid=tuple(invalid)), self.assertRaises(TypeError if "reading" in invalid else ValueError):
                 await self.send(c, **invalid)
             self.assertFalse(c._ws.attempts)
             self.assertFalse(c._ws.binary)

@@ -4,7 +4,7 @@ import unittest
 
 from semantic_speech import (SemanticSpeechError, compile_semantic_timeline,
                              parse_semantic_plan, validate_alignment, alignment_reason_message,
-                             parse_dialogue_semantic_plan, compile_dialogue_semantic_timeline,
+                             parse_dialogue_semantic_plan, parse_game_semantic_plan, compile_dialogue_semantic_timeline,
                              DIALOGUE_ACTION_KIND, DIALOGUE_GE_LEAD_SECONDS, DIALOGUE_S_TO_Q_SECONDS)
 from action_schema import ACTION_POST_SEND_SECONDS
 
@@ -437,6 +437,29 @@ class SemanticSpeechTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 compile_semantic_timeline(actions, GE, alignment, 57, **mode, **caps)
 
+
+
+class GameSemanticContract(unittest.TestCase):
+    def test_game_shape_keeps_legacy_parser_separate(self):
+        legacy = plan()
+        game = {key: copy.deepcopy(legacy[key]) for key in ("emotion", "segments")}
+        for mode in (None, "once", "topic"):
+            self.assertEqual(parse_game_semantic_plan(game, mode=mode), game)
+            with self.assertRaises(ValueError):
+                parse_game_semantic_plan(legacy, mode=mode)
+        self.assertEqual(parse_dialogue_semantic_plan(legacy), legacy)
+
+    def test_game_length_recovery_and_actions_still_enforced(self):
+        game = {key: copy.deepcopy(plan()[key]) for key in ("emotion", "segments")}
+        game["segments"][0]["text"] = "咱" * 121
+        with self.assertRaisesRegex(ValueError, "120"):
+            parse_game_semantic_plan(game)
+        game = {key: copy.deepcopy(plan()[key]) for key in ("emotion", "segments")}
+        game["segments"][0]["recovery"] = None
+        with self.assertRaises(ValueError):
+            parse_game_semantic_plan(game)
+        game["segments"][0].update(actions=[], recovery=None)
+        self.assertEqual(parse_game_semantic_plan(game), game)
 
 if __name__ == "__main__":
     unittest.main()

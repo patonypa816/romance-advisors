@@ -13,7 +13,7 @@ from cloudbase_ai import ModelError
 
 
 def plan():
-    return {"emotion": "平静", "observation": "当前姿态未知", "reading": None,
+    return {"emotion": "平静",
             "segments": [{"text": "咱听着呢。", "instruction": "自然清晰", "actions": [], "recovery": None}]}
 
 

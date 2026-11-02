@@ -15,7 +15,7 @@ JOB = {"input_kind": "operator", "operator_mode": "once", "id": "offline-host",
        "nickname": "主持", "text": "先点头再抬手，聊聊这主意。"}
 TOPIC = {"instruction": JOB["text"], "total_rounds": 3, "completed_rounds": 1,
          "next_round": 2, "sent_history": ["刚才说过前因。"]}
-PLAN = {"emotion": "温和", "observation": "当前实际姿态未知", "reading": None,
+PLAN = {"emotion": "温和",
         "segments": [{"text": "咱先聊聊这主意，把来龙去脉说清楚，再聊聊该如何往前走。",
                       "instruction": "自然清楚，正常语速。", "actions": [
                           {"anchor": {"quote": "聊聊", "occurrence": 1},
@@ -57,12 +57,10 @@ class SemanticAIContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(module.SEMANTIC_SPEECH_CONTRACT, prompt)
                 self.assertIn(module.SEMANTIC_ACTION_WRITING_RULES, prompt)
                 for required in ("1至120字", "默认一条自然连续台词", "不含标点", "从1开始", "3.6秒", "1.1秒",
-                                 "音频结束", "不靠猜秒数", "不能为了", "有动作或首段有reading"):
+                                 "音频结束", "不靠猜秒数", "不能为了", "有动作时"):
                     self.assertIn(required, prompt)
-                if route == "viewer":
-                    self.assertIn(module.SEMANTIC_READING_RULES, prompt)
-                else:
-                    self.assertIn("reading必须为null", prompt)
+                self.assertNotIn("reading", prompt)
+                self.assertNotIn("observation", prompt)
                 client._call.assert_awaited_once()
                 client._credentials.assert_not_called()
                 client._run_sdk.assert_not_awaited()
@@ -81,7 +79,7 @@ class SemanticAIContracts(unittest.IsolatedAsyncioTestCase):
             prompt = client._call.call_args.args[1][0]["content"]
             self.assertNotIn("CONFLICT", prompt)
             self.assertNotIn("/private/image.png", prompt)
-            for required in ("原创角色", "自然松弛", "自然选择", "reading_history_window"):
+            for required in ("原创角色", "自然松弛"):
                 self.assertIn(required, prompt)
             if route == "topic":
                 # 主讲内容保留在唯一的单段输入中，不复制进全局背景。
@@ -112,15 +110,12 @@ class SemanticAIContracts(unittest.IsolatedAsyncioTestCase):
         plan["segments"][0].update(text="字" * 120, actions=[], recovery=None)
         for route in ("viewer", "once", "topic"):
             self.assertEqual(await self.generate(self.client(plan), route), plan)
-        plan["reading"] = {"text": "这主意", "instruction": "轻声自然短读。"}
-        plan["segments"][0]["recovery"] = {"gaze": "注视镜头", "expression": "神情温和"}
-        self.assertEqual(await self.generate(self.client(plan), "viewer"), plan)
-        for route in ("once", "topic"):
-            with self.assertRaises(module.ModelError):
-                await self.generate(self.client(plan), route)
-        plan["reading"]["text"] = "不在评论里"
-        with self.assertRaises(module.ModelError):
-            await self.generate(self.client(plan), "viewer")
+        for retired in ("reading", "observation"):
+            invalid = copy.deepcopy(plan)
+            invalid[retired] = None
+            for route in ("viewer", "once", "topic"):
+                with self.assertRaises(module.ModelError):
+                    await self.generate(self.client(invalid), route)
 
     async def test_legacy_model_timing_rejected_not_repaired_or_retried(self):
         plan = copy.deepcopy(PLAN)
@@ -187,7 +182,7 @@ class SemanticAIContracts(unittest.IsolatedAsyncioTestCase):
                     with patch.object(module, "parse_dialogue_semantic_plan", side_effect=AssertionError("新parser不可侵入试验")):
                         self.assertEqual(await self.generate(client, route, {flag: True}), expected)
                     self.assertNotIn(module.SEMANTIC_SPEECH_CONTRACT, client._call.call_args.args[1][0]["content"])
-        motion = {key: copy.deepcopy(module.SHORT_PERFORMANCE_EXAMPLE[key]) for key in ("emotion", "observation")}
+        motion = {"emotion": module.SHORT_PERFORMANCE_EXAMPLE["emotion"]}
         motion.update(copy.deepcopy(module.SHORT_PERFORMANCE_EXAMPLE["segments"][0]))
         motion.pop("text")
         motion.pop("instruction")
@@ -195,7 +190,33 @@ class SemanticAIContracts(unittest.IsolatedAsyncioTestCase):
         with patch.object(module, "parse_dialogue_semantic_plan", side_effect=AssertionError("新parser不可侵入纯动作")):
             result = await client.generate_director({**JOB, "operator_mode": "motion"}, [], {})
         self.assertEqual(result, motion)
-        self.assertIn(module.DIRECTOR_PROMPT["motion"], client._call.call_args.args[1][0]["content"])
+        self.assertIn(module.GAME_MOTION_PROMPT, client._call.call_args.args[1][0]["content"])
+        self.assertNotIn("observation", client._call.call_args.args[1][0]["content"])
+        self.assertNotIn("reading", client._call.call_args.args[1][0]["content"])
+
+    async def test_game_motion_retains_original_non_reading_preferences(self):
+        motion = {"emotion": "平静", "actions": [
+            {"kind": "S", "delay_seconds": 0, "hold_seconds": 0,
+             "motions": [{"part": "head", "description": "轻轻点头"}],
+             "gaze": "看向镜头", "expression": "平静"}],
+            "recovery": {"gaze": "看向镜头", "expression": "平静"}}
+        context = {"character": {"identity": "地狱集团CEO"},
+                   "operator_settings": {"reply_style": "质朴直接"},
+                   "planning": ["动作偏好：动作温和且遵守既定时序", "旧reading规则"],
+                   "routing": {"vidu": "沿用既有动作发送", "tts": "原声音模型"},
+                   "study_variant": {"goal": "自然动作", "max_simultaneous_short_actions": 2,
+                                     "reading_selection": "过期阅读规则"},
+                   "plan_contract": {"reading": None, "observation": "历史字段"}}
+        original = copy.deepcopy(context)
+        client = self.client(motion)
+        self.assertEqual(await client.generate_director({**JOB, "operator_mode": "motion"}, [], context), motion)
+        prompt = client._call.call_args.args[1][0]["content"]
+        for value in ("地狱集团CEO", "质朴直接", "动作偏好：动作温和且遵守既定时序",
+                      "沿用既有动作发送", "原声音模型", "自然动作", "max_simultaneous_short_actions"):
+            self.assertIn(value, prompt)
+        self.assertNotIn("reading", prompt)
+        self.assertNotIn("observation", prompt)
+        self.assertEqual(context, original)
 
     async def test_normal_routes_reject_unsupported_whole_body_before_tts_with_safe_reason(self):
         body = copy.deepcopy(PLAN)

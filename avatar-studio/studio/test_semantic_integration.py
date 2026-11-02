@@ -19,12 +19,12 @@ GE = {"gaze": "注视镜头", "expression": "神情温和"}
 TEXT = "咱从田里走来，也知道百姓的苦。"
 
 
-def plan(*, reading=None, actions=True, quote="咱"):
-    return {"emotion": "平静", "observation": "当前画面姿态未知", "reading": reading,
+def plan(*, actions=True, quote="咱"):
+    return {"emotion": "平静",
             "segments": [{"text": TEXT, "instruction": "自然清晰", "actions": [
                 {"anchor": {"quote": quote, "occurrence": 1}, "motions": [
                     {"part": "head", "description": "轻轻点头一次"}], **GE}
-            ] if actions else [], "recovery": dict(GE) if actions or reading else None}]}
+            ] if actions else [], "recovery": dict(GE) if actions else None}]}
 
 
 class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
@@ -44,7 +44,7 @@ class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
         self.s = self.studio.current
         self.s.started = True
         self.s.component.state = "ready"
-        self.sender = self.s.component.send_aligned_expression = AsyncMock(return_value={"group_id": "offline", "reading_sent_complete": True})
+        self.sender = self.s.component.send_aligned_expression = AsyncMock(return_value={"group_id": "offline"})
         self.s.component.send_expression = AsyncMock(side_effect=AssertionError("legacy speech called"))
         self.tts_calls = []
         self.bad_alignment = False
@@ -181,10 +181,10 @@ class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
                              [("GE", -1.1), ("S", 0), ("Q", 1.5)])
             self.assertIn(action["motions"][0]["description"], timeline[1]["instruction"])
 
-    async def test_unavailable_alignment_or_dense_groups_never_start_reading(self):
+    async def test_unavailable_alignment_or_dense_groups_never_start_sending(self):
         for bad, code in ((True, "alignment_unavailable"), (False, "anchor_window_conflict")):
             self.bad_alignment = bad
-            body = plan(reading={"text": "百姓", "instruction": "轻声短读"})
+            body = plan()
             if not bad:
                 second = copy.deepcopy(body["segments"][0]["actions"][0])
                 second["anchor"]["quote"] = "从田里走来"
@@ -193,26 +193,25 @@ class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(c["status"], "error")
             self.assertEqual(c["delivery_error"]["code"], code)
             self.assertFalse(c.get("delivery_started"))
-            self.assertEqual(self.tts_calls[-2][1], {})
+            self.assertTrue(self.tts_calls[-1][1]["word_timestamps"])
         self.sender.assert_not_awaited()
-        self.assertEqual(self.s.totals["cost_cny"], .004)
+        self.assertEqual(self.s.totals["cost_cny"], .002)
 
-    async def test_last_word_s_can_finish_q_after_audio_and_still_pass_reading_to_sender(self):
-        c = await self.submit(plan(reading={"text": "百姓", "instruction": "轻声短读"}, quote="苦"))
+    async def test_last_word_s_can_finish_q_after_audio(self):
+        c = await self.submit(plan(quote="苦"))
         self.assertEqual(c["status"], "sent", c.get("error"))
         timeline = c["delivery"][0]["timeline"]
         self.assertEqual([(n["role"], n["at_seconds"]) for n in timeline],
                          [("GE", 5.9), ("S", 7), ("Q", 8.5)])
         self.assertTrue(self.sender.await_args.kwargs["allow_tail_q_after_audio"])
-        self.assertIsNotNone(self.sender.await_args.kwargs["reading"])
+        self.assertNotIn("reading", self.sender.await_args.kwargs)
 
-    async def test_plain_speech_and_reading_without_actions_do_not_require_alignment(self):
+    async def test_plain_speech_without_actions_does_not_require_alignment(self):
         self.bad_alignment = True
-        for reading in (None, {"text": "百姓", "instruction": "轻声短读"}):
-            c = await self.submit(plan(actions=False, reading=reading))
-            self.assertEqual(c["status"], "sent", c.get("error"))
-            self.assertEqual(c["delivery"][0]["timeline"], [])
-        self.assertIsNotNone(self.sender.await_args.kwargs["reading"])
+        c = await self.submit(plan(actions=False))
+        self.assertEqual(c["status"], "sent", c.get("error"))
+        self.assertEqual(c["delivery"][0]["timeline"], [])
+        self.assertNotIn("reading", self.sender.await_args.kwargs)
 
     async def test_specific_safe_timestamp_reason_is_visible(self):
         original = self.s.prepare_audio
@@ -279,9 +278,9 @@ class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["planning"]["pcm_sha256"], hashlib.sha256(pcm).hexdigest())
         self.ai.plan_timed_actions.assert_awaited_once()
 
-    async def test_model_error_before_any_reading_or_audio_pauses_future_model_work(self):
+    async def test_model_error_before_audio_pauses_future_model_work(self):
         self.ai.plan_timed_actions.side_effect = ModelError("timed_action_plan_invalid")
-        c = await self.submit(plan(reading={"text": "百姓", "instruction": "轻声短读"}))
+        c = await self.submit(plan())
         self.assertEqual(c["status"], "error")
         self.assertEqual(c["model_error_code"], "timed_action_plan_invalid")
         self.assertIn("时间戳动作计划", c["error"])
@@ -342,7 +341,7 @@ class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
             receipt = {"group_id": "first", "comment_id": self.s.component.comment_id,
                        "segment_index": args[3], "mode": "semantic_speech", "status": "sent",
                        "send_complete": True, "actions_sent_complete": True,
-                       "reading_sent_complete": True, "motion_events": [{"role": "Q"}]}
+                       "motion_events": [{"role": "Q"}]}
             self.s.component.last_motion_receipt = receipt
             return receipt
         self.sender.side_effect = remember_first
@@ -418,7 +417,7 @@ class PreparedSemanticIntegration(unittest.IsolatedAsyncioTestCase):
             session.component = fixtures.FakeComponent()
             session.component.send_aligned_expression = AsyncMock(return_value={
                 "group_id": "offline-prepared", "send_complete": True,
-                "actions_sent_complete": True, "reading_sent_complete": True})
+                "actions_sent_complete": True})
             session.component.send_expression = AsyncMock(side_effect=AssertionError("no legacy sender"))
 
         with patch.object(live_session.LiveSession, "startup", offline_startup):
@@ -542,7 +541,7 @@ class PreparedSemanticIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sender.await_args.kwargs["max_text_codepoints"], 240)
         self.assertEqual(sender.await_args.kwargs["ge_lead_seconds"], 1.1)
         self.assertEqual(sender.await_args.kwargs["action_kind"], "S")
-        self.assertIsNone(sender.await_args.kwargs["reading"])
+        self.assertNotIn("reading", sender.await_args.kwargs)
         self.assertEqual(comment["status"], "sent", comment.get("error"))
         self.assertEqual(comment["plan"], fixture.plan)
         self.assertEqual(session.totals["audio_seconds"], 57)

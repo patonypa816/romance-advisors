@@ -137,7 +137,7 @@ class ContinuousSpeechTests(unittest.IsolatedAsyncioTestCase):
                 await self.send(c, pcm=pcm)
             self.assertFalse(c._ws.attempts); self.assertFalse(c._ws.binary)
         c = self.component()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             await self.send(c, reading={"text": "短读", "pcm": b"\0\0"})
         with self.assertRaises(ValueError):
             await c.send_motion_expression(actions(), recovery=GE)

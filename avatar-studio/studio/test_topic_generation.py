@@ -17,7 +17,7 @@ JOB = {"input_kind": "operator", "operator_mode": "topic", "id": "topic-a",
 OUTLINE = [{"id": "cause", "title": "缘由", "goal": "从一次挨饿经历说明粮食来之不易。"},
            {"id": "choice", "title": "做法", "goal": "说明如何减少浪费，承接经历，不再重复开场。"},
            {"id": "ending", "title": "收束", "goal": "用珍惜眼前一餐自然收束故事，不扩展话题。"}]
-PLAN = {"emotion": "温和", "observation": "当前实际姿态未知", "reading": None,
+PLAN = {"emotion": "温和",
         "segments": [{"text": "吃多少盛多少，就是珍惜粮食最实在的办法。",
                       "instruction": "自然清楚，正常语速。", "actions": [], "recovery": None}]}
 BRIDGE_PLAN = copy.deepcopy(PLAN)

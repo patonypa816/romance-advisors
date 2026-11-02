@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from action_schema import (ACTION_POST_SEND_SECONDS, READING_LEAD_SECONDS, ANSWER_START_SECONDS, compile_reading_timeline, compile_timeline,
+from action_schema import (ACTION_POST_SEND_SECONDS, compile_timeline,
                            compile_short_performance_timeline, compile_continuous_speech_timeline,
                            CONTINUOUS_SECOND_GE_SECONDS, CONTINUOUS_MIN_AUDIO_SECONDS,
                            compile_long_speech_timeline, long_speech_required_audio_seconds,
@@ -106,22 +106,20 @@ class MotionComponent(PersistentComponent):
                                  "short_to_q_seconds": 1.5,
                                  "minimum_post_action_seconds": ACTION_POST_SEND_SECONDS,
                                  "post_action_kinds": ["S", "L", "Q"],
-                                 "reading_lead_seconds": READING_LEAD_SECONDS,
-                                 "gaze_expression_overlay": "every_R_S0_S_L_Q_instruction",
+                                 "gaze_expression_overlay": "every_S_L_Q_instruction",
                                  **({"max_simultaneous_short_actions": 1,
-                                     "sequential_node_count_limit": 1, "reading_lead_seconds": 0,
+                                     "sequential_node_count_limit": 1,
                                      "short_performance_lead_seconds": 0.5,
                                      "gaze_expression_overlay": "GE_lead_then_S_and_Q"}
                                     if self.short_performance_test else {}),
                                  **({"max_simultaneous_short_actions": 1,
-                                     "sequential_node_count_limit": 2, "reading_lead_seconds": 0,
+                                     "sequential_node_count_limit": 2,
                                      "minimum_audio_seconds": CONTINUOUS_MIN_AUDIO_SECONDS,
                                      "second_GE_audio_seconds": CONTINUOUS_SECOND_GE_SECONDS,
                                      "gaze_expression_overlay": "GE_S_Q_twice_in_one_audio"}
                                     if self.continuous_speech_test else {}),
                                  **({"max_simultaneous_short_actions": 1,
                                      "sequential_node_count_limit": LONG_SPEECH_MAX_GROUPS,
-                                     "reading_lead_seconds": 0,
                                      "max_text_codepoints": LONG_SPEECH_MAX_TEXT,
                                      "group_interval_seconds": self.long_speech_group_interval,
                                      "minimum_tail_seconds": LONG_SPEECH_TAIL_SECONDS,
@@ -132,7 +130,6 @@ class MotionComponent(PersistentComponent):
                                      "action_kind": "L",
                                      "sequential_node_count_limit": self.long_action_group_count,
                                      "long_action_group_count": self.long_action_group_count,
-                                     "reading_lead_seconds": 0,
                                      "max_text_codepoints": LONG_SPEECH_MAX_TEXT,
                                      "short_to_q_seconds": None,
                                      "long_to_q_timing": "hold_seconds_after_successful_write",
@@ -547,21 +544,12 @@ class MotionComponent(PersistentComponent):
         finally:
             self._pending_speech -= 1
 
-    async def send_expression(self, pcm, text, actions, segment_index, *, recovery=None, reading=None):
+    async def send_expression(self, pcm, text, actions, segment_index, *, recovery=None):
         # Validate again at the transport boundary before any frame is sent.
-        has_reading = reading is not None
-        if (self.short_performance_test or self._multi_group_speech) and has_reading:
-            raise ValueError("短表演、连续口播与长文口播试验不接受reading")
-        if has_reading and (not isinstance(reading, dict) or set(reading) != {"text", "pcm"}):
-            raise ValueError("传输reading必须且只能包含text与pcm")
-        read_pcm = reading["pcm"] if has_reading else None
-        # 两份PCM必须在任何Type9/10之前一起验证；不能读完弹幕才发现回答不可发送。
-        for audio in ([read_pcm, pcm] if has_reading else [pcm]):
-            if (not isinstance(audio, bytes) or not audio or len(audio)%2
-                    or len(audio) > self.MAX_AUDIO_SECONDS*self.RATE*2):
-                raise ValueError("音频格式或时长不符合本场约束")
-        reading_audio_seconds = len(read_pcm)/(self.RATE*2) if has_reading else 0.0
-        total_audio_seconds = len(pcm)/(self.RATE*2) + reading_audio_seconds
+        if (not isinstance(pcm, bytes) or not pcm or len(pcm) % 2
+                or len(pcm) > self.MAX_AUDIO_SECONDS * self.RATE * 2):
+            raise ValueError("音频格式或时长不符合本场约束")
+        total_audio_seconds = len(pcm) / (self.RATE * 2)
         if self.continuous_speech_test and total_audio_seconds < CONTINUOUS_MIN_AUDIO_SECONDS:
             raise ValueError("连续口播试验真实PCM须至少5秒；不会延长、补静音或裁切")
         timeline = (compile_long_action_replay_timeline(actions, recovery, group_count=self.long_action_group_count)
@@ -570,8 +558,7 @@ class MotionComponent(PersistentComponent):
                     if self.long_speech_test else
                     compile_continuous_speech_timeline(actions, recovery) if self.continuous_speech_test else
                     compile_short_performance_timeline(actions, recovery) if self.short_performance_test else
-                    compile_reading_timeline(reading, actions, recovery, reading_audio_seconds)
-                    if has_reading else compile_timeline(actions, recovery))
+                    compile_timeline(actions, recovery))
         required_audio_seconds = None
         if self._long_action_replay:
             # 从首L到末L窗口结束均须有原PCM覆盖；不把两个L窗口简单相加。
@@ -614,19 +601,13 @@ class MotionComponent(PersistentComponent):
                                                "continuous_speech_test": self.continuous_speech_test,
                                                "long_speech_test": self.long_speech_test,
                                                "mode": self.motion_mode,
-                                               "timeline": timeline, "recovery": recovery,
-                                               "reading_text": reading["text"] if has_reading else None,
-                                               "reading_audio_seconds": reading_audio_seconds}
+                                               "timeline": timeline, "recovery": recovery}
                     receipt = {"id": self.utterances_started, "group_id": group_id,
                                "segment_index": segment_index, "audio_seconds": total_audio_seconds,
                                "short_performance_test": self.short_performance_test,
                                "continuous_speech_test": self.continuous_speech_test,
                                "long_speech_test": self.long_speech_test,
                                "mode": self.motion_mode,
-                               "reading_text": reading["text"] if has_reading else None,
-                               "reading_audio_seconds": reading_audio_seconds,
-                               "reading_lead_seconds": READING_LEAD_SECONDS if has_reading else 0.0,
-                               "reading_sent_complete": not has_reading,
                                "send_complete": False, "buffer_complete": False,
                                "actions_sent_complete": not timeline, "visual_effect_confirmed": False,
                                "playback_complete_confirmed": False, "timeline": timeline}
@@ -663,21 +644,7 @@ class MotionComponent(PersistentComponent):
                                 receipt["long_speech_group_interval"] = self.long_speech_group_interval
                                 self.active_motion_plan["long_speech_group_interval"] = self.long_speech_group_interval
                     self._event("motion_group_started", **self.active_motion_plan)
-                    if has_reading:
-                        origin = await self._write_motion(timeline[0], epoch, group_id, segment_index, None, None)
-                        # 从R成功写入后计时，并复用可被停止打断的等待；S0仍跟在短读PCM后。
-                        await self._wait(max(0.0, origin + READING_LEAD_SECONDS - time.monotonic()))
-                        await self._send(10, {"text_msg": {"msg_id": uuid.uuid4().hex[:12],
-                                         "content": reading["text"], "timestamp": int(time.time()*1000)}})
-                        await self._audio(read_pcm, count_audio=True)
-                        receipt["reading_sent_complete"] = True
-                        # _audio按真实PCM长度节拍发送。S0只说明运输层开始回正，
-                        # 不能据此断言云端已播放完阅读音频或已完成视觉动作。
-                        first_sent = await self._write_motion(timeline[1], epoch, group_id, segment_index, origin, origin)
-                        task = asyncio.create_task(self._run_remaining(timeline[1:], epoch, group_id,
-                                                                     segment_index, first_sent, origin=origin))
-                        self._motion_task = task
-                    elif self.short_performance_test or self._multi_group_speech:
+                    if self.short_performance_test or self._multi_group_speech:
                         origin = await self._write_motion(timeline[0], epoch, group_id, segment_index, None, None)
                         await self._wait(max(0.0, origin + timeline[1]["delay_seconds"] - time.monotonic()))
                         first_sent = await self._write_motion(timeline[1], epoch, group_id, segment_index, origin, origin)
@@ -783,7 +750,7 @@ class MotionComponent(PersistentComponent):
             raise
 
     async def send_aligned_expression(self, pcm, text, actions, segment_index, *,
-                                      recovery=None, alignment=None, reading=None, action_kind="L", ge_lead_seconds=.5,
+                                      recovery=None, alignment=None, action_kind="L", ge_lead_seconds=.5,
                                       max_audio_seconds=30, max_text_codepoints=120, allow_tail_q_after_audio=False,
                                       local_action_anchors=False):
         """Send the validated semantic path; receipts describe writes, not visuals."""
@@ -792,29 +759,23 @@ class MotionComponent(PersistentComponent):
                 (action_kind != "S" or ge_lead_seconds != 1.1 or not allow_tail_q_after_audio
                  or max_audio_seconds != 30))):
             raise ValueError("局部落点核验只允许正式A方案对话")
-        if max_audio_seconds == 60 and (action_kind != "S" or ge_lead_seconds != 1.1 or reading is not None):
-            raise ValueError("分钟素材只允许无reading的显式S与1.1秒GE前导")
+        if max_audio_seconds == 60 and (action_kind != "S" or ge_lead_seconds != 1.1):
+            raise ValueError("分钟素材只允许显式S与1.1秒GE前导")
         if self.short_performance_test or self._multi_group_speech:
             raise ValueError("语义锚点入口不能与旧口播试验混用")
-        if reading is not None and (not isinstance(reading, dict) or
-                                   set(reading) != {"text", "pcm"}):
-            raise ValueError("传输reading必须且只能包含text与pcm")
-        read_pcm = reading["pcm"] if reading is not None else None
-        for audio in ([read_pcm, pcm] if reading is not None else [pcm]):
-            if (not isinstance(audio, bytes) or not audio or len(audio) % 2 or
-                    len(audio) > max_audio_seconds * self.RATE * 2):
-                raise ValueError("音频格式或时长不符合本场约束")
+        if (not isinstance(pcm, bytes) or not pcm or len(pcm) % 2 or
+                len(pcm) > max_audio_seconds * self.RATE * 2):
+            raise ValueError("音频格式或时长不符合本场约束")
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= max_text_codepoints:
             raise ValueError(f"台词须为1至{max_text_codepoints}字")
         if type(segment_index) is not int or segment_index < 1:
             raise ValueError("段号必须为正整数")
         seconds = len(pcm) / (self.RATE * 2)
-        read_seconds = len(read_pcm) / (self.RATE * 2) if read_pcm is not None else 0.0
-        # Snapshot and bind timestamps to these exact PCM bytes before any R/9/10.
+        # Snapshot and bind timestamps to these exact PCM bytes before any 9/10.
         alignment = copy.deepcopy(alignment)
         if actions:
             if local_action_anchors:
-                # Recheck final anchors and the exact PCM before any reading,
+                # Recheck final anchors and the exact PCM before any
                 # action or audio frame. A planner receipt alone is insufficient.
                 LocalActionAlignment(alignment, text, seconds,
                                      pcm_sha256=hashlib.sha256(pcm).hexdigest()).verify_actions(actions)
@@ -836,15 +797,6 @@ class MotionComponent(PersistentComponent):
                              and node["role"] == "Q" and at > seconds)
             node["pcm_required_bytes"] = (len(pcm) if after_audio_q or abs(at-seconds) < 1e-9 else
                                           round(at * self.RATE) * 2)
-        reading_timeline = []
-        if reading is not None:
-            # Semantic actions never pass through the old S/L validator. With
-            # no answer actions, retain its one reading recovery Q after S0.
-            reading_timeline = compile_reading_timeline(
-                reading, [], recovery, read_seconds)
-            if timeline:
-                reading_timeline = reading_timeline[:2]
-            timeline = [{**node, "index": node["index"] + 2} for node in timeline]
         if self._stop.is_set() or self.state not in {"ready", "sending", "draining"}:
             raise RuntimeError("会话未就绪或已经停止")
         self._pending_speech += 1
@@ -861,7 +813,7 @@ class MotionComponent(PersistentComponent):
                     self._motion_epoch += 1
                     epoch = self._motion_epoch
                     self.utterances_started += 1
-                    self.audio_seconds += seconds + read_seconds
+                    self.audio_seconds += seconds
                     self.audio_sent_complete = False
                     self.state = "sending"
                     receipt = {"id": self.utterances_started, "group_id": group_id,
@@ -870,40 +822,17 @@ class MotionComponent(PersistentComponent):
                                "mode": "semantic_speech", "semantic_speech": True, "action_kind": action_kind,
                                "ge_lead_seconds": ge_lead_seconds, "independent_ge": ge_lead_seconds is not None,
                                "max_audio_seconds": max_audio_seconds, "max_text_codepoints": max_text_codepoints,
-                               "audio_seconds": seconds + read_seconds,
+                               "audio_seconds": seconds,
                                "answer_audio_seconds": seconds, "alignment": alignment,
-                               "timeline": timeline, "reading_timeline": reading_timeline,
-                               "reading_text": reading["text"] if reading is not None else None,
-                               "reading_audio_seconds": read_seconds,
-                               "reading_lead_seconds": READING_LEAD_SECONDS if reading is not None else 0.0,
-                               "reading_sent_complete": reading is None,
+                               "timeline": timeline,
                                "send_complete": False, "buffer_complete": False,
-                               "actions_sent": 0, "actions_sent_complete": not (timeline or reading_timeline),
+                               "actions_sent": 0, "actions_sent_complete": not timeline,
                                "visual_effect_confirmed": False,
                                "playback_complete_confirmed": False}
                     self.last_utterance = self.last_motion_receipt = receipt
                     self.active_motion_plan = {**receipt, "comment_id": self.comment_id,
                                                "is_active": True, "recovery": recovery}
                     self._event("motion_group_started", **self.active_motion_plan)
-                    if reading is not None:
-                        read_origin = await self._write_motion(reading_timeline[0], epoch, group_id,
-                                                              segment_index, None, None)
-                        await self._wait(max(0.0, read_origin + READING_LEAD_SECONDS-time.monotonic()))
-                        self._check_aligned_plan(epoch, group_id)
-                        await self._send(10, {"text_msg": {"msg_id": uuid.uuid4().hex[:12],
-                                         "content": reading["text"], "timestamp": int(time.time()*1000)}})
-                        await self._audio(read_pcm, count_audio=True)
-                        receipt["reading_sent_complete"] = True
-                        s0_sent = await self._write_motion(reading_timeline[1], epoch, group_id,
-                                                           segment_index, read_origin, read_origin)
-                        if not timeline:
-                            # Q belongs to the reading posture recovery, so its
-                            # S0+1.5s clock remains valid even for a .1s answer.
-                            task = asyncio.create_task(self._run_remaining(
-                                reading_timeline[1:], epoch, group_id, segment_index,
-                                s0_sent, origin=read_origin))
-                            self._motion_task = task
-                        await self._wait(max(0.0, s0_sent + ANSWER_START_SECONDS-time.monotonic()))
                     progress = {"first_sent_at_monotonic": None, "sent_bytes": 0}
                     previous = None
                     # Send the nonpositive prefix before PCM. Derive its waits

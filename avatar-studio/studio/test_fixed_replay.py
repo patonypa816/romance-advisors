@@ -66,6 +66,18 @@ class FixedReplayTests(unittest.TestCase):
         change(data)
         save(path, data)
 
+    def test_historical_receipt_requires_explicit_zero_reading(self):
+        root = self.source("missing-text")
+        self.mutate(root, "tts/c0001-1/component-send.json", lambda d: d.pop("reading_text"))
+        FixedReplay(root)
+        for i, change in enumerate((lambda d: d.pop("reading_audio_seconds"),
+                                    lambda d: d.update(reading_text="短读"),
+                                    lambda d: d.update(reading_audio_seconds=1))):
+            root = self.source(f"bad-reading-{i}")
+            self.mutate(root, "tts/c0001-1/component-send.json", change)
+            with self.subTest(case=i), self.assertRaises(ValueError):
+                FixedReplay(root)
+
     def test_only_group_interval_changes_and_public_has_no_paths(self):
         root = self.source()
         before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}

@@ -14,7 +14,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import live_session
-from action_schema import ACTION_POST_SEND_SECONDS, compile_timeline, parse_plan
+from action_schema import ACTION_POST_SEND_SECONDS, compile_timeline
 from diagnostics import Diagnostics
 from motion_component import MotionComponent
 
@@ -114,21 +114,20 @@ class DirectorExecutionTests(unittest.IsolatedAsyncioTestCase):
             entry.stop()
         self.temp.cleanup()
 
-    def comment(self, *, motion=True, actions=None, segments=1, reading=False):
+    def comment(self, *, motion=True, actions=None, segments=1):
         actions = [short()] if actions is None else actions
         if motion:
-            plan = {"emotion": "平静", "observation": "手工导演指令",
+            plan = {"emotion": "平静",
                     "actions": actions, "recovery": dict(GE),
                     "timeline": compile_timeline(actions, GE)}
         else:
-            plan = parse_plan({"emotion": "平静", "observation": "离线计划",
-                               "reading": {"text": "请问", "instruction": "轻声短读"} if reading else None,
-                               "segments": [{"text": "咱听着呢。", "instruction": "自然清晰",
-                                             "actions": actions,
-                                             "recovery": dict(GE) if actions or reading else None}
-                                            for _ in range(segments)]})
+            recovery = dict(GE) if actions else None
+            plan = {"emotion": "平静", "segments": [
+                {"text": "咱听着呢。", "instruction": "自然清晰", "actions": actions,
+                 "recovery": recovery, "timeline": compile_timeline(actions, recovery)}
+                for _ in range(segments)]}
         comment = {"id": "comment-" + str(len(self.s.comments)), "status": "ready", "plan": plan,
-                   "segments_sent": 0, "reading_status": "pending" if reading else "skipped",
+                   "segments_sent": 0,
                    "usage": {"input_tokens": 0, "output_tokens": 0, "cost_cny": 0.0}}
         if motion:
             comment.update(input_kind="operator", operator_mode="motion")
@@ -270,23 +269,21 @@ class DirectorExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(comment.get("delivery_started"))
         self.assertFalse(self.s.component._ws.frames)
 
-    async def test_cancel_during_first_answer_tts_never_starts_prepared_reading(self):
-        comment = self.comment(motion=False, reading=True)
+    async def test_cancel_during_answer_tts_never_starts_delivery(self):
+        comment = self.comment(motion=False)
         calls = 0
 
         async def prepared(*args):
             nonlocal calls
             calls += 1
-            if calls == 2:
-                comment["cancel_requested"] = True
+            comment["cancel_requested"] = True
             return b"\0\0", self.out
 
         self.s.prepare_audio = AsyncMock(side_effect=prepared)
         with patch.object(live_session, "load_bailian", return_value=("offline", "offline")):
             await self.run_comment(comment)
-        self.assertEqual(calls, 2)
+        self.assertEqual(calls, 1)
         self.assertEqual(comment["status"], "cancelled")
-        self.assertEqual(comment["reading_status"], "cancelled")
         self.assertFalse(self.s.component._ws.frames)
 
     async def test_cancel_after_motion_started_preserves_remaining_nodes_and_q(self):
@@ -359,7 +356,7 @@ class DirectorExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_prepare_overlaps_active_send_and_reuses_all_audio_once(self):
         current = self.comment(motion=False, actions=[])
-        future = self.comment(motion=False, segments=2, reading=True)
+        future = self.comment(motion=False, segments=2)
         started, release = asyncio.Event(), asyncio.Event()
         active, maximum = 0, 0
         order = []
@@ -389,17 +386,16 @@ class DirectorExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(future["status"], "prepared")
             self.assertEqual(self.s.component.comment_id, current["id"])
             self.assertFalse(future.get("delivery_started"))
-            self.assertEqual(self.s.prepare_audio.await_count, 4)
-            # 再请求同一份准备不会重复收费，发送同样复用全部短读和两段回答。
+            self.assertEqual(self.s.prepare_audio.await_count, 3)
+            # 再请求同一份准备不会重复收费，发送复用两段回答。
             self.assertTrue(await self.s.prepare_comment(future))
             self.s.work.put_nowait(future)
             release.set()
             await asyncio.wait_for(self.s.work.join(), 1)
-        self.assertEqual(self.s.prepare_audio.await_count, 4)
+        self.assertEqual(self.s.prepare_audio.await_count, 3)
         self.assertEqual(maximum, 1)
         self.assertEqual(order, [current["id"], future["id"], future["id"]])
         self.assertEqual(future["segments_sent"], 2)
-        self.assertEqual(future["reading_status"], "sent")
         self.assertEqual(hooks, [("start", current["id"]), ("finish", current["id"]),
                                  ("start", future["id"]), ("finish", future["id"])])
         self.assertNotIn(future["id"], self.s._prepared_comments)
@@ -488,13 +484,13 @@ class DirectorExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(c.get("delivery_started"))
         self.assertNotIn(c["id"], getattr(self.s, "_prepared_comments", {}))
 
-    async def test_original_expiry_after_reading_stops_before_answer_tts_or_planner(self):
-        c = self.comment(motion=False, reading=True)
+    async def test_expiry_after_answer_tts_stops_before_planner(self):
+        c = self.comment(motion=False)
         self.s.semantic_speech = True
-        async def reading_audio(*args):
+        async def answer_audio(*args):
             c["expires_at"] = time.time() - 1
             return b"\0\0", self.out
-        self.s.prepare_audio = AsyncMock(side_effect=reading_audio)
+        self.s.prepare_audio = AsyncMock(side_effect=answer_audio)
         self.s.prepare_timed_actions = AsyncMock()
         with patch.object(live_session, "load_bailian", return_value=("offline", "offline")):
             self.assertFalse(await self.s.prepare_comment(c))

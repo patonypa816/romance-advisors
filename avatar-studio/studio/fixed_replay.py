@@ -28,6 +28,18 @@ def _identifier(value):
     return value
 
 
+def _no_reading_receipt(sent, *, current_plan=False):
+    """Only a recognized current plan may have neither historical field."""
+    fields = {"reading_text", "reading_audio_seconds"}
+    present = fields.intersection(sent)
+    if not present:
+        return current_plan
+    # Historical receipts could omit reading_text while explicitly recording
+    # a zero duration; preserve that original compatibility.
+    return (sent.get("reading_text") is None
+            and sent.get("reading_audio_seconds") == 0)
+
+
 class FixedReplay:
     RATE = 24000
 
@@ -98,7 +110,7 @@ class FixedReplay:
             if wav.readframes(self.RATE * 31) != self.pcm:
                 raise ValueError("原WAV与PCM内容不一致")
         if (sent.get("send_complete") is not True or sent.get("actions_sent_complete") is not True
-                or sent.get("reading_text") is not None or sent.get("reading_audio_seconds") != 0
+                or not _no_reading_receipt(sent)
                 or sent.get("pcm_transport_sent_bytes") != len(self.pcm)
                 or sent.get("timeline") != source_part["timeline"]):
             raise ValueError("原发送回执未完整成功或不匹配计划")

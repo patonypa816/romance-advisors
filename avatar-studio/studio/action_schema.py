@@ -478,6 +478,19 @@ def parse_plan(body: dict, *, source_text: str | None = None) -> dict:
     return {"emotion": emotion, "observation": observation, "reading": reading, "segments": clean}
 
 
+def parse_game_motion_plan(body: dict) -> dict:
+    """当前游戏纯动作合同；历史导演计划仍由旧解析器单独处理。"""
+    if not isinstance(body, dict) or set(body) != {"emotion", "actions", "recovery"}:
+        raise ValueError("纯动作计划必须且只能包含emotion、actions、recovery")
+    emotion = _text(body["emotion"], 24, "emotion")
+    if not isinstance(body["actions"], list) or not 1 <= len(body["actions"]) <= MAX_DIRECTOR_ACTIONS:
+        raise ValueError("主持纯动作需要1至6个动作节点")
+    actions = _validate_actions(body["actions"])
+    recovery = _validate_recovery(body["recovery"], actions)
+    return {"emotion": emotion, "actions": actions, "recovery": recovery,
+            "timeline": _compile_validated(actions, recovery)}
+
+
 def parse_director_plan(body: dict, *, mode: str) -> dict:
     """只供可信主持任务使用；不能按模型返回字段自动选取此权限分支。"""
     if mode not in ("once", "topic", "motion"):
