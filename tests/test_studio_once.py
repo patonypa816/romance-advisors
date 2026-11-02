@@ -39,6 +39,9 @@ class ProjectionTests(unittest.TestCase):
             self.assertIn(''.join(s['text'] for s in item['segments']), prepared['body']['text'])
         self.assertEqual(prepared['source_refs'], [s['source_ref'] for s in data])
         self.assertIn('不要求逐字照读', prepared['body']['text'])
+        self.assertIn('本轮有两份作品', prepared['body']['text'])
+        self.assertIn('作品一点评：点评原文甲。\n作品二点评：点评原文乙。\n本轮结果：比赛结果：创意奖，乙。人气奖，甲。',
+                      prepared['body']['text'])
 
     def test_overlong_never_truncated(self):
         data = sources()

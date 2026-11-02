@@ -163,6 +163,41 @@ class TopicGeneration(unittest.IsolatedAsyncioTestCase):
             self.assertIn(required, messages[0]["content"])
         self.assertEqual(result, BRIDGE_PLAN)
 
+    async def test_resume_instruction_is_selected_from_this_item_only(self):
+        predecessor = {"id": "draft-2", "round": 2,
+                       "text": BRIDGE_PLAN["segments"][0]["text"], "status": "conditional_draft"}
+        cases = (
+            ("once", {**JOB, "operator_mode": "once"}, None),
+            ("first", {**JOB, "topic_round": 1},
+             topic(completed_rounds=0, next_round=1, sent_history=[], resume_required=False)),
+            ("continuation", {**JOB, "topic_round": 2}, topic(resume_required=False)),
+            ("conditional successor", {**JOB, "topic_round": 3},
+             topic(next_round=3, predecessor=predecessor, resume_required=False)),
+            ("resume", {**JOB, "topic_round": 2}, topic(resume_required=True)),
+        )
+        for provider in (module.CloudBaseAI, BailianAI):
+            for name, job, state in cases:
+                with self.subTest(provider=provider.__name__, case=name):
+                    client = self.client(provider=provider)
+                    # A global state can be stale while a prepared successor already
+                    # carries its own authoritative resume decision.
+                    context = {"character": {"identity": "原创角色"},
+                               "current_topic": topic(resume_required=True)}
+                    await client.generate_director(job, [], context, state)
+                    messages = client._call.call_args.args[1]
+                    prompt = messages[0]["content"].split("\n可信角色与参考规划：\n", 1)[0]
+                    is_resume = name == "resume"
+                    self.assertEqual(module.TOPIC_RESUME_INSTRUCTION in prompt, is_resume)
+                    self.assertNotIn("好，咱们接着说。", prompt)
+                    self.assertNotIn("topic.resume_required", prompt)
+                    if not is_resume:
+                        self.assertNotIn("接回", prompt)
+                    data = json.loads(messages[1]["content"])
+                    self.assertEqual(data["topic"], module._topic_context(state, active=True)
+                                     if state is not None else None)
+                    self.assertIn("conditional_draft只在它以后完整发送后才成立", prompt)
+                    self.assertIn("completed_rounds只表示真实书签", prompt)
+
     async def test_topic_request_has_one_authoritative_context_despite_global_resume_or_stale_topic(self):
         predecessor = {"id": "actual-bridge", "round": 2, "text": BRIDGE_PLAN["segments"][0]["text"],
                        "status": "conditional_draft"}

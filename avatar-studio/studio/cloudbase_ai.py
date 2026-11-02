@@ -417,15 +417,13 @@ sent_history是已完整发送的故事；completed_rounds只表示真实书签�
 predecessor若存在，是明确标识的前驱全文：conditional_draft只在它以后完整发送后才成立，绝非已经讲过；
 可以据此条件续写下一段，但不能输出任何发送、暂停、换题、进度或控制字段，是否发送由本地决定。
 interaction_history是另外保留的实际观众问答，结合它调整本轮表述，避免机械重讲互动已展开的内容，仍覆盖next_unit的未讲要点；不虚增书签。
-主讲本段是否需要接回，只以本次topic.resume_required为准；history、sent_history和predecessor中的接回语仅是上下文，不是本段再次接回的指令。
-只有topic.resume_required=true时，在本段正文开头写一句符合最新问答和角色语气的简短自然接回语，例如“好，咱们接着说。”；
-接回语和正文必须在同一个segment，总共不超过120字，不单独生成过渡段，不生硬结束仍在进行的聊天。
-topic.resume_required=false时直接进入本段正文，不新增“咱们接着说”“回到刚才”等恢复开场，也不重复前驱的接回语。
-提前准备下一段时，若conditional_draft前驱含接回语，这次接回由前驱承担；本段按topic.resume_required正常续讲，不因为前驱尚未发送完而再次接回。
 没有前文的第一轮正常开讲；不自动生成之后轮次，末轮自然收束，不预告新篇、不扩展提纲或自动换题。
 这份完整新台词随后重新合成语音并按真实时间戳规划动作，不能引用旧音频或沿用旧锚点出现次数。
 reading必须为null，主持指令不作为弹幕阅读。只输出完整JSON对象，不使用Markdown围栏，不输出id或lease。
 """ + SEMANTIC_SPEECH_CONTRACT + SEMANTIC_ACTION_WRITING_RULES + SEMANTIC_EXAMPLE_GUIDANCE
+
+TOPIC_RESUME_INSTRUCTION = ("在本段正文开头写一句符合最新问答和角色语气的简短自然接回语；"
+                            "接回语和正文必须在同一个segment，总共不超过120字。")
 
 TOPIC_OUTLINE_PROMPT = """你是直播数字人的有限备用故事提纲规划器，只规划内容，不产生台词、动作或任何控制指令。
 按可信主持安排的text和rounds给出恰好rounds个按顺序可讲的完整小段，每段将用不超过120字表达一个完整意思。
@@ -986,6 +984,8 @@ class StructuredBrain:
                   _continuous_speech_prompt(mode) if continuous_test else
                   _short_performance_prompt(mode) if short_test else
                   DIRECTOR_PROMPT["motion"] if mode == "motion" else SEMANTIC_DIRECTOR_PROMPT)
+        if mode == "topic" and topic_state.get("resume_required") is True:
+            prompt += "\n" + TOPIC_RESUME_INSTRUCTION
         result = await self._call("reply", [{"role": "system", "content": prompt + "\n可信角色与参考规划：\n" + trusted},
                                             {"role": "user", "content": data}])
         stage = "top_level"
