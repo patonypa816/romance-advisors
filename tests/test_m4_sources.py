@@ -1,10 +1,14 @@
 """Freeze actual accepted M2/M3 sources without re-evaluation or asset mutation."""
 import copy
+import tempfile
 import unittest
+from pathlib import Path
+import os
 from uuid import uuid4
 from sqlalchemy import select, update
 from hell_inc import db
 from hell_inc.app import STATE
+from hell_inc.config import Settings
 from hell_inc.performance_contract import canonical_hash
 from test_m4_api import M4Fixture
 from test_m4_contract import signed_payload
@@ -14,6 +18,12 @@ from test_m2_api import ANSWER, evaluation as m2_evaluation
 
 class M4SourceTests(M4Fixture):
     # Reuse only fixture helpers, not old test cases: all 65 existing tests stay separate.
+    async def asyncSetUp(self):
+        self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.settings=Settings(database_url=os.environ['HELL_INC_DATABASE_URL'],world_id='m4-source-'+uuid4().hex,
+                               origin='http://localhost',lock_dir=Path(self.tmp.name))
+        await self.restart()
+
     register = m3.M3ApiTests.register
     start = m3.M3ApiTests.start
     snapshot = m3.M3ApiTests.snapshot
@@ -34,15 +44,12 @@ class M4SourceTests(M4Fixture):
     async def freeze(self, source, status=200):
         return await self.post('/api/performance-sources/freeze', {'source': source}, status)
 
-    async def perform_frozen(self, frozen):
-        body = signed_payload(self.sid, source_ref=frozen['source_ref'], segments=frozen['segments'])
+    async def assert_freeze_is_read_only(self, source):
         before = await self.game_rows()
-        received = await self.post('/api/performances', body, 201)
-        self.assertEqual(canonical_hash(received['performance']['source_snapshot']), frozen['source_ref']['source_hash'])
-        await self.action(body['performance_id'], 'execute'); await self.drained()
-        self.assertEqual((await self.record(body['performance_id']))['state'], 'send_completed')
+        frozen=await self.freeze(source)
+        self.assertEqual(canonical_hash(frozen['segments']),frozen['content_hash'])
         self.assertEqual(await self.game_rows(), before)
-        return body
+        return frozen
 
     async def test_m2_authoritative_result_freeze_immutable_assets_and_spoof_rejection(self):
         player = await self.register('m2-source')
@@ -58,17 +65,14 @@ class M4SourceTests(M4Fixture):
         frozen = await self.freeze(source); repeated = await self.freeze(source)
         for key in ('source_ref', 'segments', 'content_hash'): self.assertEqual(frozen[key], repeated[key])
         self.assertIn('录用', ''.join(s['text'] for s in frozen['segments']))
-        body = await self.perform_frozen(frozen)
-        spoof = signed_payload(self.sid, source_ref=frozen['source_ref'], segments=[{'text': '任意伪造结果', 'intent': 'result'}])
-        await self.post('/api/performances', spoof, 409)
+        await self.assert_freeze_is_read_only(source)
         await self.post('/api/performance-sources/freeze', {'source': {**source, 'result': {'decision': 'hire'}}}, 400)
-        # Stored payload snapshot remains the exact accepted copy even if source version later changes.
+        # A later source version produces a new source reference without changing the old projection.
         async with self.client.server.app[STATE]['engine'].begin() as conn:
             await conn.execute(update(db.interviews).where(db.interviews.c.id == interview['id']).values(version=db.interviews.c.version + 1))
-        stale = signed_payload(self.sid, source_ref=frozen['source_ref'], segments=frozen['segments'])
-        await self.post('/api/performances', stale, 409)
-        replay = await self.post('/api/performances', body)
-        self.assertEqual(canonical_hash(replay['performance']['source_snapshot']), frozen['source_ref']['source_hash'])
+        newer=await self.freeze(source)
+        self.assertEqual(newer['source_ref']['source_version'],frozen['source_ref']['source_version']+1)
+        self.assertEqual(frozen['segments'],repeated['segments'])
 
     async def test_m3_comment_160_chunks_gate_and_settled_result_do_not_change_game(self):
         people = [await self.register('source-' + str(n)) for n in range(3)]
@@ -89,12 +93,13 @@ class M4SourceTests(M4Fixture):
         self.assertTrue(all(len(s['text']) <= 120 for s in frozen['segments']))
         self.assertTrue(all(s['intent'] == 'comment' for s in frozen['segments']))
         self.assertNotIn('source_snapshot', frozen)  # freeze projection carries no hidden scores
-        await self.perform_frozen(frozen)
+        await self.assert_freeze_is_read_only(source)
         self.assertEqual((await self.snapshot())['status'], 'DISPLAYING')
         await self.voting(); await self.command('close-voting'); await self.command('settle')
-        result = await self.freeze({'kind': 'competition_result', 'id': self.cid})
+        result_source={'kind': 'competition_result', 'id': self.cid}
+        result = await self.freeze(result_source)
         self.assertIn('创意奖', ''.join(s['text'] for s in result['segments']))
-        await self.perform_frozen(result)
+        await self.assert_freeze_is_read_only(result_source)
 
 
 class FixedScriptSourceTests(unittest.IsolatedAsyncioTestCase):

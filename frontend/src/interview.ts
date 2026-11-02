@@ -1,8 +1,7 @@
-import { performancePauseMessage, type PerformanceSource } from './performance';
 type RecordValue = Record<string, unknown>;
 type Interview = { id: string; version: number; status: string; player: {player_id: string; display_name: string}; rule: {question: string; position: string; answer_seconds: number}; allowed_actions: string[]; deadline_at: string | null; paused_from: string | null; pause_reason: string | null; answer: {text: string} | null; task: {id: string; attempt_no: number; status: string; error_code: string | null} | null; evaluation: {total: number; criteria: {id: string; score: number; reason: string; evidence: string[]}[]} | null; result: {decision: string; summary: string; settlement_id: string} | null };
 type Envelope = {task_id: string; attempt_no: number; input_hash: string; policy_hash: string; frozen_input: RecordValue};
-type Dependencies = {freezePerformance?: (source: PerformanceSource) => Promise<void> | undefined; api: <T>(url: string, body?: unknown) => Promise<T>; acceptRevision: (revision: number) => boolean; epoch: () => number; ready: () => boolean; authenticated: () => boolean; failure: (error: unknown) => string; refreshPlayer: (id: string) => Promise<void>};
+type Dependencies = {api: <T>(url: string, body?: unknown) => Promise<T>; acceptRevision: (revision: number) => boolean; epoch: () => number; ready: () => boolean; authenticated: () => boolean; failure: (error: unknown) => string; refreshPlayer: (id: string) => Promise<void>};
 const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const obj = (v: unknown): v is RecordValue => typeof v === 'object' && v !== null && !Array.isArray(v);
 const integer = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
@@ -38,7 +37,6 @@ export function setupInterview(d: Dependencies) {
     get<HTMLTextAreaElement>('interview-answer-text').disabled = !enabled || !current?.allowed_actions.includes('answer');
     get<HTMLTextAreaElement>('evaluation-result').disabled = !enabled || !exported;
     get<HTMLInputElement>('interview-cancel-reason').disabled = !enabled;
-    for (const b of document.querySelectorAll<HTMLButtonElement>('[data-testid=interview-freeze-performance]')) b.disabled = !enabled;
     get('interview-freshness').textContent = !d.ready() || !fresh ? '状态待确认 / 快照可能陈旧 · 操作暂停' : '服务器快照已确认';
   }
   function render() {
@@ -55,7 +53,6 @@ export function setupInterview(d: Dependencies) {
       c.append(text('h3', `服务器已结算：${s.result.decision}`), text('p', s.result.summary), text('p', `服务器总分：${s.evaluation.total} / 6`));
       for (const criterion of s.evaluation.criteria) c.append(text('p', `${criterion.id}：${criterion.score} · ${criterion.reason}\n依据：${criterion.evidence.join(' / ') || '未见相关表述'}`, 'answer-copy'));
       c.append(text('p', `结算 ID：${s.result.settlement_id}`, 'identity'));
-      if (d.freezePerformance) {const b = text('button','冻结面试结果到离线演出') as HTMLButtonElement; b.type = 'button'; b.dataset.testid = 'interview-freeze-performance'; b.addEventListener('click', () => {if (d.ready() && fresh && !busy && !pending) void d.freezePerformance?.({kind:'interview_result',id:s.id});}); c.append(b);}
     }
     controls();
   }
@@ -107,7 +104,7 @@ export function setupInterview(d: Dependencies) {
         if (!valid(data.interview)) throw new Error('操作回执格式无效。');
         chosen = data.interview.id; adopt(data); notice(data.replayed ? '原操作结果已确认，未重复执行。' : '操作已由服务器确认。');
       }
-      if (frozen.url.endsWith('/pause')) notice(performancePauseMessage(data.performance_pause));
+      if (frozen.url.endsWith('/pause')) notice('面试已暂停；原工作台的演出需单独控制。');
       pending = null;
       if (current?.result) await d.refreshPlayer(current.player.player_id);
     } catch (e) {

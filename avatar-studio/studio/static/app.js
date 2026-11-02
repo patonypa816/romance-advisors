@@ -531,7 +531,7 @@ function render(data) {
   $('directorText').disabled = $('directorSubmit').disabled = busy || !connected || !acceptsInput;
   renderDirector(topic, {enabled: !busy && connected && acceptsDirector});
   $('audioSeconds').textContent = totals.audio_seconds == null ? '—' : `${fixed(totals.audio_seconds, 1)} 秒`;
-  $('cost').textContent = totals.cost_cny == null ? '—' : `¥ ${fixed(totals.cost_cny, 6)}`;
+  $('cost').textContent = totals.cost_cny == null ? '—' : `¥ ${fixed(totals.cost_cny, 6)}${totals.usage_unverified_segments ? '（不含未核实用量）' : ''}`;
   $('cloudCost').textContent = cloud.credits_cost == null && cloud.billed_seconds == null ? '—' : `${display(cloud.credits_cost)} 积分 / ${fixed(cloud.billed_seconds, 1)} 秒`;
   $('obsStatus').textContent = player.connected ? `已连接 · 音频${player.audio_live ? '正常' : '未就绪'} / 画面${player.video_live ? '正常' : '未就绪'}` : '未连接';
   $('obsDot').className = `dot ${player.connected ? 'good' : 'bad'}`;

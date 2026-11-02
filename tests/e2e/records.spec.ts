@@ -2,9 +2,21 @@ import { test, expect } from '../../frontend/node_modules/@playwright/test/index
 
 test('M1 real persistence, safe display, same identity, replay after response loss, offline and refresh', async ({ page, context }, testInfo) => {
   const errors: string[] = [];
+  const retiredMediaRequests: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/performance-session' || path.startsWith('/api/performance-session/') ||
+        path === '/api/performances' || path.startsWith('/api/performances/')) retiredMediaRequests.push(path);
+  });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#token=browser-test-token-only');
   await expect(page.locator('#connection')).toContainText('已连接真实 PostgreSQL');
+  await expect(page.locator('#studio-heading')).toContainText('数字人演出');
+  await expect(page.locator('#performance-heading, #performance-media-start, #receiver-start')).toHaveCount(0);
+  // Observe another normal health poll after login; the retired performance
+  // controls must not start their own API polling on an ordinary game page.
+  await page.waitForResponse(response => response.url().endsWith('/api/health') && response.ok());
+  expect(retiredMediaRequests).toEqual([]);
   expect(new URL(page.url()).hash).toBe('');
   expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
   expect(await page.evaluate(() => document.cookie)).not.toContain('hell_inc_session');

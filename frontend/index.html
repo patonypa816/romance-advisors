@@ -54,33 +54,9 @@
         <p id="competition-notice" role="status" aria-live="polite" class="feedback"></p><button id="competition-replay" type="button" hidden>确认原比赛操作</button>
       </section>
 
-      <section class="panel performance" aria-labelledby="performance-heading">
-        <p class="eyebrow">06 / LOCAL PERFORMANCE PROTOCOL</p><h2 id="performance-heading" data-testid="performance-heading">游戏演出工作台</h2>
-        <p class="manual-marker" id="performance-mode-marker" data-testid="performance-mode-marker">离线协议演练（不播放音画）</p>
-        <p>默认离线模式不调用模型、TTS 或 Vidu，不创建收费云场。真实媒体须另行配置与授权；离线完成不是观众已听到。</p>
-        <p class="muted">拟用数字人：地狱集团首席执行官（参考素材 1672 × 941）；未加载图片。最终直播画面为 9:16，数字人仅占横向子区域。本页是操作台，不是直播画布或 P2 叠层。</p>
-        <label for="performance-aspect">数字人子区域比例（仅布局示意；不裁剪素材）</label><select id="performance-aspect" data-testid="performance-aspect"><option value="">未选择</option><option value="16:9">16:9 横向</option><option value="4:3">4:3 横向</option></select>
-        <div id="performance-avatar-placeholder" data-testid="performance-avatar-placeholder" class="avatar-placeholder" hidden></div>
-        <p id="performance-session-state" data-testid="performance-session-state" role="status">尚无 LOCAL 演练会话</p><p id="performance-freshness" data-testid="performance-freshness" class="muted"></p>
-        <div class="interview-actions"><button id="performance-session-create" data-testid="performance-session-create" type="button" disabled>创建 LOCAL 演练会话</button><button id="performance-session-pause" data-testid="performance-session-pause" type="button" disabled>暂停发送门</button><button id="performance-session-resume" data-testid="performance-session-resume" type="button" disabled>人工恢复发送门</button><button id="performance-session-close" data-testid="performance-session-close" type="button" disabled>关闭 LOCAL 会话</button></div>
-        <details class="real-media-controls"><summary>真实媒体控制（默认禁用；另需明确付费授权）</summary>
-          <p>以下是接入控制，不是已完成的真实媒体验收。LOCAL real 会话只建立暂停记录；创建云场必须另有本次授权及服务器双重开关。暂停发送不等于结束收费云场。</p>
-          <p id="performance-media-state" data-testid="performance-media-state" role="status">真实媒体未配置 / 禁用</p>
-          <button id="performance-session-real-create" data-testid="performance-session-real-create" type="button" disabled>创建 LOCAL real 暂停会话（不启动云场）</button>
-          <label class="paid-confirm"><input id="performance-paid-confirm" data-testid="performance-paid-confirm" type="checkbox">我已取得本次独立、限额的付费启动授权（勾选本身不是授权）</label>
-          <div class="interview-actions"><button id="performance-media-start" data-testid="performance-media-start" type="button" disabled>明确启动已授权云场（可能收费）</button><button id="performance-media-stop" data-testid="performance-media-stop" type="button" disabled>停止云场并回读</button><button id="performance-media-reconcile" data-testid="performance-media-reconcile" type="button" disabled>只读核查云场结束状态</button></div>
-          <h3>唯一 RTC 接收者</h3><p>先选择横向子区域比例，再领取接收者。只接收，不打开本机麦克风、摄像头或屏幕。SDK / 心跳只提供 client_reported 证据；人工确认不等于观众已听到。</p>
-          <div class="interview-actions"><button id="receiver-start" data-testid="receiver-start" type="button" disabled>领取唯一接收者并连接 RTC</button><button id="receiver-audio" data-testid="receiver-audio" type="button" disabled>显式开启远端声音</button><button id="receiver-leave" data-testid="receiver-leave" type="button" disabled>离开本机接收（不结束云场）</button></div>
-          <p id="receiver-status" data-testid="receiver-status" role="status">尚未连接 · client_reported（浏览器上报，非媒体验收）</p>
-          <div class="receiver-context"><p>9:16 直播构图参考 · 非直播合成画布</p><video id="receiver-video" data-testid="receiver-video" muted playsinline aria-label="数字人横向 RTC 接收区域（比例未选）"></video><p>其余游戏画面未在此合成；数字人横向比例须自行选择，不裁剪。</p></div>
-          <button id="performance-media-confirm-ready" data-testid="performance-media-confirm-ready" type="button" disabled>我已现场观察音画，记录人工确认（非验收）</button>
-          <p class="note">确认后仍须人工恢复发送门。音画丢失、浏览器自动播放被阻止、心跳过期或未知结果会关闭发送门；不会自动转移接收者或重连。结束状态只有 provider 已结束的正向回读才成立。</p>
-        </details>
-        <div class="evaluation-grid"><div><h3>1. 从服务器冻结内容</h3><label for="performance-source-kind">内容来源</label><select id="performance-source-kind" data-testid="performance-source-kind"><option value="fixed_script">固定演出脚本</option><option value="interview_result">已结算面试结果</option><option value="competition_comment">已采纳比赛短评</option><option value="competition_result">已结算比赛结果</option></select><label for="performance-source-id">面试 / 比赛 ID（固定脚本无需填写）</label><input id="performance-source-id" data-testid="performance-source-id" autocomplete="off"><label for="performance-submission-id">作品 ID（仅比赛短评）</label><input id="performance-submission-id" data-testid="performance-submission-id" autocomplete="off"><button id="performance-freeze" data-testid="performance-freeze" type="button" disabled>冻结服务器原文</button><div id="performance-frozen" data-testid="performance-frozen" class="answer-copy"></div></div>
-        <div><h3>2. 提交不可变演出</h3><label for="performance-expiry">有效期（秒）</label><input id="performance-expiry" data-testid="performance-expiry" type="number" min="30" max="900" value="300"><p class="muted">提交生成稳定演出 ID；原文、意图、来源、会话与失效时间共同计算 payload_hash，服务器再次验证。未知回执仅原样确认，不创建替代演出。</p><button id="performance-submit" data-testid="performance-submit" type="button" disabled>提交离线演出</button><button id="performance-replay" data-testid="performance-replay" type="button" hidden>原样确认待定操作</button></div></div>
-        <h3>持久化演出记录</h3><button id="performance-refresh" data-testid="performance-refresh" type="button" disabled>查询演出状态</button><div id="performance-list" data-testid="performance-list" class="interview-list" aria-label="最近演出"></div><div id="performance-detail" data-testid="performance-detail" class="answer-copy"></div>
-        <div class="interview-actions"><button id="performance-execute" data-testid="performance-execute" type="button" disabled>执行离线协议演练（不播放音画）</button><button id="performance-cancel" data-testid="performance-cancel" type="button" disabled>取消未开始部分</button></div>
-        <p class="note">取消区分未开始、当前段发送中与未知；不能保证远端停止。发送中不关闭会话；真实云场 unknown 只有正向结束回读且无本机进行中任务后才可关闭，不会重播未知演出。演练不会自动确认作品展示、开放投票或改变游戏资产。</p><p id="performance-notice" data-testid="performance-notice" role="status" aria-live="polite" class="feedback"></p>
+      <section class="panel" aria-labelledby="studio-heading">
+        <p class="eyebrow">06 / STUDIO</p><h2 id="studio-heading">数字人演出</h2>
+        <p>数字人演出在原工作台进行；本页面用于游戏和结果结算。完整音画联调尚待验收。</p>
       </section>
     </main><footer><span>HELL INC. / 人事档案室</span><span>固定题面试 · 服务器事务结算 · 不提供任意资产修改</span></footer>
   </div><script type="module" src="/src/main.ts"></script>

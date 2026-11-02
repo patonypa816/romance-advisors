@@ -10,7 +10,6 @@ from hell_inc.competition_evaluation import POLICY, RULE, policy_for
 from hell_inc.competitions import CompetitionService
 from hell_inc.evaluation import content_hash
 import test_m3_api as m3
-import test_m4_api as m4
 
 
 class EvaluationProviderPolicyTests(unittest.TestCase):
@@ -35,7 +34,11 @@ class EvaluationProviderPolicyTests(unittest.TestCase):
             with self.subTest(provider=provider,model=model),self.assertRaises(ValueError):policy_for(provider,model)
 
 
-class EvaluationProviderPersistenceTests(m4.M4Fixture):
+class EvaluationProviderPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp=m3.M3ApiTests.asyncSetUp
+    restart=m3.M3ApiTests.restart
+    post=m3.M3ApiTests.post
+    get=m3.M3ApiTests.get
     register=m3.M3ApiTests.register
     start=m3.M3ApiTests.start
     snapshot=m3.M3ApiTests.snapshot

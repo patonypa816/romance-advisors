@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import tempfile
+import unittest
 from pathlib import Path
 from uuid import uuid4
 from sqlalchemy import select, update
@@ -16,6 +17,7 @@ from test_m4_media_runtime import FakeComponent, FakeReadback
 from test_m4_contract import signed_payload
 
 
+@unittest.skip('历史独立媒体 HTTP 入口已退出当前使用面；保留测试供历史排查')
 class M4RealLifecycleTests(M4Fixture):
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)

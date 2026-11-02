@@ -23,6 +23,9 @@ spec.loader.exec_module(studio_server)
 import live_session
 import obs_setup
 
+REAL_ASSERT_PREVIOUS = live_session.LiveSession.assert_previous_cloud_ended
+REAL_VERIFY_PREVIOUS = live_session.LiveSession.verify_previous_cloud_ended
+
 
 class FakeComponent:
     RATE = 24000
@@ -194,6 +197,17 @@ class StudioContracts(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.control.current.started)
         self.assertEqual(self.control.snapshot()["studio"]["runtime"], runtime)
 
+    async def test_stop_is_scheduled_before_checkpoint_failures(self):
+        session = self.control.current
+        component = session.component
+        with patch.object(self.control.director, "stop", side_effect=OSError("offline disk failure")), \
+             patch.object(session, "checkpoint", side_effect=OSError("offline disk failure")):
+            response = await self.post("stop")
+            self.assertEqual(response.status, 200)
+            self.assertEqual(await response.json(), {"requested": True})
+            await asyncio.sleep(0)
+            self.assertTrue(component.stopped)
+
     async def test_state_runtime_is_safe_cached_launch_identity_not_current_disk(self):
         runtime = self.control.snapshot()["studio"]["runtime"]
         self.assertEqual(set(runtime), {"pid", "started_at", "source_version"})
@@ -248,6 +262,97 @@ class StudioContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(r.status for r in responses), [200, 409])
         await asyncio.sleep(0)
         component.start.assert_awaited_once_with("offline-key")
+
+    async def exercise_start_after_previous_readback(self, old_status):
+        await self.claim()
+        session = self.control.current
+        component = session.component
+        root = self.data / "historical-studio"
+        previous = root / "data" / "runs" / "previous"
+        previous.mkdir(parents=True)
+        (previous / "start-attempted.json").write_text("{}")
+        (previous / "component-receipt.json").write_text(json.dumps({
+            "live_id": "123", "cloud_end_confirmed": False,
+            "creation_outcome_unknown": False,
+        }))
+        entered, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        order = []
+
+        class PreviousResponse:
+            status = 200
+
+            async def __aenter__(self):
+                order.append("get")
+                entered.set()
+                await release.wait()
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            async def json(self):
+                order.append("readback")
+                return {"live": {"status": old_status}}
+
+        async def create(*args, **kwargs):
+            order.append("create")
+            await component._start(*args, **kwargs)
+            completed.set()
+
+        component.start = AsyncMock(side_effect=create)
+        with patch.object(live_session, "HERE", root), \
+             patch.object(live_session, "ARTIFACTS", self.data / "other-artifacts"), \
+             patch.object(live_session, "PREVIOUS_COMPONENT_DIRS", ()), \
+             patch.object(live_session.PersistentComponent, "BASE", "https://offline.invalid", create=True), \
+             patch.object(live_session.LiveSession, "assert_previous_cloud_ended", REAL_ASSERT_PREVIOUS), \
+             patch.object(live_session.LiveSession, "verify_previous_cloud_ended", REAL_VERIFY_PREVIOUS), \
+             patch.object(session.http, "get", return_value=PreviousResponse()) as readback:
+            self.assertEqual((await self.post("start")).status, 200)
+            await asyncio.wait_for(entered.wait(), 1)
+            component.start.assert_not_awaited()
+            release.set()
+            if old_status == "ended":
+                await asyncio.wait_for(completed.wait(), 1)
+                self.assertEqual(order, ["get", "readback", "create"])
+                component.start.assert_awaited_once()
+            else:
+                for _ in range(100):
+                    if component.stopped:
+                        break
+                    await asyncio.sleep(.01)
+                self.assertTrue(component.stopped)
+                self.assertEqual(order, ["get", "readback"])
+                component.start.assert_not_awaited()
+            readback.assert_called_once()
+
+    async def test_known_previous_end_is_read_before_new_create(self):
+        await self.exercise_start_after_previous_readback("ended")
+
+    async def test_known_previous_not_ended_prevents_new_create(self):
+        await self.exercise_start_after_previous_readback("running")
+
+    async def test_unknown_previous_identity_blocks_control_start(self):
+        await self.claim()
+        session = self.control.current
+        root = self.data / "historical-studio"
+        previous = root / "data" / "runs" / "previous"
+        previous.mkdir(parents=True)
+        (previous / "start-attempted.json").write_text("{}")
+        receipt = previous / "component-receipt.json"
+        with patch.object(live_session, "HERE", root), \
+             patch.object(live_session, "ARTIFACTS", self.data / "other-artifacts"), \
+             patch.object(live_session, "PREVIOUS_COMPONENT_DIRS", ()), \
+             patch.object(live_session.LiveSession, "assert_previous_cloud_ended", REAL_ASSERT_PREVIOUS), \
+             patch.object(live_session.LiveSession, "verify_previous_cloud_ended", REAL_VERIFY_PREVIOUS), \
+             patch.object(session.http, "get", side_effect=AssertionError("no remote request")) as readback:
+            for value in ({}, {"live_id": "invalid-id"},
+                          {"live_id": "123", "creation_outcome_unknown": True}):
+                with self.subTest(value=value):
+                    receipt.write_text(json.dumps(value))
+                    self.assertEqual((await self.post("start")).status, 409)
+                    self.assertFalse(session.started)
+                    session.component.start.assert_not_awaited()
+            readback.assert_not_called()
 
     async def test_start_records_selected_provider_and_includes_transport_source(self):
         await self.claim()

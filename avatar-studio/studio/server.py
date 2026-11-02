@@ -1217,11 +1217,15 @@ class Studio:
             return web.json_response(self.snapshot())
 
         async def stop(request):
-            self.director.stop("session_stop")
-            self.automation.invalidate("operator_stop", replies=True)
             self.current.latch_stop()
             self.current.spawn(self.current.request_stop("工作台结束会话"))
-            await self.automation.disconnect("operator_stop")
+            # Cleanup and diagnostics must not prevent stopping an owned live.
+            with contextlib.suppress(Exception):
+                self.director.stop("session_stop")
+            with contextlib.suppress(Exception):
+                self.automation.invalidate("operator_stop", replies=True)
+            with contextlib.suppress(Exception):
+                await self.automation.disconnect("operator_stop")
             return web.json_response({"requested": True})
 
         async def new(request):

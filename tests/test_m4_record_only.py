@@ -369,6 +369,7 @@ from hell_inc.app import STATE
 from sqlalchemy import select
 
 
+@unittest.skip('历史 record-only HTTP 集成入口已退役；现行 M2/M3 freeze 投影由 test_m4_sources 覆盖')
 class RecordOnlyM3IntegrationTests(m4api.M4Fixture):
     configure=RecordOnlyRunnerTests.configure
     run_attempt=RecordOnlyRunnerTests.run_attempt

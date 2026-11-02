@@ -9,7 +9,7 @@ from .db import worlds, players, memberships, competitions, competition_commands
 from .contracts import ValidationError
 from .interviews import uuid, fields, stamp, InterviewError
 from .evaluation import content_hash
-from .competition_evaluation import RULE, POLICY, validate_evaluation, policy_for
+from .competition_evaluation import RULE, POLICY, validate_evaluation, policy_for, comment_needs_review
 from .records.service import RecordService, PlayerNotFound, CommandConflict
 
 ACTIVE=('READY','SUBMITTING','REVIEWING','WAITING_REVIEW','DISPLAYING','VOTING','READY_TO_SETTLE','PAUSED')
@@ -35,6 +35,7 @@ def snapshot(b):
         v={k:deepcopy(s[k]) for k in ('id','player','revision','text','submitted_at','display_confirmed_at')}
         v['task']={k:s['task'][k] for k in ('id','status','attempt_no','deadline_at','error_code')} if s['task'] else None
         v['comment']=s['evaluation']['comment'] if visible and s['evaluation'] else None
+        v['comment_warning']=comment_needs_review(v['comment']) if v['comment'] is not None else False
         v['evaluation']={k:deepcopy(s['evaluation'][k]) for k in ('criteria','total')} if b['status']=='COMPLETED' else None
         result['submissions'].append(v)
     result['votes']=[{k:v[k] for k in ('player_id','submission_id','revision')} for v in b['votes']] if b['status']=='COMPLETED' else None

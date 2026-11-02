@@ -26,6 +26,9 @@ jobs:
       - name: Credential mapping tests with dummy values only
         working-directory: avatar-studio/studio
         run: python -B -m unittest test_credentials_env test_bailian_config test_connection_compat
+      - name: Current Studio readiness, audio and stop regressions (offline)
+        working-directory: avatar-studio/studio
+        run: python -B -m unittest test_live_preflight test_stop_evidence_failure test_tts_alignment test_semantic_integration test_studio
       - name: Mocked preparation and SDK fetch tests
         working-directory: avatar-studio
         run: python -B -m unittest discover -s tools -p test_cloud_prepare.py

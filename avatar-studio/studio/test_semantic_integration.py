@@ -114,6 +114,21 @@ class SemanticIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIn("semantic_speech.py", manifest)
         self.assertTrue(self.studio.snapshot()["studio"]["semantic_speech"])
 
+    async def test_valid_audio_with_unverified_usage_is_sent_once_and_marked(self):
+        async def unverified(*args, **kwargs):
+            result = await self.synthesize(*args, **kwargs)
+            result.update(status="usage_unverified", usage_verified=False,
+                          input_tokens=None, output_tokens=None, cost_cny=None)
+            return result
+
+        with patch.object(live_session, "synthesize_segment", side_effect=unverified) as tts:
+            comment = await self.submit(plan())
+        self.assertEqual(comment["status"], "sent", comment.get("error"))
+        self.assertEqual(tts.await_count, 1)
+        self.sender.assert_awaited_once()
+        self.assertEqual(self.s.totals["usage_unverified_segments"], 1)
+        self.assertEqual(comment["usage"]["unverified_segments"], 1)
+
     async def test_unrelated_provider_character_difference_reaches_formal_sender(self):
         async def changed(*args, **kwargs):
             result = await self.synthesize(*args, **kwargs)

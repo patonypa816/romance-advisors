@@ -237,8 +237,8 @@ class RealMediaRuntime:
         config,http=self._cleanup_resources()
         from .avatar_transport.component_live import PersistentComponent
         out=Path(config.artifact_dir)/session_id/('stop-only-'+str(uuid4()))
-        out.mkdir(parents=True,exist_ok=False,mode=0o700);out.chmod(0o700);out.parent.chmod(0o700)
-        cleanup=PersistentComponent(http,out,Path('UNUSED'),recording=False)
+        # A verified live ID must remain stoppable when evidence storage fails.
+        cleanup=PersistentComponent(http,out,Path('UNUSED'),recording=False,stop_only=True)
         # Private local component is never assigned to runtime.component: no claim,
         # receiver, stage readiness, model/TTS, media send, or new cloud POST exists.
         cleanup.bind_owned_for_stop(owned_live_id,config.api_key)

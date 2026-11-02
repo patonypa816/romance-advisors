@@ -58,9 +58,11 @@ class PersistentComponent:
         "on_live_at", "close_reason", "live_duration",
     }
 
-    def __init__(self, http: aiohttp.ClientSession, out: Path, image: Path, diagnostics=None, *, on_created=None, recording=True, collect_recording=False, record_only_diagnostic=False):
+    def __init__(self, http: aiohttp.ClientSession, out: Path, image: Path, diagnostics=None, *, on_created=None, recording=True, collect_recording=False, record_only_diagnostic=False, stop_only=False):
         self.http, self.out, self.image = http, Path(out), Path(image)
         self.on_created = on_created
+        if type(stop_only) is not bool:raise ValueError('invalid_stop_only_mode')
+        self._stop_only = stop_only
         if type(recording) is not bool or type(collect_recording) is not bool:
             raise ValueError('invalid_recording_configuration')
         if type(record_only_diagnostic) is not bool:raise ValueError("invalid_diagnostic_mode")
@@ -69,8 +71,11 @@ class PersistentComponent:
         self.recording_enabled = recording
         # Cloud recording request is independent of automatic artifact download.
         self.collect_recording = collect_recording
-        self.out.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.out.chmod(0o700)
+        try:
+            self.out.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.out.chmod(0o700)
+        except OSError:
+            if not self._stop_only:raise
         self.diagnostics = diagnostics or Diagnostics(out)
         self.comment_id = None
         self.state = "idle"
@@ -179,6 +184,8 @@ class PersistentComponent:
             self._event("stage_audio_video_decoded_ready")
 
     async def start(self, api_key: str, *, avatar_id: str | None = None) -> dict:
+        if self._stop_only:
+            raise RuntimeError('stop_only_component_cannot_create')
         if self._attempted or self._closing or self._stop.is_set():
             raise RuntimeError("本轮已启动或已请求停止，不能再次创建会话")
         if not isinstance(api_key, str) or not 1 <= len(api_key) <= 8192 or not api_key.strip() or any(c in api_key for c in "\r\n\x00"):
@@ -554,6 +561,8 @@ class PersistentComponent:
                 self._fail("组件控制连接已断开")
 
     async def _run(self, body: dict) -> None:
+        if self._stop_only:
+            raise RuntimeError('stop_only_component_cannot_create')
         try:
             self._check()
             self.state = "creating"
@@ -731,11 +740,15 @@ class PersistentComponent:
                     try:
                         response = await self._json("GET", f"/live/v1/lives/{self.live_id}", timeout=min(6.0, max(0.1, deadline - time.monotonic())))
                         self._cloud = self._safe_cloud(response.get("live") or {})
-                        self._save("component-cloud-status.json", self._cloud)
                         status = str(self._cloud.get("status", self._cloud.get("state", ""))).lower()
                         if status == "ended":
                             self.cloud_end_confirmed = True
                             self._ended_at = time.monotonic()
+                        try:
+                            self._save("component-cloud-status.json", self._cloud)
+                        except (OSError, UnicodeError):
+                            self._event("cloud_status_write_failed")
+                        if self.cloud_end_confirmed:
                             break
                     except Exception as error:
                         self._event("end_readback_error", error_type=type(error).__name__)
@@ -744,7 +757,10 @@ class PersistentComponent:
             self._event("stop_result", live_id=self.live_id, cloud_end_confirmed=self.cloud_end_confirmed)
             if self.recording_enabled and self.collect_recording and self.cloud_end_confirmed and self._recording_task is None:
                 self._recording_task = asyncio.create_task(self._collect_recording(), name="component-recording")
-            self._save("component-receipt.json", self.public())
+            try:
+                self._save("component-receipt.json", self.public())
+            except (OSError, UnicodeError):
+                self._event("component_receipt_write_failed")
 
     async def _collect_recording(self) -> None:
         target = self.out / "component-cloud.mp4"

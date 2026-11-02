@@ -419,7 +419,11 @@ class LiveSession:
             if c["status"] in {"pending", "processing", "ready", "preparing", "prepared", "synthesizing", "planning_actions"}:
                 c["status"] = "cancelled"
         self.signal.set()
-        self.checkpoint()
+        try:
+            self.checkpoint()
+        except (OSError, UnicodeError):
+            # Stop the owned live even when conversation evidence cannot be saved.
+            pass
         return await self.component.stop(reason)
 
     async def prepare_audio(self, key, workspace, comment, part, label):
@@ -465,6 +469,8 @@ class LiveSession:
                 comment["usage"][field] += value
         else:
             self.totals["usage_unverified_segments"] += 1
+            usage = comment["usage"]
+            usage["unverified_segments"] = usage.get("unverified_segments", 0) + 1
         self.totals["audio_seconds"] += result.get("audio_seconds") or 0
         self.event("tts_result", comment_id=comment["id"], segment=label, status=result["status"],
                    request_id=result.get("request_id"), usage_verified=result.get("usage_verified"))
@@ -474,7 +480,9 @@ class LiveSession:
             return None
         if self.cancel_before_delivery(comment):
             return None
-        if result["status"] != "ok":
+        # usage_unverified is returned only after the same audio validation and
+        # PCM hash have succeeded; it is a billing observation, not bad audio.
+        if result["status"] not in {"ok", "usage_unverified"}:
             comment["status"], comment["error"] = "error", "语音生成未完成：" + result["status"]
             return None
         pcm = Path(result["pcm_path"]).read_bytes()
@@ -1017,8 +1025,15 @@ class LiveSession:
                 continue
             receipt = marker.parent / "component-receipt.json"
             safe = json.loads(receipt.read_text()) if receipt.exists() else {}
-            if not (safe.get("cloud_end_confirmed") or safe.get("no_cloud_session")):
-                raise web.HTTPConflict(text="上一场云端结束尚未确认，禁止创建下一场")
+            if safe.get("creation_outcome_unknown"):
+                raise web.HTTPConflict(text="上一场创建结果不明，禁止创建下一场")
+            if safe.get("cloud_end_confirmed") is True or safe.get("no_cloud_session") is True:
+                continue
+            # Known owned IDs can be checked by verify_previous_cloud_ended
+            # before creation. Missing or invalid IDs cannot be reconciled here.
+            live_id = str(safe.get("live_id") or "")
+            if not live_id.isdigit():
+                raise web.HTTPConflict(text="上一场结束尚未确认且缺少有效场次标识")
 
     async def verify_previous_cloud_ended(self, key):
         roots = [HERE / "data", ARTIFACTS/"zhuyuanzhang-terra-read-react-20261029", *(ARTIFACTS/name for name in PREVIOUS_COMPONENT_DIRS)]
@@ -1028,8 +1043,14 @@ class LiveSession:
                 receipt = json.loads(path.read_text())
                 if receipt.get("creation_outcome_unknown"):
                     raise web.HTTPConflict(text="旧场创建结果不明，禁止再创建")
+                # A locally persisted positive end (or definitive no-create)
+                # does not depend on that historical live remaining queryable.
+                if receipt.get("cloud_end_confirmed") is True or receipt.get("no_cloud_session") is True:
+                    continue
                 live_id = str(receipt.get("live_id") or "")
-                if not live_id or live_id in seen:
+                if not live_id:
+                    raise web.HTTPConflict(text="旧场结束尚未确认且缺少场次标识")
+                if live_id in seen:
                     continue
                 if not live_id.isdigit():
                     raise web.HTTPConflict(text="旧场标识不符合预期")

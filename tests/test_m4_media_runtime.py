@@ -314,6 +314,17 @@ class StopLatchRuntimeTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(PerformanceError):runtime.claim(sid,str(uuid4()))
             await runtime.shutdown()
 
+    async def test_restart_owned_stop_does_not_require_writable_evidence_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            blocked=Path(tmp)/'not-a-directory';blocked.write_text('local test')
+            config=MediaConfig('opaque-test','tts-test','workspace','123','model','voice','persona',blocked)
+            http=StopOnlyHTTP();runtime=RealMediaRuntime(SimpleNamespace(real_media_enabled=False,allow_paid_media=False),http=http,config=config)
+            result=await runtime.stop(str(uuid4()),'durable-owned-test')
+            self.assertTrue(result['cloud_end_confirmed'])
+            self.assertEqual([f['type'] for f in http.frames],[1,5])
+            self.assertTrue(all(method in ('GET','WSS') for method,_ in http.calls))
+            await runtime.shutdown()
+
     async def test_stop_without_positive_end_stays_unknown_and_old_cleanup_does_not_pause_new_owner(self):
         from hell_inc.avatar_transport.component_live import PersistentComponent
         with tempfile.TemporaryDirectory() as tmp:

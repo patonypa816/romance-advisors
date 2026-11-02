@@ -76,8 +76,15 @@ class RecordGuardTests(unittest.IsolatedAsyncioTestCase):
             prepared=_prepare_stop(self.out)
         prepared[0].END_TIMEOUT=.01;prepared[0].POLL_INTERVAL=.001
         with patch.object(Path,'mkdir',side_effect=OSError('disk unavailable')):
-            with self.assertRaises(OSError):await stop_owned(self.out,'durable-owned-test',prepared=prepared)
+            self.assertTrue(await stop_owned(self.out,'durable-owned-test',prepared=prepared))
         self.assertEqual([f['type'] for f in http.frames],[1,5])
+        self.assertFalse(http.audio)
+
+    async def test_stop_owned_setup_does_not_require_writable_evidence_directory(self):
+        http=StopOnlyHTTP()
+        with patch.dict(os.environ,{'VIDU_API_KEY':'test-opaque-key'},clear=True),patch('hell_inc.media_http.MediaHTTP',return_value=http),patch.object(Path,'mkdir',side_effect=OSError('disk unavailable')):
+            ended=await stop_owned(self.out,'durable-owned-test')
+        self.assertTrue(ended);self.assertEqual([f['type'] for f in http.frames],[1,5])
         self.assertFalse(http.audio)
 
 

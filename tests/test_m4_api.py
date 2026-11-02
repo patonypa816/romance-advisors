@@ -89,6 +89,7 @@ class M4Fixture(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(drain(), 5)
 
 
+@unittest.skip('历史独立演出 HTTP 入口已退出当前使用面；源码保留，现行路径为 Studio once')
 class M4ApiTests(M4Fixture):
     async def test_fixture_execution_concurrent_execute_once_no_outbound_http_explicit_media_false(self):
         adapter = BarrierAdapter(block_send=True); self.service.adapter = adapter

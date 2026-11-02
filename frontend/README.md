@@ -1,5 +1,7 @@
 # M1 档案 / M2 固定题面试操作页
 
+当前游戏页面只提供档案、面试和创意赛操作；数字人演出使用原 Studio，见根目录 `docs/m4-studio-once.md`。旧演出面板和接收器不再从游戏页面加载；以下 M4 面板说明保留为历史，不代表当前入口。
+
 Node 24；`npm ci && npm run build` 生成 `dist/`，由 Python 应用同源提供。
 只使用模拟身份 `simulated / local-test`；登记结果来自真实 PostgreSQL API，不在浏览器保存替代档案。
 

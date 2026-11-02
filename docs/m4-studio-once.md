@@ -35,7 +35,7 @@ PYTHONPATH=src python tools/studio_once.py --sources /private/game-freeze.json \
 
 回执文件以 0600 独占创建，网络请求前先持久写入 unknown、实际请求 body、body 哈希及来源引用，再更新 HTTP 状态和已验证的原 Studio id。只保存安全的 `error_type` 分类（如 timeout、connect、invalid_response），不保存控制 URL、原始响应或异常原文。已有同名回执拒绝发送；这不是跨文件全局防重，**不得换文件盲目重发**。未知、超时、非 200 或未知响应都停止，不自动重试。拿不到 id 时在原工作台按时间和内容核对。HTTP accepted 仅说明接纳安排；播放是否完成、计划是否保真必须另在原工作台与真实音画中确认。
 
-本接缝不引用 `real_performance`、`avatar_compat`、`avatar_transport` 或 `record_only`，不改这些历史文件，也不修改旧 Studio 核心。不新增服务、数据库表或通用回执系统。现有游戏页面的旧 M4 路径尚未切换，不能把此 CLI 当作已完成 UI 集成。
+本接缝不引用 `real_performance`、`avatar_compat`、`avatar_transport` 或 `record_only`，不新增服务、数据库表或通用回执系统。游戏页面不再展示旧媒体控制；此 CLI 仍是手动接缝，不代表已完成自动 UI 集成。历史场次仅保留受保护的 stop/reconcile 救援入口。
 
 ## 验证范围
 

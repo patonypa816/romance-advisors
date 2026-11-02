@@ -1,5 +1,7 @@
 # M4 performance protocol contract — Phase 1 + Phase 2
 
+> Historical implementation: the game no longer exposes these session, sender or receiver routes. The read-only source freeze endpoint remains available. Current game input uses the original Studio once route; see [Studio once](m4-studio-once.md). Historical data and stop/reconcile rescue remain, but this document is not a prerequisite for the current route.
+
 Real media acceptance remains pending. Fixed script is fetched through the same freeze endpoint with `{source:{kind:"fixed_script",id:"m4-demo-v1"}}`; no extra route or hardcoded client text.
 
 ## Implemented offline API contract (same current authenticated, same-Origin `/api` guard)

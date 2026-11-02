@@ -39,8 +39,8 @@ def _prepare_stop(out):
     validate_secret(key)
     http=MediaHTTP(workspace='cleanup-only',proxy=validate_proxy(os.getenv('HTTPS_PROXY') or None))
     cleanup=out.parent/(out.name+'.watchdog-cleanup')
-    cleanup.mkdir(mode=0o700,exist_ok=False)
-    component=PersistentComponent(http,cleanup,Path('UNUSED'),recording=False)
+    # Stop-only recovery must not depend on a writable evidence directory.
+    component=PersistentComponent(http,cleanup,Path('UNUSED'),recording=False,stop_only=True)
     return component,http,key
 
 
