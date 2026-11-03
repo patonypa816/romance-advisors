@@ -13,22 +13,21 @@ sys.path.insert(0, str(ROOT / 'avatar-studio' / 'studio'))
 from bailian_ai import BailianAI
 from credentials import load_bailian
 from connection import client_session
-from performance_tasks import chunk_plan
+from performance_tasks import chunk_plan, PerformanceTasks
+from types import SimpleNamespace
 from tts_live import synthesize_segment
 from motion_component import MotionComponent
 
 OUT = Path(os.environ.get('RUNNER_TEMP', '/tmp')) / 'performance-timeline-private'
 PUBLIC = Path('performance-timeline-result.json')
-REQUEST = ('请用约30秒的自然中文口语介绍一场观察与推理互动，约110至140个汉字。'
-           '完整表达三个意思：先观察屏幕上的线索，不急着下结论；可以在评论中说出怀疑的地方和理由；'
-           '最后邀请大家一起验证。角色坐在桌前，语气亲切、有一点悬念，正常语速。'
-           '配两到三个简洁自然的手势或点头，动作随语义出现，不表演任何真实游戏结果。')
+REQUEST = '先别急着猜答案，咱们一起看看屏幕上的线索。同一个细节，换个角度，也许就有不同的解释。你可以在评论里说说，哪个地方让你觉得不对劲，为什么会这样想。一句话也能提出好问题。接下来，我们把大家的猜测和已知事实放在一起比较。发现矛盾就停下来想一想，找到证据再往前走。准备好了，就从你最在意的细节开始吧。'
+
 CONTEXT = {'character': {'identity': '虚构的推理互动主持人', 'temperament': '亲切、沉稳，带一点好奇',
                         'speech': '自然中文口语，正常语速，不故意拉长', 'scene': '坐在桌前，正面镜头'}}
 REPORT = {'status': 'starting', 'scope': 'Real Bailian brain and TTS; original Vidu sender captured locally only',
           'vidu_session_created': False, 'vidu_network_writes': 0,
           'time_semantics': 'captured times are local socket writes, NOT Vidu received/rendered times',
-          'request': REQUEST, 'context': CONTEXT, 'blocks': [], 'model_calls': {}, 'base_commit': '477e73bf642557d2ef52370afccfaf601858235a'}
+          'request': REQUEST, 'kind': 'script', 'auto_actions': True, 'context': CONTEXT, 'blocks': [], 'model_calls': {}, 'base_commit': '477e73bf642557d2ef52370afccfaf601858235a'}
 
 def safe(value):
     if isinstance(value, dict):
@@ -66,13 +65,31 @@ async def run():
     key, workspace = load_bailian()
     brain = BailianAI({'model': 'qwen3.8-flash', 'region': 'cn-beijing', 'enable_thinking': False})
     try:
-        REPORT['phase'] = 'expression_brain'
-        raw = await brain.generate_performance('intent', REQUEST, CONTEXT, {}, '自然清晰，正常语速，按语义停顿。')
-        REPORT['brain_output'] = raw
-        save()
-        blocks = chunk_plan(raw, 80)
-        if not 1 <= len(blocks) <= 4:
+        REPORT['phase'] = 'fixed_script_partition'
+        studio = SimpleNamespace(current=SimpleNamespace(out=OUT, comments=[], diagnostics=SimpleNamespace(clean=safe)))
+        tasks = PerformanceTasks(studio)
+        tasks.submit({'request_id': 'fixed-script-30s-once', 'kind': 'script', 'text': REQUEST,
+                      'auto_actions': True, 'block_chars': 80,
+                      'instruction': '自然清晰，正常语速，按语义停顿，不刻意拖长。',
+                      'context': {'performance': '每块配一个简洁自然的点头或手势，动作随语义出现；镜头正面，无已知评论区域位置。'}})
+        task = tasks.tasks['fixed-script-30s-once']
+        count = len(task['plans'])
+        if not 1 <= count <= 4:
             raise RuntimeError('sample_exceeds_four_blocks_no_more_calls')
+        blocks = []
+        REPORT['brain_output'] = []
+        for index in range(count):
+            REPORT['phase'] = f'fixed_script_expression_{index+1}'
+            c = {'id': f'block-{index+1}', 'performance_request_id': task['request_id'],
+                 'performance_block': index, 'status': 'pending'}
+            studio.current.comments.append(c)
+            task['item_id'] = c['id']
+            plan = await tasks.prepare_plan(c, brain, CONTEXT)
+            blocks.append(plan)
+            REPORT['brain_output'].append(plan)
+            save()
+        if ''.join(b['segments'][0]['text'] for b in blocks) != REQUEST:
+            raise RuntimeError('fixed_script_changed')
         REPORT['block_count'] = len(blocks)
         prepared = []
         async with client_session(trust_env=False) as http:
