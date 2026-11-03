@@ -534,8 +534,11 @@ class LiveSession:
         self.checkpoint()
         # part也承载运行状态；模型合同只接收冻结的四个原始内容字段。
         content = {key: copy.deepcopy(part[key]) for key in ("text", "instruction", "actions", "recovery")}
+        # A universal block already contains its frozen text and actions. The
+        # full task is not a short viewer comment and is redundant at this step.
+        source_text = "" if comment.get("performance_request_id") else comment.get("text", "")
         task = asyncio.create_task(planner(content, copy.deepcopy(alignment), seconds,
-                                           copy.deepcopy(self.brain_context), source_text=comment.get("text", "")))
+                                           copy.deepcopy(self.brain_context), source_text=source_text))
         background = id(comment) in getattr(self, "_preparing_originals", {})
         tasks = getattr(self, "_timed_action_tasks", None)
         if tasks is None:
@@ -904,8 +907,11 @@ class LiveSession:
                     receipt = await sender(pcm, part["text"], part["actions"], number,
                                            recovery=part["recovery"], **options)
                     comment.setdefault("motion_receipts", []).append(receipt)
-                    save(segment_out / "component-send.json", receipt)
                     comment["segments_sent"] += 1
+                    # A diagnostic disk failure cannot turn a known successful
+                    # send into unknown or erase its in-memory bookmark.
+                    with contextlib.suppress(OSError, ValueError, TypeError):
+                        save(segment_out / "component-send.json", receipt)
                 else:
                     comment["status"] = "sent"
                 # Do not retain another copy of a provider credential after this reply.

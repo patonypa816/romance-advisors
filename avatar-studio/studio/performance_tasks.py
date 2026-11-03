@@ -17,6 +17,41 @@ from action_schema import _validate_recovery
 
 TERMINAL = {"completed", "cancelled", "failed", "unknown"}
 DEFAULT_BLOCK_CHARS = 80  # A speech-chunk target, not a provider limit.
+DEFAULT_GE = {"gaze": "注视镜头", "expression": "自然平静"}
+
+
+def _expression_defaults(body):
+    """Fill optional performance hints before the unchanged shared compiler.
+
+    These are requested targets for the current front-facing avatar, not an
+    observation of its pose. Explicit values still pass the original checks.
+    """
+    if not isinstance(body, dict):
+        return body
+    body = copy.deepcopy(body)
+    body.setdefault("emotion", "自然")  # Compatibility metadata for old history.
+    parts = body.get("segments", [body])
+    if not isinstance(parts, list):
+        return body
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        actions = part.get("actions")
+        if not isinstance(actions, list):
+            continue
+        for action in actions:
+            if isinstance(action, dict):
+                for key, value in DEFAULT_GE.items():
+                    action.setdefault(key, value)
+        if actions:
+            if part.get("recovery") is None:
+                part["recovery"] = dict(DEFAULT_GE)
+            elif isinstance(part["recovery"], dict):
+                for key, value in DEFAULT_GE.items():
+                    part["recovery"].setdefault(key, value)
+        else:
+            part.setdefault("recovery", None)
+    return body
 
 
 def split_text(text, limit=DEFAULT_BLOCK_CHARS, protected=()):
@@ -60,6 +95,7 @@ def split_text(text, limit=DEFAULT_BLOCK_CHARS, protected=()):
 
 def chunk_plan(body, limit=DEFAULT_BLOCK_CHARS):
     """Normalize a complete semantic performance into original short contracts."""
+    body = _expression_defaults(body)
     if not isinstance(body, dict) or set(body) != {"emotion", "segments"}:
         raise ValueError("表演计划只接受emotion、segments")
     segments = body["segments"]
@@ -158,7 +194,7 @@ class PerformanceTasks:
         t = {"request_id": ident, "task_id": uuid.uuid4().hex, "kind": kind, "text": text,
              "instruction": instruction, "auto_actions": auto, "context": copy.deepcopy(context),
              "block_chars": limit, "fingerprint": fingerprint, "status": "accepted", "plans": None,
-             "sent_blocks": 0, "sent_text": "", "item_id": None, "future_item_id": None, "receipts": [],
+             "sent_blocks": 0, "sent_text": "", "item_id": None, "future_item_id": None,
              "pause_requested": False, "cancel_requested": False, "error": None}
         if kind == "script":
             t["plans"] = chunk_plan({"emotion": "自然", "segments": [{"text": text,
@@ -198,7 +234,6 @@ class PerformanceTasks:
             if c and c["status"] == "sent":
                 t["sent_blocks"] += 1
                 t["sent_text"] += c.get("answer", "")
-                t["receipts"].append(c["id"])
                 t["item_id"], t["future_item_id"] = t["future_item_id"], None
                 c = self.item(t)
             if c and c["status"] in {"error", "cancelled", "expired"}:
@@ -308,7 +343,7 @@ class PerformanceTasks:
                 raise ValueError("任务已撤销")
             if t["kind"] == "motion":
                 from action_schema import parse_game_motion_plan
-                plan = parse_game_motion_plan(raw)
+                plan = parse_game_motion_plan(_expression_defaults(raw))
                 plan.pop("timeline", None)
                 t["plans"] = [plan]
             else:

@@ -1,13 +1,15 @@
 """Offline full-task orchestration; existing sender, fake PCM/provider only."""
 import asyncio
 import copy
+import hashlib
 import json
 from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
 import test_director as fixtures
-from performance_tasks import chunk_plan, split_text
+import live_session
+from performance_tasks import chunk_plan, split_text, DEFAULT_GE
 from bailian_ai import BailianAI
 
 
@@ -23,6 +25,31 @@ def action(quote, occurrence=1):
 
 
 class PartitionTests(unittest.TestCase):
+    def test_optional_expression_hints_default_without_changing_input(self):
+        body = {"segments": [{"text": "讲清楚。", "instruction": "自然清晰", "actions": [
+            {"anchor": {"quote": "讲", "occurrence": 1},
+             "motions": [{"part": "head", "description": "轻轻点头"}]}]}]}
+        original = copy.deepcopy(body)
+        parsed = chunk_plan(body)[0]
+        self.assertEqual(body, original)
+        self.assertEqual(parsed["emotion"], "自然")
+        part = parsed["segments"][0]
+        self.assertEqual(part["recovery"], DEFAULT_GE)
+        self.assertEqual({key: part["actions"][0][key] for key in DEFAULT_GE}, DEFAULT_GE)
+
+    def test_explicit_expression_hints_are_preserved_and_still_validated(self):
+        body = plan("讲清楚。", [action("讲")])
+        body["emotion"] = "郑重"
+        body["segments"][0]["actions"][0]["gaze"] = "目光向左"
+        body["segments"][0]["recovery"] = {"expression": "微笑"}
+        parsed = chunk_plan(body)[0]
+        self.assertEqual(parsed["emotion"], "郑重")
+        self.assertEqual(parsed["segments"][0]["actions"][0]["gaze"], "目光向左")
+        self.assertEqual(parsed["segments"][0]["recovery"], {**DEFAULT_GE, "expression": "微笑"})
+        body["segments"][0]["actions"][0]["gaze"] = ""
+        with self.assertRaises(ValueError):
+            chunk_plan(body)
+
     def test_long_fixed_script_lossless_with_spaces_punctuation_and_long_sentence(self):
         for text in ["  开始了。\n" + "一个没有逗号的长句" * 42 + "。最后一句！ \n", " A long English sentence, with words. " * 20,
                      "你好。" * 154]:
@@ -80,6 +107,89 @@ class TaskExecution(unittest.IsolatedAsyncioTestCase):
             if not self.control.performance.first():return
             await self.deliver()
         self.fail("finite task did not finish")
+
+    def use_real_action_planner_with_offline_edges(self):
+        brain = BailianAI({})
+        brain._call = AsyncMock(return_value={"schedule_id": "s01"})
+        self.s.timed_action_planner = brain.plan_timed_actions
+
+        async def generate(kind, text, *args):
+            return plan(text, [action(text.strip()[0])])
+
+        async def audio(key, workspace, comment, part, label):
+            pcm = b"\0\0" * 24000 * 8
+            part["alignment"] = {"status": "ok", "timebase": "audio_start",
+                "words": [{"text": part["text"].strip(), "begin_time": 0, "end_time": 7500}],
+                "pcm_sha256": hashlib.sha256(pcm).hexdigest()}
+            return pcm, self.data
+
+        self.ai.generate_performance = AsyncMock(side_effect=generate)
+        self.s.prepare_audio = AsyncMock(side_effect=audio)
+        return brain
+
+    async def test_600_and_601_char_auto_action_scripts_finish_through_real_planner(self):
+        brain = self.use_real_action_planner_with_offline_edges()
+        unique = "".join(chr(0x4e00 + i) for i in range(601))
+        for size in (600, 601):
+            with self.subTest(size=size):
+                text = unique[:size]
+                self.control.performance.submit({"request_id": str(size), "kind": "script",
+                    "text": text, "auto_actions": True})
+                await self.finish()
+                task = self.control.performance.public()[-1]
+                self.assertEqual(task["status"], "completed")
+                self.assertEqual(task["sent_text"], text)
+                self.assertEqual(task["sent_blocks"], task["total_blocks"])
+        self.assertEqual(brain._call.await_count, self.s.component.send_aligned_expression.await_count)
+        for call in brain._call.await_args_list:
+            self.assertNotIn("source_text", json.loads(call.args[1][-1]["content"]))
+
+    async def test_outer_whitespace_auto_actions_keep_original_script_and_bookmark(self):
+        self.use_real_action_planner_with_offline_edges()
+        for index, text in enumerate(("现在开始讲解。", "  现在开始讲解。 \n")):
+            with self.subTest(text=text):
+                self.control.performance.submit({"request_id": str(index), "kind": "script",
+                    "text": text, "auto_actions": True})
+                await self.finish()
+                task = self.control.performance.public()[-1]
+                self.assertEqual(task["status"], "completed")
+                self.assertEqual(task["planned_text"], text)
+                self.assertEqual(task["sent_text"], text)
+                self.assertEqual(self.s.component.send_aligned_expression.await_args.args[1], text)
+
+    async def test_receipt_disk_failure_keeps_successful_send_and_bookmark(self):
+        self.submit("这段已经成功发送。")
+        original = live_session.save
+
+        def save(path, data):
+            if path.name == "component-send.json":
+                raise OSError("offline disk full")
+            return original(path, data)
+
+        with patch.object(live_session, "save", side_effect=save):
+            comment = await self.deliver()
+        task = self.control.performance.public()[0]
+        self.assertEqual((task["status"], task["sent_blocks"]), ("completed", 1))
+        self.assertEqual(comment["status"], "sent")
+        self.assertEqual(comment["segments_sent"], 1)
+        self.assertEqual(len(comment["motion_receipts"]), 1)
+        self.s.component.send_aligned_expression.assert_awaited_once()
+
+    async def test_motion_optional_hints_use_shared_sender_and_legacy_history_survives(self):
+        self.submit("轻轻点头", "motion")
+        self.ai.generate_performance.return_value = {"actions": [{"kind": "S", "delay_seconds": 0,
+            "hold_seconds": 0, "motions": [{"part": "head", "description": "轻轻点头"}]}]}
+        self.s.component.send_motion_expression = AsyncMock(return_value={"actions_sent": 1})
+        await self.finish()
+        call = self.s.component.send_motion_expression.await_args
+        self.assertEqual(call.kwargs["recovery"], DEFAULT_GE)
+        self.assertEqual(call.args[0][0]["gaze"], DEFAULT_GE["gaze"])
+        self.s.prepare_audio.assert_not_awaited()
+        self.control.performance.submit({"request_id": "speech", "kind": "intent", "text": "说明"})
+        self.ai.generate_performance.return_value = {"segments": [{"text": "说明完毕。",
+            "instruction": "自然", "actions": []}]}
+        await self.finish()
+        self.assertEqual(self.control.reply_history(self.s)[-1]["emotion"], "自然")
 
     async def test_long_script_uses_original_sender_and_never_expression_brain(self):
         text = "  这次先把第一件事情讲清楚。\n" * 14 + "最后自然结束。 "
@@ -252,6 +362,8 @@ class TaskExecution(unittest.IsolatedAsyncioTestCase):
         self.s.component.send_aligned_expression.side_effect = OSError("disconnect")
         await self.deliver()
         self.assertEqual(self.control.performance.public()[0]["status"], "unknown")
+        self.assertEqual(self.control.performance.public()[0]["sent_blocks"], 0)
+        self.assertEqual(self.control.performance.public()[0]["sent_text"], "")
         self.assertIsNone(self.d.next_item())
         self.s.component.send_aligned_expression.assert_awaited_once()
 
@@ -280,6 +392,17 @@ class TaskExecution(unittest.IsolatedAsyncioTestCase):
 
 
 class PromptTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generic_prompts_make_expression_hints_optional(self):
+        brain = BailianAI({})
+        brain._call = AsyncMock(return_value={})
+        for kind in ("intent", "script", "motion"):
+            await brain.generate_performance(kind, "说明", {}, {}, "自然")
+            prompt = brain._call.call_args.args[1][0]["content"]
+            self.assertIn("可选emotion", prompt)
+            self.assertIn("省略gaze/expression及recovery", prompt)
+            self.assertNotIn("recovery必须", prompt)
+            self.assertNotIn("必须提供recovery", prompt)
+
     async def test_generic_brain_has_no_topic_resume_or_old_field_contract(self):
         brain = BailianAI({})
         brain._call = AsyncMock(return_value=plan("说明这件事。"))
