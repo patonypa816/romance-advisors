@@ -167,7 +167,9 @@ def prepare_timed_action_request(part, alignment, audio_seconds, brain_context, 
     text = _text(part["text"], 120, "text")
     actions = validate_dialogue_actions(part["actions"], text)
     recovery = _validate_recovery(part["recovery"], actions, required=part["recovery"] is not None)
-    clean = {"text": text, "instruction": _text(part["instruction"], 160, "语音instruction"),
+    # TTS trims outer presentation whitespace. Keep the frozen script intact;
+    # whitespace alone must not look like a post-validation content mutation.
+    clean = {"text": part["text"], "instruction": _text(part["instruction"], 160, "语音instruction"),
              "actions": actions, "recovery": recovery}
     if clean != part:
         raise ValueError("timed_action_part_must_already_be_canonical")

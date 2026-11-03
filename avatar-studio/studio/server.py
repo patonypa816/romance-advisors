@@ -32,6 +32,7 @@ from idle_motion import IdleRecoveryError
 from credentials import LEGACY_SETTINGS, bailian_config, load_bailian, load_vidu, source_available
 from automation import Automation, IN_FLIGHT
 from director import Director
+from performance_tasks import PerformanceTasks
 from dyhub_client import normalize_endpoint
 from live_session import LiveSession, RunGuard, STUDY, TERMINAL, SOURCE_FILES, save
 from fixed_replay import FixedReplay
@@ -102,6 +103,7 @@ class Studio:
             os.chmod(path, 0o600)
         self.config.setdefault("intake", {"base_url": "http://127.0.0.1:8757", "room_id": ""})
         self.director = Director(self)
+        self.performance = PerformanceTasks(self)
         self.automation = Automation(self, ai=ai)
         self.prefix = "/studio/" + self.config["control_token"]
         self.player_prefix = "/player/" + self.config["player_token"]
@@ -200,6 +202,7 @@ class Studio:
             for p in (self.current.out / "source-used").rglob("*") if p.is_file()})
         await self.current.startup(None)
         self.director.reset()
+        self.performance.reset()
         self.player = None
         self.paused = False
         self.comment_sequence = 0
@@ -567,9 +570,12 @@ class Studio:
         if confirmed_switch:
             self.automation.invalidate("avatar_identity_confirmed", replies=True)
             self.director.reset()
+            self.performance.reset()
             self.current.checkpoint()
 
     def library_switch_reason(self):
+        if self.performance.unfinished():
+            return "请先完成或取消通用表演任务，再切换角色"
         s = self.current
         if s.component.idle_motions_public().get("recovery_failed"):
             return "请先在待机面板显式回正，再切换形象"
@@ -826,6 +832,8 @@ class Studio:
         return ""
 
     def avatar_switch_blocking_reason(self):
+        if self.performance.unfinished():
+            return "请先完成或取消通用表演任务，再切换角色"
         if self.current.component.idle_motions_public().get("recovery_failed"):
             return "请先在待机面板显式回正，再切换形象"
         if self.avatar_library.public()["selected_id"]:
@@ -932,6 +940,8 @@ class Studio:
         value["brain"] = self.automation.brain_public()
         value["intake"] = self.automation.public()
         value["director"] = self.director.public()
+        self.performance.sync()
+        value["performance"] = self.performance.public()
         reason = self.blocking_reason()
         value["studio"] = {"paused": self.paused, "obs_url": self.origin + self.player_prefix + "/",
                            "runtime": dict(self._runtime),
@@ -1141,6 +1151,11 @@ class Studio:
         if self.continuous_speech_test:
             continuous_speech_input_mode(c)
             validate_continuous_speech_plan(plan)
+        if c.get("performance_request_id") and plan.get("segments"):
+            # Validation is shared, but universal fixed scripts preserve source
+            # whitespace instead of inheriting the oral UI's strip convention.
+            for part, original in zip(plan["segments"], body["segments"]):
+                part["text"] = original["text"]
         fingerprint = hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if c.get("fingerprint"):
             raise ValueError("reply_already_accepted")
@@ -1224,6 +1239,8 @@ class Studio:
         async def stop(request):
             self.current.latch_stop()
             self.current.spawn(self.current.request_stop("工作台结束会话"))
+            with contextlib.suppress(Exception):
+                self.performance.stop()
             # Cleanup and diagnostics must not prevent stopping an owned live.
             with contextlib.suppress(Exception):
                 self.director.stop("session_stop")
@@ -1331,6 +1348,26 @@ class Studio:
                 else:
                     raise web.HTTPNotFound()
                 return web.json_response(result)
+
+        async def performance_command(request):
+            async with self.lock:
+                command = request.match_info["command"]
+                if command == "submit":
+                    if not self.semantic_speech or self.replay_fixture:
+                        raise web.HTTPConflict(text="通用表演使用默认语义模式")
+                    if not self.automation.live_ready():
+                        raise web.HTTPConflict(text="请先建立本场音画连接")
+                    result = self.performance.submit(await request.json())
+                elif command in {"pause", "resume", "cancel"}:
+                    body = await request.json()
+                    result = self.performance.control(body.get("request_id"), command)
+                else:
+                    raise web.HTTPNotFound()
+                return web.json_response(result)
+
+        async def performance_state(request):
+            self.performance.sync()
+            return web.json_response({"tasks": self.performance.public()})
 
         async def settings(request):
             body = self.validated_settings(await request.json())
@@ -1464,6 +1501,8 @@ class Studio:
         for name in ("app.css", "app.js", "avatar-library.css", "avatar-library.js"):
             app.router.add_get(self.prefix + "/{name:" + re.escape(name) + "}", static)
         app.router.add_post(self.prefix + "/director/{command}", director_command)
+        app.router.add_post(self.prefix + "/performance/{command}", performance_command)
+        app.router.add_get(self.prefix + "/performance", performance_state)
         for name, handler in (("", player_page), ("player.js", player_script), ("sdk.js", sdk), ("state", player_state), ("rtc", rtc)):
             app.router.add_get(self.player_prefix + "/" + name, handler)
         for name, handler in (("claim", claim), ("heartbeat", player_heartbeat), ("joined", joined), ("fault", fault), ("release", release)):
@@ -1566,3 +1605,4 @@ if __name__ == "__main__":
         asyncio.run(serve(preview=args.preview, short_performance_test=args.short_performance_test,
                          continuous_speech_test=args.continuous_speech_test, long_speech_test=args.long_speech_test,
                          replay_fixture=fixture))
+
