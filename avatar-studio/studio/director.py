@@ -80,6 +80,8 @@ class Director:
         return result
 
     def is_current(self, item):
+        if item.get("performance_request_id"):
+            return self.studio.performance.is_current(item)
         if item.get("operator_mode") != "topic":
             return not item.get("cancel_requested")
         t = self.topic
@@ -234,6 +236,11 @@ class Director:
 
     def delivery_gate(self, c):
         c["delivery_queued"] = False
+        performance = getattr(self.studio, "performance", None)
+        if c.get("performance_request_id"):
+            return performance.delivery_gate(c)
+        if performance and performance.first():
+            return False
         self.sync()
         if self.studio.automation.last_error:
             return False
@@ -251,6 +258,10 @@ class Director:
         self.checkpoint()
 
     def delivery_finished(self, c):
+        if c.get("performance_request_id"):
+            self.studio.performance.sync()
+            self.studio.performance.checkpoint()
+            return
         self.sync()
         if c["status"] != "sent" and not self.studio.current.stopping:
             c["error_phase"] = "sending"
@@ -259,6 +270,11 @@ class Director:
     def next_item(self):
         """Choose preparation, independent of the one actual sender."""
         self.sync()
+        performance = getattr(self.studio, "performance", None)
+        if performance:
+            performance.sync()
+            if performance.first():
+                return performance.next_item()
         s = self.studio.current
         for c in s.comments:
             if c["status"] in IN_FLIGHT and not c.get("delivery_started") and c.get("expires_at", float("inf")) <= time.time():
@@ -266,7 +282,7 @@ class Director:
                 discard = getattr(s, "discard_prepared", None)
                 if discard:
                     discard(c)
-        pending = [c for c in s.comments if c["status"] == "pending" and not c.get("cancel_requested")]
+        pending = [c for c in s.comments if c["status"] == "pending" and not c.get("cancel_requested") and not c.get("performance_request_id")]
         priority = next((c for c in pending if c.get("input_kind") == "operator" and c.get("operator_mode") != "topic"), None)
         priority = priority or next((c for c in pending if c.get("input_kind") != "operator"), None)
         preparing_priority = any(c.get("operator_mode") != "topic" and c["status"] in IN_FLIGHT - {"pending", "sending"} and not c.get("delivery_started") for c in s.comments)

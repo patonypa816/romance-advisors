@@ -38,7 +38,7 @@ jobs:
           python -B -m unittest test_live_preflight test_stop_evidence_failure test_tts_alignment test_bailian_ai
           test_semantic_speech test_semantic_ai test_action_schema test_semantic_integration
           test_semantic_transport test_dialogue_a_transport test_director test_director_execution
-          test_topic_generation test_fixed_replay test_semantic_replay test_studio
+          test_topic_generation test_performance_tasks test_fixed_replay test_semantic_replay test_studio
           test_long_action_replay.LongActionReplayTests.test_invalid_actions_short_audio_and_text_have_zero_writes
           test_long_speech_integration.LongSpeechIntegrationTests.test_120_char_one_tts_and_pcm_delivery_archive_and_usage
           test_long_speech_transport.LongSpeechTransportTests.test_invalid_text_structure_and_audio_have_zero_writes
@@ -46,7 +46,9 @@ jobs:
         run: node --test avatar-studio/studio/test_app_ui.mjs
       - name: Mocked preparation and SDK fetch tests
         working-directory: avatar-studio
-        run: python -B -m unittest discover -s tools -p test_cloud_prepare.py
+        run: |
+          python -B -m unittest discover -s tools -p test_cloud_prepare.py
+          python -B -m unittest discover -s tools -p test_performance_cli.py
       - name: Shell syntax
         run: |
           sh -n avatar-studio/tools/prepare_cloud.sh

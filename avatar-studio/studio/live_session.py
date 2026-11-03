@@ -50,7 +50,7 @@ VARIANTS = {
     "A": {"image": "study-facing-fresh-smile-720x1280-v7.png", "title": "自然接话",
           "goal": "结合上下文自然接话。"},
 }
-SOURCE_FILES = ("connection.py", "server.py", "automation.py", "cloudbase_ai.py", "bailian_ai.py", "comment_intake.py", "dyhub_client.py", "live_session.py", "credentials.py", "component_live.py", "tts_live.py", "brain-context.json", "brain_bridge.py", "action_schema.py", "motion_component.py", "diagnostics.py", "director.py", "avatar_library.py", "fixed_replay.py", "semantic_replay.py", "semantic_speech.py", "timed_action_planner.py", "idle_motion.py", "idle_action_library.py")
+SOURCE_FILES = ("performance_tasks.py", "connection.py", "server.py", "automation.py", "cloudbase_ai.py", "bailian_ai.py", "comment_intake.py", "dyhub_client.py", "live_session.py", "credentials.py", "component_live.py", "tts_live.py", "brain-context.json", "brain_bridge.py", "action_schema.py", "motion_component.py", "diagnostics.py", "director.py", "avatar_library.py", "fixed_replay.py", "semantic_replay.py", "semantic_speech.py", "timed_action_planner.py", "idle_motion.py", "idle_action_library.py")
 PREVIOUS_COMPONENT_DIRS = (
     "zhuyuanzhang-terra-ge-overlay-20261029",
     "zhuyuanzhang-terra-action-rules-20261029",
@@ -1009,4 +1009,5 @@ class LiveSession:
                     verified.append({"live_id": live_id, "status": "ended"})
                     seen.add(live_id)
         save(self.out/"preflight-previous-ended.json", verified)
+
 

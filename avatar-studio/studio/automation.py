@@ -255,7 +255,10 @@ class Automation:
         phase = "model"
         try:
             context = {**s.brain_context, "current_topic": self.studio.director.context()}
-            if c.get("input_kind") == "operator":
+            if c.get("performance_request_id"):
+                phase = "performance_plan"
+                plan = await self.studio.performance.prepare_plan(c, self.ai, s.brain_context)
+            elif c.get("input_kind") == "operator":
                 topic = None
                 if c.get("operator_mode") == "topic":
                     t = self.studio.director.topic
@@ -320,8 +323,8 @@ class Automation:
                 return
             code = exc.code if isinstance(exc, ModelError) else "reply_failed"
             validation = getattr(exc, "validation", None) if isinstance(exc, ModelError) else None
-            if phase == "accept_plan" and isinstance(exc, (ValueError, TypeError, KeyError)):
-                validation = {"stage": "accept_plan", "reason": str(exc) or type(exc).__name__}
+            if phase in {"accept_plan", "performance_plan"} and isinstance(exc, (ValueError, TypeError, KeyError)):
+                validation = {"stage": phase, "reason": str(exc) or type(exc).__name__}
             c["status"], c["model_error_code"] = "error", code
             if isinstance(validation, dict) and isinstance(validation.get("reason"), str):
                 # Attach diagnostics to this reply, never to shared AI state:
@@ -339,12 +342,16 @@ class Automation:
             if s is self.studio.current and self.live_ready(s):
                 if c.get("operator_mode") == "topic":
                     self.preparation_failed(c, code)
-                else:
+                elif not c.get("performance_request_id"):
                     self.fail(code, "reply")
         finally:
             if self.active_item is c:
                 self.active_item = None
             self.studio.director.sync()
+            performance = getattr(self.studio, "performance", None)
+            if performance:
+                performance.sync()
+                performance.checkpoint()
             s.checkpoint()
 
     def preparation_failed(self, c, code):
@@ -395,6 +402,9 @@ class Automation:
             self.studio.director.sync()
             if s.stopping or s.component.state in TERMINAL:
                 self.studio.director.stop("session_stop")
+                performance = getattr(self.studio, "performance", None)
+                if performance:
+                    performance.stop()
                 if self.enabled:
                     await self.disconnect("session_stopped")
                 for task in (self.reply_task, self.topic_task):
