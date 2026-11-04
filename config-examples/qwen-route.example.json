@@ -1,0 +1,4 @@
+{
+  "billing": "token_plan",
+  "api_key_file": "/ABSOLUTE/PATH/TO/qwen-token-plan-key.txt"
+}

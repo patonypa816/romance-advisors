@@ -1,0 +1,4 @@
+{
+  "bailian_credentials_file": "/ABSOLUTE/PATH/TO/bailian-credentials.csv",
+  "vidu_credentials_file": "/ABSOLUTE/PATH/TO/vidu-key.txt"
+}

@@ -1,0 +1,5 @@
+{
+  "model": "qwen3.8-flash",
+  "region": "cn-beijing",
+  "enable_thinking": false
+}

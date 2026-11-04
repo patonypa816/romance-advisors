@@ -1,32 +1,126 @@
-# HELL INC. 地狱招聘局
+# 恋爱军师团与数字人工作台
 
-面向抖音中文观众的互动直播游戏：面试入职、持续职业档案、多人创意比赛，由数字人承担演出。
+本仓库整理《恋爱军师团》本地游戏及其 `ai-live-avatar` 数字人底座。游戏负责征集、投票、人物聊天和结算；Studio 负责模型回复、语音、动作及 Vidu 音画连接。两个项目应保持当前同级目录结构。
 
-**当前是开发交接仓库，尚无可运行应用。** 仓库已整理产品与模块规格、首批接口约定，功能实现未完成，不能据此宣称数据库、网页、模型或云端直播已经可用。实时状态见 [HANDOVER.md](HANDOVER.md)。
+这是代码恢复包，不包含原机器的数据库、凭据、资产库、音色绑定或录制文件。启动本地服务不会自动开收费云场；创建真实游戏剧情会调用模型并消耗额度或产生费用，自动联调还会使用 TTS 和 Vidu。开始真实调用前请核对账户及路由。
 
-## 从这里开始
+仓库名为 `romance-advisors`，范围为本游戏及所需数字人底座，保持私有；保留旧 HELL INC 的 Git 历史、分支及 PR，不通过删除仓库或改写历史完成迁移。
 
-| 内容 | 文件 |
+## 目录
+
+| 路径 | 用途 |
 | --- | --- |
-| 现在有什么、下一步做什么、哪些未验证 | [HANDOVER.md](HANDOVER.md) |
-| 开发协作与必要约束 | [AGENTS.md](AGENTS.md) |
-| 唯一当前规格：独立模块、依赖、开发顺序、验收 | [docs/SPEC.md](docs/SPEC.md) |
-| 首批档案与离线消息监看的拟建接口 | [docs/m1-contract.md](docs/m1-contract.md) |
-| 实际完成的工作记录 | [walkthrough.md](walkthrough.md) |
+| `romance-advisors/romance/` | 单进程 SQLite 游戏、模型适配和数字人桥接 |
+| `romance-advisors/static/` | 工作台、手机预览、透明叠层及字体 |
+| `ai-live-avatar/studio/` | 当前数字人工作台、源码、测试和必要静态资源 |
+| `ai-live-avatar/live/`、根 `server.py` 等 | 保留的上游底座入口；游戏联调使用 Studio 入口 |
+| `config-examples/` | 无真实密钥的本机配置模板 |
+| `HANDOVER.md` | 当前行为、恢复边界和后续检查 |
 
-仓库不包含旧版架构稿，也不要求读取开发者电脑上的材料。计划技术栈与功能顺序以 SPEC 为准；当前没有安装、启动或测试命令，后续实现并验证后再加入。
+## 1 配置本机环境
 
-## 给 Dot 的第一轮分析范围
+支持当前 macOS 使用方式；源码使用 Unix 文件锁，`.command` 使用 zsh。安装 Python **3.11 或更新版本**、FFmpeg（须同时提供 `ffmpeg` 和 `ffprobe`），以及可播放音视频的浏览器。Node.js 用于前端测试和可选历史工具，不是正式百炼 HTTP 大脑的必需运行环境。
 
-先读取上述文件，核对当前连接对这个私有仓库实际具备哪些能力，再判断下一步如何开发：
+从仓库根目录执行下列命令；如果解释器名称不同，换成实际安装的 Python 3.11+：
 
-- GitHub：能否读文件／分支，创建分支、提交和 PR；哪些操作需要额外授权。
-- 执行环境：是否另有可用的命令执行、依赖安装、PostgreSQL 和网页预览环境；GitHub 文件访问权限不能证明这些能力存在。
-- 持久化：任务结束后文件、数据库与环境是否保留，哪些结果要通过提交保存。
-- 外部集成：现有 Studio、采集浏览器、OBS 不在本仓库内；先用模拟输入与文字输出独立开发游戏。
+```sh
+python3.11 --version
+ffmpeg -version
+ffprobe -version
+python3.11 -m venv romance-advisors/.venv
+romance-advisors/.venv/bin/python -m pip install -r romance-advisors/requirements.txt
+python3.11 -m venv ai-live-avatar/.venv
+ai-live-avatar/.venv/bin/python -m pip install -r ai-live-avatar/requirements.txt
+sh ai-live-avatar/tools/fetch_vendor.sh
+```
 
-本轮仅准备仓库，后续由用户让 Dot 发起上述分析；这里没有创建云开发环境或授权部署、收费开播。首次实现从最小档案入口开始，随后立即进入固定题面试，不扩建通用底座。
+两个虚拟环境分别安装项目依赖，不复制旧机器的 `.venv`。最后一步从供应方下载 AliRTC Web SDK，并校验固定 SHA-256；该 SDK 未随本包重新分发，播放器需要下载后的 `ai-live-avatar/static/vendor/aliyun-rtc-sdk-7.1.9.js`。
 
-## 产品运行目标
+版本依据：本副本 140 个 Python 文件均通过 Python 3.11 语法解析，且正常路径使用 `asyncio.timeout`。这不等同于已在所有 Python 版本与系统上运行验证。
 
-阿里云承担采集、游戏、模型编排、数字人控制和音画合成编码，完整流送到本机 OBS，再由本机直播伴侣推送抖音。云端开发地点与最终生产部署是两件事，分别验证。
+## 2 配置外部凭据引用
+
+密钥由用户自行填写，文件放在仓库外。不要把密钥写进源码、命令行参数或 Git。Studio 当前仍从这个历史相对位置读取**凭据文件路径**：
+
+```text
+artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json
+```
+
+这个路径位于仓库根目录下，不在 `ai-live-avatar/` 内；需要保留其名称才能匹配现有代码。建立引用文件：
+
+```sh
+mkdir -p artifacts/zhuyuanzhang-qwen31-libai-test-20261029
+cp config-examples/local-settings.example.json artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json
+chmod 600 artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json
+```
+
+自行编辑复制后的文件，把两个占位路径改为真实的**绝对路径**，不要使用 `~`。普通百炼凭据 CSV 使用纵向键值行，格式见 [配置模板说明](config-examples/README.md)；Vidu 凭据文件只存用户自己的单个密钥。两份真实凭据均留在仓库外，并限制为仅本人可读。
+
+游戏默认复用同一百炼 CSV 引用；也可通过 `ROMANCE_CREDENTIALS_FILE` 或游戏服务的 `--credentials-file` 指定另一份外部 CSV。模板本身不能用于真实调用。
+
+### 可选 Token Plan
+
+只有确认使用该套餐时，才复制 `config-examples/qwen-route.example.json`，分别保存到：
+
+- `romance-advisors/data/qwen-route.json`：游戏文字模型路由。
+- `ai-live-avatar/studio/data/qwen-route.json`：Studio 文字模型路由。
+
+创建所需 `data/` 目录，再把 `api_key_file` 改为仓库外 Token Plan 密钥文件的绝对路径；文件只放自己的套餐密钥。两个路由独立配置，不会自动相互同步。显式配置套餐路由后，错误配置或缺失套餐密钥会报错，不自动回退普通 API；游戏显式传入 `--credentials-file` 的调用保留原 CSV 接口。
+
+Token Plan 路由只改变文字模型的账户/计费入口，不覆盖 Studio TTS 的普通百炼 CSV，也不覆盖 Vidu。消耗套餐额度不代表 TTS、Vidu 或所有调用免费。模型默认值及可选 `bailian-brain.json` 位置见模板说明。
+
+## 3 先启动 Studio 再启动游戏
+
+第一个终端从仓库根进入底座，以预览模式启动：
+
+```sh
+cd ai-live-avatar
+.venv/bin/python -B studio/server.py --preview
+```
+
+打开终端输出中的本机工作台 `url`，检查模型配置和数字人资产。终端中的工作台、播放器 URL 含本机访问令牌，不要提交或公开。只启动服务、打开页面不创建付费 Vidu 会话。仓库保留了一张启动必需的默认底图，避免首次打开失败；它不代表已恢复原机器选择的数字人资产或音色。
+
+第二个终端从仓库根进入游戏：
+
+```sh
+cd romance-advisors
+.venv/bin/python -B -m romance.launcher
+```
+
+游戏启动器会打开本机页面；数字人桥接默认读取同级 `ai-live-avatar/studio/data/runtime.json`。Studio 必须使用 `--preview`，直接双击其原有启动脚本默认采用 OBS 接收模式，不能替代这里的步骤。
+
+在 Studio 同步并选择用户自己的 Vidu 资产；创建新资产或开启会话可能产生费用。音色使用本机 `data/local.json` 中的 `tts_voices` 映射，按模板说明配置自己的合法音色；该映射未随 Git 保存。不要用模板整文件覆盖自动生成的 `local.json`，其中包含访问令牌和其他设置。
+
+确认配置后，游戏的“准备一期”等真实剧情操作会调用文字模型；“开始自动联调”会进一步启动语音和数字人链路。浏览器可能要求首次手动开启音频。真实评论采集另有可选 dyhub 依赖，历史 `启动评论采集.command` 指向原机器实验目录，本恢复包未包含该外部构建；本地模拟评论可独立使用。
+
+停止真实联调时，先用游戏页面的停止按钮并核对云端结束状态；之后退出本地服务。不要把杀进程当成已经结束收费云场的证明。
+
+## 4 离线检查
+
+下列命令使用项目测试入口，测试中的模型、TTS 和 Vidu 由合成夹具或本地模拟替代；不用于启动真实场次。测试会写临时数据，个别回归会在忽略的 `artifacts/` 下生成报告。
+
+```sh
+cd romance-advisors
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:tests .venv/bin/python -B -m unittest discover -s tests -p 'test_*.py'
+```
+
+```sh
+cd ai-live-avatar
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=studio .venv/bin/python -B -m unittest discover -s studio -p 'test_*.py'
+```
+
+前端检查在 `romance-advisors/` 目录执行：
+
+```sh
+node --test tests/test_*.cjs
+```
+
+`studio/sdk/` 的 CloudBase helper 为历史适配与测试保留，若使用它再执行该目录的 `npm ci`，不提交 `node_modules/`。
+
+测试通过、模型请求成功、音频或动作发送成功，都不等于观众已经听到声音或看见正确动作；实际音画、延迟和自然度需另做场内验收。
+
+## 文档与许可
+
+现行游戏说明在 [romance-advisors/README.md](romance-advisors/README.md)，底座说明在 [Studio README](ai-live-avatar/studio/README.md)。原文档中的 `artifacts/` 报告链接属于原机器本地证据，未随本包上传，不能当作仓库内可打开的附件。
+
+保留 [ai-live-avatar/LICENSE](ai-live-avatar/LICENSE) 的上游 MIT 版权声明，以及 [字体 OFL](romance-advisors/static/fonts/OFL.txt)。用户账户资产、真实配置、历史数据库、录音录像和云端会话记录均需另行管理；从 Git 恢复代码不等于恢复这些状态。

@@ -1,0 +1,4 @@
+data/
+assets/*
+!assets/study-facing-fresh-smile-720x1280-v7.png
+__pycache__/
