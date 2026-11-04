@@ -1,0 +1,1 @@
+"""Player record ownership boundary."""
