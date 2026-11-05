@@ -76,6 +76,18 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         await self.client.close()
         self.temp.cleanup()
 
+    async def test_finale_avatar_csp_only_allows_the_validated_picture_hosts(self):
+        from romance.viewer_avatar import AVATAR_CDN_SUFFIXES
+        response = await self.client.get('/static/overlay.html')
+        self.assertEqual(response.status, 200)
+        directives = dict(part.strip().split(' ', 1) for part in response.headers['Content-Security-Policy'].split(';'))
+        expected = {"'self'", 'data:'}
+        for host in AVATAR_CDN_SUFFIXES:
+            expected.update((f'https://{host}', f'https://*.{host}'))
+        self.assertEqual(set(directives['img-src'].split()), expected)
+        self.assertEqual(directives['connect-src'], "'self'")
+        self.assertEqual(response.headers['Referrer-Policy'], 'no-referrer')
+
     async def action(self, path, payload=None):
         response = await self.client.post("/api/" + path, json=payload or {})
         result = await response.json()
@@ -429,3 +441,4 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

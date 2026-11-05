@@ -14,6 +14,10 @@ from .storage import Storage
 from .expression import REACTION_TTS_STYLE, build_plan
 from .diagnostics import PerformanceMetrics
 from .model import ModelInputTooLarge
+from .viewer_avatar import safe_avatar_url
+
+
+FINALE_DURATION_MS = 6800
 
 
 class StaleResult(Exception):
@@ -262,18 +266,20 @@ class Game:
         self._start_round()
         return self.public_state()
 
-    def submit_proposal(self, author_id, nickname, text):
+    def submit_proposal(self, author_id, nickname, text, *, avatar_url=None):
         self._idle()
         self._phase("COLLECTING")
-        self._append_proposal(self.data, author_id, nickname, text)
+        self._append_proposal(self.data, author_id, nickname, text, avatar_url=avatar_url)
         self._save()
         return self.public_state()
 
-    def _append_proposal(self, data, author_id, nickname, text):
+    def _append_proposal(self, data, author_id, nickname, text, *, avatar_url=None):
         author_id, nickname, content = clean_text(author_id, "author", 256), clean_text(nickname, "nickname", 256), clean_text(text, "proposal", 2000)
         # Eligibility is decided at collection close. A later greeting must not
         # erase an earlier suggestion; each received candidate keeps its source.
         proposal = {"id": ident(), "round_id": data["round_id"], "author_id": author_id, "nickname": nickname, "text": content}
+        if avatar_url := safe_avatar_url(avatar_url):
+            proposal["avatar_url"] = avatar_url
         data["proposals"].append(proposal)
         return proposal
 
@@ -310,6 +316,9 @@ class Game:
         # Keep the received text for history and exact retry checks; only the
         # command parser and effective proposal normalize surrounding whitespace.
         payload["text"] = event["text"]
+        avatar_url = safe_avatar_url(event.get("avatar_url"))
+        if avatar_url:
+            payload["avatar_url"] = avatar_url
         for key in ("expected_round_id", "expected_phase"):
             value = event[key]
             if value is not None:
@@ -317,7 +326,9 @@ class Game:
             payload[key] = value
         existing = self._get("comments", payload["event_id"])
         if existing:
-            if any(existing[key] != value for key, value in payload.items()):
+            if any(existing.get(key) != value for key, value in payload.items()):
+                raise ValueError("invalid_comment_conflict")
+            if existing.get("avatar_url") != avatar_url:
                 raise ValueError("invalid_comment_conflict")
             return copy.deepcopy(existing)
 
@@ -342,7 +353,7 @@ class Game:
             if command:
                 comment["reason"] = "当前为建议征集阶段，投票尚未开放。"
             else:
-                proposal = self._append_proposal(pending, payload["author_id"], payload["nickname"], payload["text"])
+                proposal = self._append_proposal(pending, payload["author_id"], payload["nickname"], payload["text"], avatar_url=avatar_url)
                 comment.update(kind="proposal", result="candidate", reason="已收到，保留为本轮待编选评论；不会覆盖该参与者之前的建议。", proposal_id=proposal["id"])
         elif self.episode and self.episode["status"] == "ACTIVE" and phase == "VOTING":
             if command:
@@ -450,6 +461,8 @@ class Game:
                     continue
                 selected_authors.add(p["author_id"])
                 options.append({"id": ident(), "number": len(options) + 1, "text": summary, "proposal_id": p["id"], "author": {"id": p["author_id"], "nickname": p["nickname"]}, "conflict": item["conflict"], "reason": conflict_reason})
+                if avatar_url := safe_avatar_url(p.get("avatar_url")):
+                    options[-1]["author"]["avatar_url"] = avatar_url
             # Reasons are observability metadata, not permission to advance the
             # game. Missing/malformed legacy output must not strand the show.
             reasons, assessment_ids, repeated = {}, set(), set()
@@ -468,6 +481,18 @@ class Game:
                     if isinstance(reason, str) and reason.strip() and len(reason) <= 240:
                         reasons[proposal_id] = reason.strip()
             option_by_proposal = {o["proposal_id"]: o for o in options}
+            # Suggestion recognition is separate from the four display slots.
+            # Accept only submitted source IDs; never let model metadata forge
+            # an author, change an option, award points or admit a late comment.
+            recognized = set(option_by_proposal)
+            suggestion_ids = output.get("suggestion_proposal_ids")
+            classification = "options_fallback"
+            if isinstance(suggestion_ids, list) and len(suggestion_ids) <= len(included):
+                recognized.update(key for key in suggestion_ids if isinstance(key, str) and key in included_ids)
+                classification = "model"
+            # Text-deduplicated suggestions retain each original author's chance.
+            recognized.update(p["id"] for p in proposals
+                              if selection.get(p["id"], {}).get("duplicate_of") in recognized)
             for proposal in included:
                 proposal_id = proposal["id"]
                 option = option_by_proposal.get(proposal_id)
@@ -483,6 +508,8 @@ class Game:
                 if option:
                     selection[proposal_id]["option_id"] = option["id"]
             r.update(options=options, proposal_selection=[selection[p["id"]] for p in proposals],
+                     suggestion_proposal_ids=[p["id"] for p in proposals if p["id"] in recognized],
+                     suggestion_classification=classification,
                      input_count=len(proposals), model_input_count=len(included), phase="VOTING" if options else "DECIDING")
             if not options:
                 r["vote_snapshot"] = {}
@@ -522,7 +549,7 @@ class Game:
             allowed = [r["selected_option_id"]] if r["selected_option_id"] else []
         payload = self._man_payload()
         # The original source remains available if the short summary loses a qualifier.
-        payload.update(options=[{"id": o["id"], "proposal_id": o["proposal_id"], "original_text": self._get("proposals", o["proposal_id"])["text"], "summary": o["text"], "author": o["author"], "votes": r["vote_snapshot"].get(o["id"], 0)} for o in r["options"]], allowed_option_ids=allowed, allow_self=r["selection_source"] == "self" if r["selection_locked"] else True, selected_option_id=r["selected_option_id"], selection_locked=r["selection_locked"], selection_context=branch)
+        payload.update(options=[{"id": o["id"], "proposal_id": o["proposal_id"], "original_text": self._get("proposals", o["proposal_id"])["text"], "summary": o["text"], "author": {key: o["author"][key] for key in ("id", "nickname")}, "votes": r["vote_snapshot"].get(o["id"], 0)} for o in r["options"]], allowed_option_ids=allowed, allow_self=r["selection_source"] == "self" if r["selection_locked"] else True, selected_option_id=r["selected_option_id"], selection_locked=r["selection_locked"], selection_context=branch)
         if self.performer and self.performer.enabled:
             context_reader = getattr(self.performer, "expression_context", None)
             if context_reader is not None:
@@ -641,6 +668,12 @@ class Game:
         self._message("woman", message, r["id"], man_message["id"])
         r.update(before=before, proposed_delta=delta, delta=after - before, after=after, phase="DONE")
         self.episode.update(score=after, status="SUCCEEDED" if after == 100 else "FAILED" if after == 0 else "ACTIVE")
+        if expected != "continue":
+            # The final reply, score, clock and awards are a single durable
+            # transition. Read/poll/restart must never begin a second finale.
+            self.episode["finale"] = {"episode_id": self.episode["id"],
+                "status": self.episode["status"], "started_at": time.time(),
+                "duration_ms": FINALE_DURATION_MS, "awards": self._episode_awards()}
         self._save()
         self._metric("woman_committed", outcome="committed")
 
@@ -656,6 +689,62 @@ class Game:
         if self.current_round and self.current_round["phase"] in ("SELECTING", "DECIDING", "DRAFTING", "WAITING_REPLY"):
             return await self._run(self._advance)
         return self.public_state()
+
+    def _episode_awards(self):
+        """One episode only; called inside final settlement, never on reads.
+
+        Session leaderboards retain their original rates and ordering. Random
+        entertainment awards never become negative outcomes or leaderboard data.
+        """
+        authors, suggestions = {}, {}
+
+        def row(author_id, nickname, avatar_url=None):
+            return {"author_id": author_id, "nickname": nickname,
+                    "avatar_url": safe_avatar_url(avatar_url), "adopted": 0,
+                    "positive": 0, "negative": 0, "score_delta": 0,
+                    "positive_delta": 0, "negative_delta": 0, "rate": 0}
+
+        for r in self.data["rounds"]:
+            if r["episode_id"] != self.episode["id"] or r["phase"] != "DONE":
+                continue
+            recognized = set(r.get("suggestion_proposal_ids", []))
+            # Old records cannot prove unselected comments were suggestions.
+            recognized.update(o["proposal_id"] for o in r["options"] if "proposal_id" in o)
+            recognized.update(item["proposal_id"] for item in r.get("proposal_selection", [])
+                              if item.get("duplicate_of") in recognized)
+            for p in self._round_inputs["proposals"].get(r["id"], []):
+                if p["id"] in recognized:
+                    suggestions[p["author_id"]] = row(p["author_id"], p["nickname"],
+                        safe_avatar_url(p.get("avatar_url")) or suggestions.get(p["author_id"], {}).get("avatar_url"))
+            if r["selection_source"] != "audience":
+                continue
+            selected = next(o for o in r["options"] if o["id"] == r["selected_option_id"])
+            author = selected["author"]
+            stats = authors.setdefault(author["id"], row(author["id"], author["nickname"], author.get("avatar_url")))
+            stats.update(nickname=author["nickname"], avatar_url=safe_avatar_url(author.get("avatar_url"))
+                         or suggestions.get(author["id"], {}).get("avatar_url") or stats["avatar_url"])
+            stats["adopted"] += 1
+            delta = r["delta"]
+            stats["positive"] += delta > 0
+            stats["negative"] += delta < 0
+            stats["score_delta"] += delta
+            stats["positive_delta"] += max(0, delta)
+            stats["negative_delta"] += min(0, delta)
+            stats["rate"] = stats["positive"] / stats["adopted"]
+
+        best = min(authors.values(), key=lambda value: (-value["rate"], -value["adopted"], value["author_id"]), default=None)
+        negative = [value for value in authors.values() if value["negative_delta"] < 0]
+        if negative:
+            worst = min(negative, key=lambda value: (value["negative_delta"], value["author_id"]))
+            reason = "most_negative_points"
+        else:
+            candidates = sorted(suggestions)
+            candidate = self.rng.choice(candidates) if candidates else None
+            worst = authors.get(candidate, suggestions.get(candidate))
+            reason = "random_suggestion"
+        return {"best": dict(best, selection_reason="highest_positive_rate") if best else None,
+                "worst": dict(worst, rate=worst["negative"] / worst["adopted"] if worst["adopted"] else 0,
+                              selection_reason=reason) if worst else None}
 
     def _boards(self):
         episode_ids = {e["id"] for e in self.data["episodes"] if e["session_id"] == self.data["session_id"]}
@@ -691,7 +780,11 @@ class Game:
         messages = self._messages() if episode else []
         if r and r.get("performance") is not None and r["performance"].get("man_released") is not True:
             messages = [m for m in messages if not (m["round_id"] == r["id"] and m["role"] == "man")]
-        return copy.deepcopy({"session": {"id": self.data["session_id"]}, "episode": public_episode, "round": public_round, "messages": [{k: m[k] for k in ("id", "role", "text", "round_id")} for m in messages], "leaderboards": self._boards(), "busy": self.busy, "error": self.data["error"]})
+        now = time.time()
+        finale = copy.deepcopy(episode.get("finale")) if episode and episode["status"] in {"SUCCEEDED", "FAILED"} else None
+        if finale:
+            finale["elapsed_ms"] = max(0, int((now - finale["started_at"]) * 1000))
+        return copy.deepcopy({"session": {"id": self.data["session_id"]}, "episode": public_episode, "round": public_round, "messages": [{k: m[k] for k in ("id", "role", "text", "round_id")} for m in messages], "leaderboards": self._boards(), "finale": finale, "busy": self.busy, "error": self.data["error"]})
 
     def operator_state(self, *, incremental=False, session_id=None, comment_cursor=None,
                        proposal_version=None, vote_version=None, comment_limit=200):
@@ -743,3 +836,4 @@ class Game:
 
     def close(self):
         self.storage.close()
+

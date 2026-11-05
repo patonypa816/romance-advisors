@@ -97,7 +97,7 @@ async def parse_sse(chunks: AsyncIterator[bytes]) -> AsyncIterator[dict]:
                     data.append(content.removeprefix(" ") if separator else "")
 
 
-def _safe_business_event(event: dict, room_id: str) -> dict | None:
+def _safe_business_event(event: dict, room_id: str, *, avatar_validator=None) -> dict | None:
     """Only expose bounded fields needed by comments, gift rules and welcomes."""
     kind, payload = event.get("type"), event.get("data")
     event_id = event.get("id")
@@ -145,6 +145,13 @@ def _safe_business_event(event: dict, room_id: str) -> dict | None:
         level = user.get("payGradeLevel")
         if type(level) is int and 0 <= level <= MAX_SAFE_INTEGER:
             safe["user"]["payGradeLevel"] = level
+        # Verified upstream field: DanmakuUser.avatar. Existing Studio consumers
+        # keep dropping pictures; only an explicit game consumer opts in with
+        # its own URL policy. Gift/member pictures are never retained here.
+        if kind == "chat" and avatar_validator is not None:
+            avatar = avatar_validator(user.get("avatar"))
+            if isinstance(avatar, str) and 0 < len(avatar) <= 2048:
+                safe["user"]["avatar"] = avatar
     return safe
 
 
@@ -156,13 +163,20 @@ class DyhubClient:
 
     def __init__(self, base_url: str, room_id: str,
                  on_event: Callable[[dict], Awaitable[None]],
-                 on_status: Callable[[dict], None]):
+                 on_status: Callable[[dict], None], *, avatar_validator=None,
+                 event_types=("chat", "gift", "member")):
         self.base_url = normalize_endpoint(base_url)
         if not isinstance(room_id, str) or not re.fullmatch(r"[0-9]{1,32}", room_id):
             raise ValueError("invalid_dyhub_room")
         self.room_id = room_id
         self.on_event = on_event
         self.on_status = on_status
+        if (not isinstance(event_types, tuple) or not event_types
+                or any(kind not in {"chat", "gift", "member"} for kind in event_types)
+                or len(set(event_types)) != len(event_types)):
+            raise ValueError("invalid_dyhub_event_types")
+        self.event_types = event_types
+        self.avatar_validator = avatar_validator
         self.status = {"state": "stopped", "room_id": room_id,
                        "last_event_received_at": None, "reconnect_count": 0,
                        "error_code": None}
@@ -179,7 +193,7 @@ class DyhubClient:
         assert self._session is not None
         async with self._session.get(
             self.base_url + "/api/events",
-            params={"roomId": self.room_id, "types": "chat,gift,member,roomStatus"},
+            params={"roomId": self.room_id, "types": ",".join((*self.event_types, "roomStatus"))},
             allow_redirects=False,
         ) as response:
             self._response = response
@@ -211,8 +225,8 @@ class DyhubClient:
                     state = payload.get("status") if isinstance(payload, dict) else None
                     if state in {"connecting", "live", "closed", "error", "stopped"}:
                         self._status(state, "room_error" if state == "error" else None)
-                elif kind in ("chat", "gift", "member"):
-                    safe = _safe_business_event(event, self.room_id)
+                elif kind in self.event_types:
+                    safe = _safe_business_event(event, self.room_id, avatar_validator=self.avatar_validator)
                     if safe is None:
                         continue
                     try:
@@ -285,3 +299,4 @@ class DyhubClient:
             self._response.close()
         if self._session is not None:
             await self._session.close()
+

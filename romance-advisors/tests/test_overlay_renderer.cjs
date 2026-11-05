@@ -397,8 +397,8 @@ test('production keeps preview controls out and only trusts its own overlay for 
 });
 
 
-test('random fallback award is explicitly labelled as a playful draw, not a negative score',()=>{
+test('random fallback award uses the same ordinary caption as a scored winner',()=>{
   const h=harness();endEpisode(h,{awards:{best:null,worst:{nickname:'仅提过建议',adopted:0,selection_reason:'random_suggestion'}}});h.render();
-  assert.equal(h.root.querySelector('.medal-goofy').querySelector('small').textContent,'本期随机彩蛋');
+  assert.equal(h.root.querySelector('.medal-goofy').querySelector('small').textContent,'主打一个敢说。');
   assert.equal(h.root.querySelector('.medal-goofy').querySelector('h3').textContent,'仅提过建议');
 });

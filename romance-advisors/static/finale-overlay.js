@@ -154,7 +154,7 @@ function build(){cancelAnimations();pieces();const win=mode==='success';
       card.initial.textContent=entry?Array.from(name.trim())[0]||'军':'—';
       card.caption.textContent=!entry?'期待下期好建议':award==='best'?
         (win?'这波，确实有点东西。':'有点思路，还需练习。'):
-        entry.selection_reason==='random_suggestion'?'本期随机彩蛋':'主打一个敢说。';
+        '主打一个敢说。';
       card.image.hidden=true;card.image.removeAttribute('src');
       const src=safeFinaleAvatar(entry?.avatar_url);
       if(src){card.image.src=src;card.image.hidden=false;}

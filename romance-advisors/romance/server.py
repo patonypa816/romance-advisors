@@ -19,6 +19,8 @@ from aiohttp import web
 from .game import Game
 from .model import QwenModel, strict_json
 from .program import Program
+from .viewer_avatar import AVATAR_CDN_SUFFIXES
+from .dyhub_intake import register_dyhub_routes
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "romance-advisors"
@@ -117,6 +119,7 @@ class Workbench:
         state["busy"] = state["busy"] or bool(self.job and not self.job.done())
         if self.error and not state["error"]:
             state["error"] = {"message": self.error, "code": "request_error", "stage": "WORKBENCH"}
+        state["server_time"] = time.time()
         state["settings"] = dict(self.settings)
         state["layout"] = dict(self.layout)
         state["program"] = self.program.public(operator=operator)
@@ -165,6 +168,11 @@ class Workbench:
         self.clock_key = key
         seconds = {"COLLECTING": self.settings["collect_seconds"], "VOTING": self.settings["vote_seconds"], "DONE": 8}
         self.deadline = time.time() + seconds[r["phase"]] if r and self.settings["auto_advance"] and r["phase"] in seconds else None
+        finale = state.get("finale")
+        if self.deadline is not None and r["phase"] == "DONE" and finale:
+            # Use the committed conclusion, not the first browser poll, as the
+            # finale clock. Keep the existing 8s total dwell around the 6.8s sequence.
+            self.deadline = finale["started_at"] + max(8, finale["duration_ms"] / 1000)
 
     def launch(self, action):
         if self.job and not self.job.done():
@@ -338,7 +346,8 @@ async def local_only(request, handler):
         response.headers["Referrer-Policy"] = "no-referrer"
         origin = request.app["workbench"].program.client.origin
         frames = "'self'" + (" " + origin if origin else "")
-        response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src {frames}; frame-ancestors 'self'; object-src 'none'; base-uri 'none'"
+        images = "'self' data:" + "".join(f" https://{host} https://*.{host}" for host in AVATAR_CDN_SUFFIXES)
+        response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src {images}; font-src 'self'; connect-src 'self'; frame-src {frames}; frame-ancestors 'self'; object-src 'none'; base-uri 'none'"
         return response
     except web.HTTPException:
         raise
@@ -350,6 +359,7 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
     app = web.Application(middlewares=[local_only], client_max_size=32_768)
     workbench = Workbench(db_path, model=model, avatar_client=avatar_client)
     app["workbench"] = workbench
+    register_dyhub_routes(app, workbench)
 
     async def health(request):
         database = str(Path(db_path).resolve()) if str(db_path) != ":memory:" else ":memory:"
@@ -403,7 +413,7 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
                 blocked = workbench.input_blocked()
                 if blocked:
                     raise ValueError(blocked)
-                workbench.game.submit_proposal(body.get("author_id"), body.get("nickname"), body.get("text"))
+                workbench.game.submit_proposal(body.get("author_id"), body.get("nickname"), body.get("text"), avatar_url=body.get("avatar_url"))
             elif action == "votes":
                 blocked = workbench.input_blocked()
                 if blocked:
@@ -488,3 +498,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
