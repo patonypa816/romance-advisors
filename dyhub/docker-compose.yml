@@ -1,0 +1,18 @@
+# 历史容器入口，未纳入本次 macOS 本机验收；不要对外暴露无鉴权管理端。
+services:
+  dyhub:
+    build: .
+    container_name: dyhub
+    ports:
+      - "127.0.0.1:8757:8757"
+    environment:
+      DYHUB_PORT: "8757"
+      DYHUB_HOST: "0.0.0.0"
+      # 默认无头采集；如需调试可设 DYHUB_HEADED: "1"
+      DYHUB_HEADED: "0"
+    # Chromium 渲染依赖共享内存；默认 64MB 易导致页面崩溃
+    shm_size: "2gb"
+    # 持久化 cookie（勾选"记住我"后写入 data/cookie.json，重新部署后自动恢复）
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

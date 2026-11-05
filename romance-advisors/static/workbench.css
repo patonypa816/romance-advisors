@@ -309,3 +309,7 @@ footer{padding:18px 20px 24px;display:flex;flex-direction:column;gap:8px}
 .proposal-list .proposal-status{flex:none;color:#e0bd83;font-weight:600}
 .proposal-list .proposal-selection.selected .proposal-status{color:#a8d4b5}
 .proposal-list .proposal-selection.not_selected .proposal-status,.proposal-list .proposal-selection.duplicate .proposal-status,.proposal-list .proposal-selection.not_submitted .proposal-status{color:#e9a9a0}
+
+/* Let the finale veil cover the live avatar without remounting its iframe.
+   Pointer events still reach the existing audio/player control underneath. */
+.phone-preview.has-finale #preview-frame{z-index:2;pointer-events:none}
