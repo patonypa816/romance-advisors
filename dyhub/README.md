@@ -1,0 +1,397 @@
+本机源码的来源、构建与仓库接入说明见 [LOCAL_IMPORT.md](LOCAL_IMPORT.md)。
+
+<div align="center">
+
+<img src="docs/assets/dyhub-logo.png" alt="DyHub Logo" width="440" />
+
+<h1>DyHub · 抖音直播弹幕中台</h1>
+
+<p><b>自研采集内核 · 事件全链路标准化 · 消费端与抖音私有协议完全解耦</b></p>
+
+<p>
+<img alt="License" src="https://img.shields.io/badge/License-MIT-2B8EC4?style=flat-square" />
+<img alt="Node.js" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white" />
+<img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
+<img alt="Docker" src="https://img.shields.io/badge/Docker-%E2%9C%93-2496ED?style=flat-square&logo=docker&logoColor=white" />
+<img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square" />
+<img alt="GitHub Stars" src="https://img.shields.io/github/stars/ymstar/dyhub?style=flat-square" />
+</p>
+
+</div>
+
+---
+
+DyHub 是一个抖音直播弹幕采集与分发中台：**双采集内核自研**（轻量纯代码直连 + 浏览器 CDP 旁观），产出**统一事件协议**（`DanmakuEvent`），并通过 **WebSocket / SSE / Webhook** 三种通道分发。上游改协议不碰消费端，下游接弹幕墙、弹幕游戏、AI 助理、数据看板只认一种事件。
+
+## 架构总览
+
+![DyHub 架构总览](docs/assets/architecture.png)
+
+**主数据流（自上而下）**：浏览器采集 → CDP 旁观帧 → 解码归一化 → 去重 → 事件总线 → 三通道分发 → 消费端；**控制面**（管理 API / 控制台 UI）以旁路方式管理房间与统计，不落在主数据流上。
+
+---
+
+## ✨ 特性
+
+- **双采集内核**：① 浏览器内核（默认）—— 真实 Chrome headless + CDP 旁观，最稳、抗风控、抖音改协议自动跟随；② 轻量内核 —— 纯代码直连 wss，连接秒级、零浏览器进程，适合资源受限环境
+- **统一事件协议**：抖音私有 protobuf → 标准化 `DanmakuEvent`，消费端零感知
+- **三通道分发**：WebSocket（低延迟实时）、SSE（浏览器一行接入）、Webhook（HMAC-SHA256 签名鉴权）
+- **多房间并发**：单浏览器实例多页面，支持同时采集多个直播间，控制台一键切换查看
+- **每房间独立 Cookie**：抖音同一账号同一时间只能在一个直播间，多房间共用登录态会互相竞争导致礼物信息丢失。支持为每个房间设置独立 Cookie（多账号多房间互不干扰），持久化到磁盘，Docker 重新部署自动恢复
+- **房间生命周期管理**：连接过程分步进度展示（浏览器启动 → 订阅监听 → 连接成功），支持停止保留 / 一键恢复 / 彻底删除
+- **可视化控制台**：实时弹幕流（头像 / 事件类型 / 来源房间 / 昵称）、事件筛选、房间管理、对接演示与在线测试
+- **可插拔扩展**：新增平台只需写一个 collector 适配器，复用同一套事件协议与分发层
+
+---
+
+## 🖼️ 界面预览
+
+**实时监控**：多房间同时采集，事件流实时展示（头像 / 事件类型 / 来源房间 / 昵称），支持按房间切换查看与事件类型筛选。
+
+[查看上游控制台实时监控截图](https://github.com/ymstar/dyhub/blob/77ab1fbb3ac6cb0886af40cf32865d998d9e6aab/docs/screenshots/console-monitor.png)
+
+**对接演示**：WS / SSE / Webhook 三种通道的接入地址、参数与代码示例，底部可在线测试分发通道。
+
+[查看上游控制台对接演示截图](https://github.com/ymstar/dyhub/blob/77ab1fbb3ac6cb0886af40cf32865d998d9e6aab/docs/screenshots/console-docs.png)
+
+---
+
+## 🧠 采集原理：两种采集内核
+
+**早坑提示**：Spike 阶段早期用「Node fetch + 手工签名 + 简易 Cookie」直连时被 `DEVICE_BLOCKED`（HTTP 415）风控拦截，一度以为纯代码方案已失效；后来补齐完整 cookie 链（`ttwid` + `__ac_nonce` + `__ac_signature`）后实测打通。两种内核的差异如下：
+
+**浏览器内核**（`DYHUB_COLLECTOR=browser`，默认）—— 最稳、抗风控，适合多数场景：
+
+1. 启动系统 Chrome（headless=new）打开直播间页面，页面自行完成签名 / 指纹 / Cookie
+2. 通过 CDP `Network.webSocketFrameReceived` **旁观**弹幕 WebSocket 帧数据，不改写页面逻辑
+3. 帧经 `gzip 解压 → PushFrame → Response → Message[]` 解码为原始消息
+4. 按 method 匹配 ChatMessage / GiftMessage / MemberMessage 等，标准化为统一事件
+
+> 无头模式需一次点击手势触发播放器初始化，弹幕 wss 才会建立（已自动处理）。
+
+**轻量内核**（`DYHUB_COLLECTOR=lightweight`）—— 纯代码直连，适合资源受限 / 追求连接速度的场景：
+
+1. HTTP 获取 cookie 三件套（`ttwid` / `__ac_nonce` / `__ac_signature`）
+2. 从直播间页解析内部 `room_id`
+3. 生成 `a_bogus`（HTTP 签名）与 `signature`（wss 签名，X-Bogus）后直连 `wss://webcast100-ws-web-lq.douyin.com/webcast/im/push/v2/`
+4. 自行维护心跳（5s）与 ack 应答，帧解码链路与浏览器内核共用
+
+两种内核产出**完全相同的标准化事件**，管道 / 分发 / 消费端无感知。
+
+### 如何切换采集内核
+
+通过环境变量 `DYHUB_COLLECTOR` 设置，默认 `browser`（浏览器内核）。
+
+```bash
+# 本地 / 服务器：启动前指定环境变量
+DYHUB_COLLECTOR=lightweight npm run dev     # 使用轻量内核
+DYHUB_COLLECTOR=browser npm start           # 使用浏览器内核（默认，可省略）
+
+# Docker Compose：在 docker-compose.yml 的 environment 段添加
+#   environment:
+#     DYHUB_COLLECTOR: "lightweight"
+# 然后 docker compose up -d --build
+
+# Docker run
+docker run -d -p 127.0.0.1:8757:8757 --shm-size=2g -e DYHUB_COLLECTOR=lightweight dyhub
+```
+
+### 两种内核对比与选型
+
+| | 浏览器内核（`browser`，默认） | 轻量内核（`lightweight`） |
+| --- | --- | --- |
+| **原理** | 真实 Chrome 打开直播间页，CDP 旁观 wss 帧 | 纯代码直连 wss，自行签名 / 心跳 / ack |
+| **稳定性** | 高 —— 页面自动跟随抖音协议变更 | 中 —— 依赖第三方签名脚本，抖音改签名可能失效 |
+| **抗风控** | 强 —— 完整浏览器指纹，被动旁观不发请求 | 弱 —— 纯 HTTP 逆向，数据中心 / 容器 IP 易被风控 |
+| **资源占用** | 高 —— 需运行 Chromium（~200MB 内存 / 房间） | 极低 —— 无浏览器进程（~20MB / 房间） |
+| **连接速度** | 慢 —— Chrome 冷启动 + 页面加载 3~15s | 快 —— 秒级建立 wss |
+| **依赖** | 系统 Chrome / Chromium | 无（签名脚本已内置） |
+| **适用场景** | 生产环境、长期稳定采集、本机 / 桌面部署 | 资源受限（小机器 / 容器）、快速验证、短期采集 |
+
+> **建议**：生产环境用默认 `browser`；仅在机器无 Chrome、资源紧张或需要快速连接时用 `lightweight`。轻量内核被风控时可用 `DYHUB_COOKIE` 注入浏览器复制的 Cookie 绕过，或随时回退 `browser`。
+
+---
+
+## 🚀 快速开始
+
+### 前置要求
+
+- **Node.js ≥ 20**
+- **Chrome / Chromium**（macOS、Windows 直接装 Chrome；Linux 安装 Chromium 后用 `DYHUB_CHROME` 指定路径）
+
+### 安装与运行
+
+```bash
+npm install
+npm run build && npm start   # 生产模式（或 npm run dev 开发模式）
+```
+
+### 连接直播间
+
+```bash
+# 打开控制台
+open http://localhost:8757
+
+# 连接直播间（示例：东方甄选）
+curl -X POST http://localhost:8757/api/rooms/connect \
+  -H 'Content-Type: application/json' \
+  -d '{"roomId":"708764876300"}'
+```
+
+控制台左侧可连接多个房间，通过「查看房间」下拉在**全部房间混流**与**单房间**之间切换；事件行展示头像、事件类型、来源房间与昵称。
+
+### 环境变量
+
+| 变量 | 说明 | 默认 |
+| --- | --- | --- |
+| `DYHUB_PORT` | 管理端口 | `8757` |
+| `DYHUB_HOST` | 监听地址 | `127.0.0.1` |
+| `DYHUB_CHROME` | Chrome/Chromium 可执行文件路径 | 自动探测 |
+| `DYHUB_HEADED` | 设为 `1` 打开有头浏览器（调试用） | 无（默认无头） |
+| `DYHUB_COLLECTOR` | 采集内核：`browser`（默认，浏览器 + CDP，最稳抗风控）/ `lightweight`（纯代码直连，轻量快速） | `browser` |
+| `DYHUB_COOKIE` | 浏览器复制的 Cookie（含 `sessionid_ss` 登录态），用于**获取礼物事件**与**绕过容器 IP 风控**；也可启动后在控制台填写 → 详见 [Cookie 配置指南](docs/cookie-guide.md) | 无（游客态） |
+
+---
+
+## 📦 事件协议
+
+所有消费端只看到统一事件，不感知抖音 protobuf：
+
+```json
+{
+  "id": "7681626144000791846",
+  "roomId": "708764876300",
+  "platform": "douyin",
+  "type": "chat",
+  "ts": 1788517960528,
+  "receivedAt": 1788517960528,
+  "user": {
+    "id": "101652211600",
+    "nickname": "田💕心",
+    "avatar": "https://p3.douyinpic.com/aweme/100x100/...",
+    "secUid": "MS4wLjAB..."
+  },
+  "data": { "content": "劲道牛肉丸，3袋立享88折！" }
+}
+```
+
+> `roomId` 统一为用户连接的房间号（web_rid），与房间管理 / 订阅过滤一致。
+
+**事件类型**：
+
+| type | 含义 | data 关键字段 |
+| --- | --- | --- |
+| `chat` | 弹幕 | `content` |
+| `gift` | 礼物 | `giftName` / `diamondCount` / `repeatCount` / `comboCount` / `groupCount` / `repeatEnd` / `groupId` / `combo`（需登录态 Cookie，见 [Cookie 指南](docs/cookie-guide.md)） |
+| `member` | 进场 | `memberCount` |
+| `like` | 点赞 | `count` / `total` |
+| `follow` | 关注 | `action` |
+| `room` | 直播间统计 | `total`（在线）/ `popularity` / `totalUser` |
+| `roomStatus` | 房间状态变更 | `status`（connecting/live/closed/error/stopped）/ `message`（错误信息） |
+| `unknown` | 未识别消息透传 | `method` |
+
+> **礼物计数**：抖音对同一次送礼会推送多条 `WebcastGiftMessage`（连击进度 + 连击结束时一条 `repeatEnd: true` 的收尾消息），它们 `msgId` 不同、`groupId` 相同，因此不会被去重。按 `giftId + groupId` 合并、取 `repeatCount` 的增量计数，并忽略已见过的分组的收尾消息即可避免重复。
+
+---
+
+## 🔌 消费端接入
+
+### WebSocket（网页弹幕墙 / 弹幕游戏）
+
+```js
+const ws = new WebSocket('ws://localhost:8757/ws?roomId=708764876300&types=chat,gift,member');
+
+ws.onmessage = (m) => {
+  const ev = JSON.parse(m.data);
+  if (ev.type === '__hello') return; // 握手消息
+  console.log(ev.user?.nickname, ev.data?.content ?? ev.type);
+};
+```
+
+### SSE（浏览器一行接入）
+
+```js
+const es = new EventSource('http://localhost:8757/api/events?types=chat,gift');
+
+es.onmessage = (e) => {
+  const ev = JSON.parse(e.data);
+  console.log(ev);
+};
+```
+
+### Webhook（服务端消费，HMAC 签名）
+
+```bash
+curl -X POST http://localhost:8757/api/webhooks \
+  -H 'Content-Type: application/json' \
+  -d '{"roomId":"708764876300","url":"https://your-server/hook","secret":"your-secret"}'
+
+# 事件将 POST 到 url，带签名头：
+# X-DyHub-Signature: sha256=<HMAC-SHA256(secret, body)>
+```
+
+**通用参数**（WS / SSE）：`roomId`（选填，订阅指定房间，缺省全部）、`types`（选填，逗号分隔的事件类型过滤）。
+
+> **房间状态感知**：订阅 `types=roomStatus`（或与其他类型混合，如 `types=chat,gift,roomStatus`）可接收房间状态变更事件。当房间进入 `connecting` / `live` / `closed` / `error` / `stopped` 状态时，中台会推送一条 `type: "roomStatus"` 事件，消费端可据此感知主播下播、连接失败等状态变化，无需轮询管理 API。
+
+---
+
+## 📡 API 参考
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/` | 控制台（实时监控 + 多房间切换 + 对接演示） |
+| GET | `/api/rooms` | 已连接直播间列表（含主播信息与连接进度） |
+| POST | `/api/rooms/connect` | 连接直播间 `{roomId, cookie?}`（`cookie` 为该房间独立登录态，可选） |
+| POST | `/api/rooms/:roomId/disconnect` | 停止采集（房间保留，可随时恢复） |
+| DELETE | `/api/rooms/:roomId` | 彻底删除房间 |
+| GET | `/api/rooms/:roomId` | 单房间详情 |
+| GET/PUT/DELETE | `/api/rooms/:roomId/cookie` | 每房间独立 Cookie（查看 / 设置 / 清除），多账号多房间互不干扰 |
+| GET | `/api/stats` | 全局统计（WS 客户端数 / 房间 / 事件量） |
+| GET/POST/DELETE | `/api/cookie` | 登录 Cookie 管理（查看状态 / 设置 / 清除），详见 [Cookie 配置指南](docs/cookie-guide.md) |
+| GET | `/api/events?types=chat,gift&roomId=xxx` | SSE 实时事件流 |
+| GET/POST/DELETE | `/api/webhooks` | Webhook 订阅管理 |
+
+---
+
+## 🗂️ 项目结构
+
+```text
+src/
+├── index.ts                 # 入口：装配采集 → 管道 → 分发 → API
+├── types/events.ts          # 标准化事件协议（消费端唯一依赖）
+├── proto/douyin.proto.ts    # protobuf 解码器（帧/消息体）
+├── collector/
+│   ├── browser.ts           # 浏览器内核：Chrome 探测 / 页面 / CDP / Cookie 注入
+│   ├── lightweightSession.ts # 轻量内核：纯代码 wss 直连（cookie 链 / 签名 / 心跳 / ack）
+│   ├── cookieStore.ts       # 运行时 Cookie 存储（登录态注入，两种内核共用）
+│   ├── liveSession.ts       # 单直播间会话（帧监听 / 状态机）
+│   ├── roomMeta.ts          # 主播信息解析（昵称 / 头像 / 简介）
+│   └── collector.ts         # 采集器门面（多房间管理）
+├── pipeline/
+│   ├── normalizer.ts        # 抖音私有协议 → 统一事件（翻译层）
+│   ├── dedupe.ts            # 滑动窗口去重
+│   └── eventBus.ts          # 事件总线（订阅 / 发布，解耦核心）
+├── dispatch/
+│   ├── wsServer.ts          # WebSocket 实时推送
+│   ├── sseServer.ts         # SSE 推送
+│   └── webhook.ts           # Webhook 投递（HMAC 签名）
+├── api/server.ts            # Fastify 管理 API
+└── ui/dashboard.html        # 控制台单页应用
+```
+
+---
+
+## 🐳 Docker 历史构建示例（未验收）
+
+这些容器文件为保留的历史入口，本次恢复只验证 macOS 本机启动流程，未构建或运行 Docker 镜像，不承诺容器可以直接启动。容器运行改为非 root，仍保留 Chromium 沙箱，宿主机须支持相应沙箱能力；不要通过关闭沙箱、使用 privileged 或扩大宿主权限绕过失败。绑定本机 `data/` 时需由操作者确认容器用户的目录访问权限。
+
+管理 API 没有身份鉴权，只应在可信本机使用。Compose 和下方端口示例仅发布到宿主机 `127.0.0.1`，不要开放给公网或不可信网络。镜像内置 Chromium 与中文字体；容器内 `DYHUB_HOST=0.0.0.0` 仅用于端口映射，不表示应对外开放。
+
+### 方式一：Docker Compose
+
+```bash
+docker compose up -d --build
+
+# 打开控制台
+open http://localhost:8757
+
+# 连接直播间（示例：东方甄选）
+curl -X POST http://localhost:8757/api/rooms/connect \
+  -H 'Content-Type: application/json' \
+  -d '{"roomId":"708764876300"}'
+
+# 查看日志
+docker compose logs -f dyhub
+```
+
+### 方式二：docker run
+
+```bash
+docker build -t dyhub .
+docker run -d --name dyhub -p 127.0.0.1:8757:8757 --shm-size=2g dyhub
+```
+
+> **为什么需要 `--shm-size=2g`**：Chromium 渲染依赖共享内存 `/dev/shm`，Docker 默认仅 64MB，会导致采集页面崩溃。Compose 已内置该配置。
+
+### 配置说明
+
+| 项 | 说明 |
+| --- | --- |
+| `DYHUB_PORT` / `DYHUB_HOST` | 默认 `8757` / `0.0.0.0`，改端口时同步改端口映射 |
+| `DYHUB_HEADED` | 容器内保持 `0`（无头），不要打开有头 |
+| `DYHUB_CHROME` | 镜像已内置 `/usr/bin/chromium` |
+| `DYHUB_COOKIE` | 容器 IP 被风控或需获取礼物事件时，填入浏览器复制的登录 Cookie → 详见 [Cookie 配置指南](cookie-guide.md) |
+| 健康检查 | 每 30s 探测 `/api/stats`，`docker ps` 可查状态 |
+
+---
+
+## 🧩 扩展点 / Roadmap
+
+- **规则引擎**：事件总线 + `type + user + content` 规则匹配 → 触发动作
+- **AI 助理**：消费 `chat` 事件喂给 LLM，回复经 OBS / 弹幕回发
+- **弹幕游戏**：`member` / `chat` 事件驱动游戏状态机
+- **数据看板**：`room` 事件做在线趋势、`gift` 做营收统计
+- **多平台**：新增 `collector/bilibili.ts` 等适配器，复用同一事件协议
+
+欢迎提 Issue / PR。
+
+---
+
+## ❓ 常见问题
+
+**Q：`npm run build` 报 `Unable to resolve @typescript/typescript-darwin-x64`？**
+
+TypeScript 7 使用原生平台包，npm 按安装时的 Node 架构选择（arm64 / x64）。若运行 `tsc` 的 Node 与安装依赖时的架构不一致，会缺对应平台包。修复：
+
+```bash
+npm install -f @typescript/typescript-darwin-x64   # 或 -arm64，按实际报错
+# 更推荐：统一 Node 版本后重新 npm install
+```
+
+**Q：连接后房间一直 `connecting`（0 帧）？**
+
+多为首次启动采集浏览器较慢（页面加载 + 播放器初始化），等待 10～30 秒（控制台会展示分步连接进度）；若持续不进入 `live`，检查直播间是否在直播、以及 `DYHUB_CHROME` 指向的浏览器版本。
+
+**Q：会被抖音风控吗？**
+
+方案为「真实浏览器被动旁观」，不发送业务请求，风险显著低于纯 HTTP 逆向。但仍请遵守平台规则、控制采集规模，仅采集自有或已授权直播间。
+
+**Q：礼物事件获取不到？**
+
+抖音 webcast 服务端只向已登录的连接推送礼物事件，游客态只收到弹幕 / 进场 / 点赞等。需在控制台填入含 `sessionid_ss` 的登录 Cookie → 详见 [Cookie 配置指南](docs/cookie-guide.md)。
+
+**Q：多个直播间的礼物事件互相竞争 / 只有一个房间能收到礼物？**
+
+抖音同一账号同一时间只能出现在一个直播间，多房间共用一个登录 Cookie 会互相踢掉登录态。解决方案：为每个房间设置**独立 Cookie**（不同账号），控制台连接时展开「独立 Cookie」输入框填写，或点击房间卡片的「Cookie」按钮设置。API 方式：`PUT /api/rooms/:roomId/cookie`，或连接时传 `cookie` 字段。独立 Cookie 持久化到 `data/room-cookies/`，Docker 重新部署自动恢复。
+
+---
+
+## ⚠️ 合规声明
+
+- 仅采集**自有或已获授权**的直播间；请遵守抖音平台规则与相关法律法规
+- 采集为被动旁观（不发送业务请求），请控制并发、合理使用
+- 抖音接口可能随时调整，本方案因浏览器自动跟随而具备较强韧性
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=ymstar%2Fdyhub&type=date&releases=&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ymstar/dyhub&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ymstar/dyhub&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=ymstar/dyhub&type=date&legend=top-left" />
+ </picture>
+</a>
+
+## 📄 License
+
+[MIT](./LICENSE)
+
+## 🙏 致谢
+
+设计思路参考了以下优秀开源项目：
+
+- [skmcj/dycast](https://github.com/skmcj/dycast) —— 抖音直播弹幕姬
+- [saermart/DouyinLiveWebFetcher](https://github.com/saermart/DouyinLiveWebFetcher) —— 抖音 Live 弹幕采集（AGPL-3.0）

@@ -1,6 +1,6 @@
 # 恋爱军师团与数字人工作台
 
-本仓库整理《恋爱军师团》本地游戏及其 `ai-live-avatar` 数字人底座。游戏负责征集、投票、人物聊天和结算；Studio 负责模型回复、语音、动作及 Vidu 音画连接。两个项目应保持当前同级目录结构。
+本仓库整理《恋爱军师团》本地游戏及其 `ai-live-avatar` 数字人底座。游戏负责征集、投票、人物聊天和结算；Studio 负责模型回复、语音、动作及 Vidu 音画连接。游戏、Studio 所属的 `ai-live-avatar/` 与可选评论采集器 `dyhub/` 应保持当前同级目录结构。
 
 这是代码恢复包，不包含原机器的数据库、凭据、资产库、音色绑定或录制文件。启动本地服务不会自动开收费云场；创建真实游戏剧情会调用模型并消耗额度或产生费用，自动联调还会使用 TTS 和 Vidu。开始真实调用前请核对账户及路由。
 
@@ -14,12 +14,13 @@
 | `romance-advisors/static/` | 工作台、手机预览、透明叠层及字体 |
 | `ai-live-avatar/studio/` | 当前数字人工作台、源码、测试和必要静态资源 |
 | `ai-live-avatar/live/`、根 `server.py` 等 | 保留的上游底座入口；游戏联调使用 Studio 入口 |
+| `dyhub/` | 从原机器单独收录的 DyHub 采集源码，保留本机修改；依赖与运行数据不入库 |
 | `config-examples/` | 无真实密钥的本机配置模板 |
 | `HANDOVER.md` | 当前行为、恢复边界和后续检查 |
 
 ## 1 配置本机环境
 
-支持当前 macOS 使用方式；源码使用 Unix 文件锁，`.command` 使用 zsh。安装 Python **3.11 或更新版本**、FFmpeg（须同时提供 `ffmpeg` 和 `ffprobe`），以及可播放音视频的浏览器。Node.js 用于前端测试和可选历史工具，不是正式百炼 HTTP 大脑的必需运行环境。
+支持当前 macOS 使用方式；源码使用 Unix 文件锁，`.command` 使用 zsh。安装 Python **3.11 或更新版本**、FFmpeg（须同时提供 `ffmpeg` 和 `ffprobe`），以及可播放音视频的浏览器。Node.js 用于前端测试和可选评论采集；运行 DyHub 需要 Node.js **20 或更新版本**以及 Chrome/Chromium。Node.js 不是正式百炼 HTTP 大脑的必需运行环境。
 
 从仓库根目录执行下列命令；如果解释器名称不同，换成实际安装的 Python 3.11+：
 
@@ -91,9 +92,29 @@ cd romance-advisors
 
 在 Studio 同步并选择用户自己的 Vidu 资产；创建新资产或开启会话可能产生费用。音色使用本机 `data/local.json` 中的 `tts_voices` 映射，按模板说明配置自己的合法音色；该映射未随 Git 保存。不要用模板整文件覆盖自动生成的 `local.json`，其中包含访问令牌和其他设置。
 
-确认配置后，游戏的“准备一期”等真实剧情操作会调用文字模型；“开始自动联调”会进一步启动语音和数字人链路。浏览器可能要求首次手动开启音频。真实评论采集另有可选 dyhub 依赖，历史 `启动评论采集.command` 指向原机器实验目录，本恢复包未包含该外部构建。已有本机 dyhub 时，可在游戏工作台“抖音评论来源”显式连接本期，将建议参与者头像随原建议保留；不会自动安装采集器或连接房间，详见[评论与头像接入](romance-advisors/docs/05-抖音评论与头像.md)。本地模拟评论可独立使用。
+确认配置后，游戏的“准备一期”等真实剧情操作会调用文字模型；“开始自动联调”会进一步启动语音和数字人链路。浏览器可能要求首次手动开启音频。真实评论采集源码已从原机器单独收录到 `dyhub/`，保留本机修改，不使用公开仓库最新版本替换。需要按下一节手动安装依赖并构建，再在游戏工作台“抖音评论来源”显式连接本期，将建议参与者头像随原建议保留；不会自动安装采集器或连接房间，详见[评论与头像接入](romance-advisors/docs/05-抖音评论与头像.md)。本地模拟评论可独立使用。
 
 停止真实联调时，先用游戏页面的停止按钮并核对云端结束状态；之后退出本地服务。不要把杀进程当成已经结束收费云场的证明。
+
+### 可选：启动仓库内 DyHub
+
+从仓库根目录手动安装依赖并构建，首次运行前确认 Node.js ≥20 与 Chrome/Chromium 可用。这里沿用本机已验证的禁用安装脚本方式，锁文件保留原有依赖与镜像地址：
+
+```sh
+cd dyhub
+npm ci --ignore-scripts
+npm run build
+```
+
+然后双击 `ai-live-avatar/studio/启动评论采集.command`，或从仓库根目录执行：
+
+```sh
+zsh ai-live-avatar/studio/启动评论采集.command
+```
+
+该启动器使用仓库内 `dyhub/`，固定为浏览器内核，管理端只监听 `127.0.0.1:8757`。缺少构建、Node.js 版本不符或端口占用时退出，不自动安装、不接管其他服务。打开管理台本身不等于订阅直播间；由操作者在游戏或 Studio 明确连接自己的授权房间。结束采集在该终端按 Control-C，游戏“停止接收”只停止游戏订阅。
+
+本机快照版本为 0.2.0，基于 `77ab1fbb3ac6cb0886af40cf32865d998d9e6aab` 并保留 5 个本机修改文件，来源与检查命令见 [本机 DyHub 说明](dyhub/LOCAL_IMPORT.md)。源码入库不恢复原机器的 Cookie、账号登录、浏览器资料或历史运行数据。确需登录时，由用户在本机 DyHub 管理台操作；不要将 Cookie 粘到聊天、源码或 Git。`dyhub/data/`、`node_modules/`、`dist/` 和日志保持忽略。轻量内核及其第三方签名源码一并保留，但此启动器不自动切换内核。
 
 ## 4 离线检查
 
@@ -123,5 +144,5 @@ node --test tests/test_*.cjs
 
 现行游戏说明在 [romance-advisors/README.md](romance-advisors/README.md)，底座说明在 [Studio README](ai-live-avatar/studio/README.md)。原文档中的 `artifacts/` 报告链接属于原机器本地证据，未随本包上传，不能当作仓库内可打开的附件。
 
-保留 [ai-live-avatar/LICENSE](ai-live-avatar/LICENSE) 的上游 MIT 版权声明，以及 [字体 OFL](romance-advisors/static/fonts/OFL.txt)。用户账户资产、真实配置、历史数据库、录音录像和云端会话记录均需另行管理；从 Git 恢复代码不等于恢复这些状态。
+保留 [ai-live-avatar/LICENSE](ai-live-avatar/LICENSE) 的上游 MIT 版权声明，以及 [字体 OFL](romance-advisors/static/fonts/OFL.txt)。DyHub 主项目保留 [MIT 许可](dyhub/LICENSE)；其轻量内核第三方签名组件另有 [AGPL-3.0 来源说明](dyhub/third_party/douyin-sign/README.md)及[完整许可证](dyhub/third_party/douyin-sign/LICENSE)，不能把整包笼统视为 MIT。再次分发、修改或提供网络服务时，应分别核对适用条款；源码放在私有仓库不自动消除许可义务。用户账户资产、真实配置、历史数据库、录音录像和云端会话记录均需另行管理；从 Git 恢复代码不等于恢复这些状态。
 
