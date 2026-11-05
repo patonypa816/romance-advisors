@@ -20,6 +20,11 @@ from .viewer_avatar import safe_avatar_url
 FINALE_DURATION_MS = 6800
 
 
+# The overlay polls every 0.9s. Give a fast reply time to show its typing
+# bubble across polls while allowing a slow model response to use that time.
+WOMAN_TYPING_SECONDS = 2.4
+
+
 class StaleResult(Exception):
     pass
 
@@ -46,6 +51,7 @@ class Game:
         self._reindex()
         self.busy = False
         self._token = 0
+        self._woman_typing_token = None
         self.rng = random.Random()
         self._validation_error = None
         self.input_char_budget = input_char_budget
@@ -634,27 +640,53 @@ class Game:
         # stops integration. The performer must reject a stopped/old owner.
         if self.performer is None:
             raise ValueError("invalid_performance_unavailable")
-        receipt = await self.performer.perform(copy.deepcopy(record), r["reaction"])
-        if token != self._token or self.current_round is not r or r["phase"] != "WAITING_REPLY":
-            raise StaleResult()
+        def check_current_round():
+            if token != self._token or self.current_round is not r or r["phase"] != "WAITING_REPLY":
+                raise StaleResult()
+
+        def on_message_action():
+            check_current_round()
+            # The line was saved at draft time. Reveal that same bubble while
+            # the typing gesture is under way; the woman still waits for its tail.
+            if not record["man_released"]:
+                record["man_released"] = True
+                self._save()
+                self._metric("man_public", outcome="committed", job_id=record["job_id"])
+
+        has_message_motion = "message_motion_plan" in record
+        if has_message_motion:
+            receipt = await self.performer.perform(copy.deepcopy(record), r["reaction"],
+                                                   on_message_action=on_message_action)
+        else:
+            # Pending rounds frozen by an older workbench have only a speech job.
+            receipt = await self.performer.perform(copy.deepcopy(record), r["reaction"])
+        check_current_round()
         if (not isinstance(receipt, dict) or receipt.get("status") != "sent"
                 or receipt.get("send_complete") is not True
                 or any(receipt.get(key, record[key]) != record[key]
                        for key in ("job_id", "owner_id", "generation"))):
             raise ValueError("invalid_performance_receipt")
-        # Confirmed local send-queue progress releases the text. Vidu supplies
-        # no render-complete receipt, so never claim confirmed playback.
-        r["performance"] = dict(record, **receipt)
-        r["performance"]["man_released"] = True
-        r["performance"]["playback_confirmed"] = False
+        if has_message_motion:
+            motion = receipt.get("message_motion_receipt")
+            if (not record["man_released"] or not isinstance(motion, dict)
+                    or motion.get("job_id") != record["job_id"] + ":typing"
+                    or motion.get("generation") != record["generation"]
+                    or motion.get("short_action_sent") is not True
+                    or motion.get("status") != "sent" or motion.get("send_complete") is not True):
+                raise ValueError("invalid_performance_receipt")
+        r["performance"] = {**record, **receipt, "man_released": True, "playback_confirmed": False}
         self._save()
-        self._metric("man_public", outcome="committed", job_id=record["job_id"])
+        if not has_message_motion:
+            self._metric("man_public", outcome="committed", job_id=record["job_id"])
 
     async def _reply(self, token):
         r = self.current_round
         man_message = next(m for m in self._messages() if m["round_id"] == r["id"] and m["role"] == "man")
         partner = {key: self.episode["man"][key] for key in ("name", "age")}
         payload = {"woman": self.episode["woman"], "partner": partner, "shared_background": self.episode["shared_background"], "messages": [{"role": m["role"], "text": m["text"]} for m in self._messages()], "score": self.episode["score"], "reply_to_message": {"id": man_message["id"], "text": man_message["text"]}}
+        self._woman_typing_token = token
+        live_performer = self.performer if self.performer and self.performer.enabled else None
+        reveal_at = time.monotonic() + WOMAN_TYPING_SECONDS
         output = await self._call("reply", payload, token)
         message = clean_text(output.get("message"), "woman_message")
         delta = output.get("delta")
@@ -665,6 +697,13 @@ class Game:
         expected = "success" if after == 100 else "failure" if after == 0 else "continue"
         if output.get("ending") != expected:
             raise ValueError("invalid_ending_score_consistency")
+        remaining = reveal_at - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        # A stop or cast change can happen even after the model has returned.
+        if (token != self._token or self.current_round is not r or r["phase"] != "WAITING_REPLY"
+                or (live_performer is not None and not live_performer.enabled)):
+            raise StaleResult()
         self._message("woman", message, r["id"], man_message["id"])
         r.update(before=before, proposed_delta=delta, delta=after - before, after=after, phase="DONE")
         self.episode.update(score=after, status="SUCCEEDED" if after == 100 else "FAILED" if after == 0 else "ACTIVE")
@@ -775,6 +814,9 @@ class Game:
                 committed = False
             selected = next((o for o in r["options"] if o["id"] == r["selected_option_id"]), None)
             public_round = {"id": r["id"], "number": r["number"], "phase": r["phase"], "options": [{"id": o["id"], "number": o["number"], "text": o["text"], "author": o["author"], "votes": counts.get(o["id"], 0)} for o in r["options"]], "selected_option_id": r["selected_option_id"] if committed else None, "selected_author": selected["author"] if committed and selected else None, "selection_source": r["selection_source"] if committed else None, "reaction": r["reaction"] if committed else None, "delta": r["delta"]}
+            public_round["woman_typing"] = (self.busy and self._woman_typing_token == self._token
+                                            and r["phase"] == "WAITING_REPLY" and committed
+                                            and not getattr(self.performer, "stopping", False))
             if performance is not None:
                 public_round["performance"] = {"status": performance["status"], "man_released": performance.get("man_released") is True, "playback_confirmed": False}
         messages = self._messages() if episode else []

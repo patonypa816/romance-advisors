@@ -10,7 +10,7 @@ import time
 import uuid
 
 from .avatar_client import AvatarClient, AvatarClientError, check_startup_blocker
-from .performance import AmbientPerformance
+from .performance import AmbientPerformance, MESSAGE_MOTION_PLAN
 
 ACTIVE = {"starting", "running", "stopping"}
 TERMINAL_AVATAR = {"ended", "error", "stop_unconfirmed", "creation_unknown"}
@@ -74,7 +74,7 @@ class Program:
         now = self.ended_at or time.monotonic()
         value = {"state": self.state, "ready": self.ready, "run_id": self.run_id,
                  "elapsed_seconds": max(0, now - self.started_at) if self.started_at is not None else 0,
-                 "limit_minutes": 20, "avatar_name": "写实男主 · 晚间直播 3:4",
+                 "limit_minutes": 20, "avatar_name": "咖啡馆里的温柔凝视",
                  "avatar_state": self.avatar_state, "startup_stage": self.startup_stage, "error": self.error}
         if operator:
             value["player_url"] = self._player_url if self.active else ""
@@ -200,9 +200,10 @@ class Program:
         if not self.enabled or not self.ready:
             raise ValueError("invalid_performance_unavailable")
         return {"job_id": round_id + ":reaction", "owner_id": self.run_id,
-                "generation": self.client.generation, "status": "pending", "man_released": False}
+                "generation": self.client.generation, "status": "pending", "man_released": False,
+                "message_motion_plan": copy.deepcopy(MESSAGE_MOTION_PLAN)}
 
-    async def perform(self, record, text):
+    async def perform(self, record, text, *, on_message_action=None):
         # Set priority before the first await: a just-finished optional prepare
         # cannot race this formal line into the sender.
         self.formal_waiting += 1
@@ -211,6 +212,15 @@ class Program:
             await self._release_optional_next()
             receipt = await self.send(record, text)
             self.remember_sent(record, text, receipt, intent="正式选择")
+            if "message_motion_plan" in record:
+                # Keep formal priority across both jobs. The silent action has
+                # its own stable ID, so a lost reply cannot replay the speech.
+                motion = {"job_id": record["job_id"] + ":typing", "owner_id": record["owner_id"],
+                          "generation": record["generation"], "mode": "motion",
+                          "plan": copy.deepcopy(record["message_motion_plan"])}
+                motion_receipt = await self.send(motion, "", on_message_action=on_message_action,
+                                                 require_short_action=True)
+                receipt = dict(receipt, message_motion_receipt=motion_receipt)
             return receipt
         finally:
             self.formal_waiting -= 1
@@ -307,7 +317,8 @@ class Program:
         return receipt.get("worker_pending", False) or receipt.get("preparation_pending", False)
 
     def _check_receipt(self, record, receipt):
-        if receipt.get("generation") != record["generation"] or receipt.get("job_id") != record["job_id"]:
+        if (receipt.get("generation") != record["generation"] or receipt.get("job_id") != record["job_id"]
+                or ("owner_id" in receipt and receipt["owner_id"] != record["owner_id"])):
             raise ValueError("invalid_performance_receipt")
 
     async def _request_same_job(self, operation, record, *args):
@@ -325,9 +336,24 @@ class Program:
         while True:
             self._check_receipt(record, receipt)
             candidate["receipt"] = receipt
+            if candidate.get("require_short_action"):
+                # Only Studio's successful S receipt for the currently owned
+                # job can expose the message. GE/start/another run is not S.
+                if (not self.enabled or self.current is not candidate
+                        or record["owner_id"] != self.run_id
+                        or record["generation"] != self.client.generation
+                        or candidate["job_id"] != record["job_id"]):
+                    raise ValueError("invalid_performance_owner")
+                if receipt.get("short_action_sent") is True and not candidate.get("message_action_notified"):
+                    candidate["message_action_notified"] = True
+                    callback = candidate.get("on_message_action")
+                    if callback is not None:
+                        callback()
             status = receipt.get("status")
             if status in terminal and not self._pending(receipt):
                 if status == "sent" and receipt.get("send_complete") is True:
+                    if candidate.get("require_short_action") and receipt.get("short_action_sent") is not True:
+                        raise ValueError("invalid_performance_send")
                     return dict(receipt, playback_confirmed=False)
                 if candidate["optional"] and not receipt.get("delivery_started"):
                     return receipt
@@ -349,7 +375,8 @@ class Program:
             await asyncio.sleep(.2)
             receipt = await self.client.job(record)
 
-    async def send(self, record, text, *, optional=False, valid=None, candidate=None):
+    async def send(self, record, text, *, optional=False, valid=None, candidate=None,
+                   on_message_action=None, require_short_action=False):
         """Prepare outside the one send lock; occupy next before any network I/O."""
         if (not self.enabled or record["owner_id"] != self.run_id
                 or record["generation"] != self.client.generation):
@@ -359,7 +386,8 @@ class Program:
                                           else "proactive" if optional else "formal", valid=valid or (lambda: True))
         if candidate is None or self.next is not candidate:
             raise ValueError("invalid_performance_slot")
-        candidate.update(record=record, job_id=record["job_id"], text=text, task=asyncio.current_task())
+        candidate.update(record=record, job_id=record["job_id"], text=text, task=asyncio.current_task(),
+                         on_message_action=on_message_action, require_short_action=require_short_action)
         resolved = False
         try:
             if not self.candidate_valid(candidate):

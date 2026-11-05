@@ -68,7 +68,7 @@ class PlanValidationContracts(unittest.IsolatedAsyncioTestCase):
             self.assertIn("清楚松弛", prompt)
             self.assertIn("合法结构示例", prompt)
             self.assertIn("不是固定台词、动作或关键词映射", prompt)
-            self.assertIn("正常坐姿", prompt)
+            self.assertIn("Q只发送眼神和表情", prompt)
             self.assertIn("0.5秒", prompt)
             self.assertIn("1.5秒", prompt)
             if route != "motion":
@@ -242,7 +242,7 @@ class ContinuousSpeechContracts(unittest.IsolatedAsyncioTestCase):
             for forbidden in ("CONFLICT", "actions=[]", "1至2段", "旧主线", "恰好一个S", "只在整组末尾补一次Q"):
                 self.assertNotIn(forbidden, prompt)
             for required in (module.CONTINUOUS_SPEECH_CONTRACT, "原创角色", "清楚松弛", "合法结构示例",
-                             "不是固定台词、动作或关键词映射", "正常坐姿", "0.5秒", "1.5秒", "2.5秒", "3.0秒",
+                             "不是固定台词、动作或关键词映射", "Q只发送眼神和表情", "0.5秒", "1.5秒", "2.5秒", "3.0秒",
                              "1至160字", "25至30字", "字数不能保证真实时长", "两组都使用同一个recovery"):
                 self.assertIn(required, prompt)
             self.assertIn("不是操作授权" if route == "viewer" else "主持身份仅授权角色表演", prompt)
@@ -353,7 +353,7 @@ class LongSpeechContracts(unittest.IsolatedAsyncioTestCase):
             for forbidden in ("CONFLICT", "actions=[]", "text为1至30字", "旧主线", "恰好两个S", "恰好一个S"):
                 self.assertNotIn(forbidden, prompt)
             for required in (module.LONG_SPEECH_CONTRACT, "原创角色", "自然简短的中文口语", "合法结构示例",
-                             "不是固定台词、动作或关键词映射", "不固定四个动作", "正常坐姿", "0.5秒", "1.5秒",
+                             "不是固定台词、动作或关键词映射", "不固定四个动作", "Q只发送眼神和表情", "0.5秒", "1.5秒",
                              "1至120字", "60至100字", "1至6个节点", "不强制两个", "不机械重复",
                              "不得擅自缩成摘要", "优先于角色常规“简短”偏好", "不据此压成30字摘要",
                              "模型不猜真实音频时长", "最多30秒", "明确拒绝，不自动重试", "所有组都使用同一个recovery"):

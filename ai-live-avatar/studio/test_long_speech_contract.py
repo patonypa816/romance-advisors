@@ -60,7 +60,7 @@ class LongSpeechContractTests(unittest.TestCase):
                 for node, baseline in zip(group, single):
                     for field in ("instruction", "gaze", "expression", "motions", "kind", "hold_seconds"):
                         self.assertEqual(node[field], baseline[field])
-                self.assertEqual(group[2]["instruction"], "动作：正常坐姿。\n眼神：注视镜头。\n表情：神情温和。")
+                self.assertEqual(group[2]["instruction"], "眼神：注视镜头。\n表情：神情温和。")
                 self.assertFalse(any("audio_at_seconds" in n for n in group[1:]))
             self.assertEqual(schema.long_speech_required_audio_seconds(segment["actions"]), (count - 1) * 3 + 2)
 

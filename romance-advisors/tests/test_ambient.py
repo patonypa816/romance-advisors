@@ -83,7 +83,9 @@ class ControlledAvatar:
         return {"job_id": record["job_id"], "generation": self.generation,
                 "status": status, "send_complete": status == "sent",
                 "delivery_started": started, "worker_pending": pending,
-                "estimated_delivery_seconds": self.estimated_delivery_seconds}
+                "estimated_delivery_seconds": self.estimated_delivery_seconds,
+                "mode": record.get("mode", "speech"),
+                "short_action_sent": record.get("mode") == "motion" and status == "sent"}
 
     async def prepare(self, record, text):
         self.prepared[record["job_id"]] = (copy.deepcopy(record), text)
@@ -99,7 +101,8 @@ class ControlledAvatar:
     async def submit(self, record, text):
         self.submitted.append((copy.deepcopy(record), text))
         optional = record["job_id"].startswith("ambient:")
-        self.timeline.append("optional_GE" if optional and self.delivery_started else "optional" if optional else "formal")
+        self.timeline.append("message_motion" if not optional and record.get("mode") == "motion" else
+                             "optional_GE" if optional and self.delivery_started else "optional" if optional else "formal")
         if not optional:
             return self.receipt(record, "sent", started=True)
         return self.receipt(record, self.optional_status, started=self.delivery_started,
@@ -201,7 +204,7 @@ class AmbientSchedulingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private_preferences", str(payload))
         await self.expire()
         self.assertEqual(self.wb.game.current_round["phase"], "DONE")
-        self.assertEqual(len(self.avatar.submitted), 1)
+        self.assertEqual(len(self.avatar.submitted), 2)
         self.assertFalse(self.avatar.submitted[0][0]["job_id"].startswith("ambient:"))
 
     async def test_model_result_after_phase_change_is_not_submitted(self):
@@ -515,7 +518,7 @@ class AmbientSchedulingTests(unittest.IsolatedAsyncioTestCase):
         self.avatar.updates.put_nowait({"status": "cancelled", "pending": False})
         await optional
         await formal
-        self.assertEqual(self.avatar.timeline, ["formal"])
+        self.assertEqual(self.avatar.timeline, ["formal", "message_motion"])
         self.assertEqual(set(self.avatar.queried_ids), {next(iter(self.avatar.prepared))})
         self.assertEqual([row["text"] for row in self.program.ambient.history], ["正式决定。"])
 
@@ -529,7 +532,7 @@ class AmbientSchedulingTests(unittest.IsolatedAsyncioTestCase):
         self.avatar.updates.put_nowait({"status": "sent", "started": True, "pending": False})
         await optional
         await formal
-        self.assertEqual(self.avatar.timeline, ["optional_GE", "optional_Q", "formal"])
+        self.assertEqual(self.avatar.timeline, ["optional_GE", "optional_Q", "formal", "message_motion"])
         self.assertEqual(len(self.program.ambient.history), 2)
 
     async def test_lost_cancel_reply_and_failed_query_block_the_formal_sender(self):
@@ -556,7 +559,7 @@ class AmbientSchedulingTests(unittest.IsolatedAsyncioTestCase):
         await optional
         await formal
         self.assertEqual(self.avatar.cancel_calls, 2)
-        self.assertEqual(self.avatar.timeline, ["formal"])
+        self.assertEqual(self.avatar.timeline, ["formal", "message_motion"])
 
     async def test_optional_preparation_error_without_delivery_is_skipped(self):
         self.avatar.optional_status = "error"
@@ -678,71 +681,33 @@ class AmbientSchedulingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.wb.game.busy)
         return task
 
-    async def test_drafting_glance_runs_once_without_model_or_spoken_history(self):
-        draft = await self.start_slow_draft()
-        calls = copy.deepcopy(self.model.calls)
-        ambient = self.program.ambient
-        ambient.tick(self.wb.state())
-        await ambient.task
-        self.assertEqual(len(self.avatar.submitted), 1)
-        record, text = self.avatar.submitted[0]
-        self.assertEqual(record["mode"], "motion")
-        self.assertEqual(text, "")
-        self.assertEqual(len(record["plan"]["actions"]), 1)
-        self.assertEqual(record["plan"]["actions"][0]["motions"][0]["part"], "head")
-        self.assertEqual(self.model.calls, calls)
-        self.assertEqual(ambient.history, [])
-        self.model.result = {"speak": False}
-        for _ in range(5):
-            ambient.tick(self.wb.state())
-        await REAL_SLEEP(0)
-        self.assertEqual(len(self.avatar.submitted), 1)
-        self.model.draft_release.set()
-        await draft
-        self.assertEqual(self.wb.game.current_round["phase"], "DONE")
-        self.assertEqual(self.avatar.timeline, ["optional", "formal"])
-
-    async def test_drafting_glance_does_not_queue_behind_busy_sender(self):
+    async def test_drafting_never_schedules_an_idle_thinking_motion(self):
         draft = await self.start_slow_draft()
         self.model.result = {"speak": False}
-        async with self.program.send_lock:
+        for _ in range(3):
             self.program.ambient.tick(self.wb.state())
-        self.program.ambient.tick(self.wb.state())
-        await REAL_SLEEP(0)
+            if self.program.ambient.task:
+                await self.program.ambient.task
         self.assertEqual(self.avatar.submitted, [])
+        self.assertFalse(any(event["status"].startswith("motion_")
+                             for event in self.program.ambient.events))
         self.model.draft_release.set()
         await draft
-        self.assertEqual(self.avatar.timeline, ["formal"])
+        self.assertEqual(self.avatar.timeline, ["formal", "message_motion"])
+        self.assertEqual([record.get("mode", "speech") for record, _ in self.avatar.submitted],
+                         ["speech", "motion"])
 
-    async def test_drafting_does_not_make_up_glance_after_old_speech_finishes(self):
-        self.avatar.optional_status = "sending"
-        self.avatar.delivery_started = True
-        old_speech = await self.opportunity()
-        await self.spin_until(lambda: len(self.avatar.submitted) == 1)
+    async def test_drafting_keeps_comment_replies_before_formal_message_motion(self):
         draft = await self.start_slow_draft()
-        self.model.result = {"speak": False}
-        self.program.ambient.tick(self.wb.state())
-        self.assertTrue(self.program.ambient.thinking_attempted)
-        self.avatar.updates.put_nowait({"status": "sent", "started": True, "pending": False})
-        await old_speech
-        self.program.ambient.tick(self.wb.state())
-        await REAL_SLEEP(0)
-        self.assertEqual(len(self.avatar.submitted), 1)
+        with patch.object(self.program, "notify_comment"):
+            receipt = self.comment("draft-reply", "别紧张，慢慢说。")
+        self.model.result["comment_ids"] = [receipt["id"]]
+        await (await self.opportunity())
+        self.assertIn(receipt["id"], self.program.ambient.responded_ids)
+        self.assertNotEqual(self.avatar.submitted[0][0].get("mode"), "motion")
         self.model.draft_release.set()
         await draft
-        self.assertEqual(self.avatar.timeline, ["optional_GE", "formal"])
-
-    async def test_fast_formal_invalidates_not_yet_started_drafting_glance(self):
-        draft = await self.start_slow_draft()
-        self.program.ambient.tick(self.wb.state())
-        motion = self.program.ambient.task
-        # The formal coroutine completes the draft before the scheduled motion
-        # gets its first event-loop turn; its old phase must not leak a Type9.
-        self.wb.game.current_round["phase"] = "WAITING_REPLY"
-        await motion
-        self.assertEqual(self.avatar.submitted, [])
-        # This controlled draft is cancelled in tearDown, without making a
-        # fabricated formal result part of the test's game history.
+        self.assertEqual(self.avatar.timeline, ["optional", "formal", "message_motion"])
 
 
 if __name__ == "__main__":

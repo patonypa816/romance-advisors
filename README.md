@@ -6,6 +6,22 @@
 
 仓库名为 `romance-advisors`，范围为本游戏及所需数字人底座，保持私有；保留旧 HELL INC 的 Git 历史、分支及 PR，不通过删除仓库或改写历史完成迁移。
 
+## 《恋爱军师团》当前定版角色
+
+《恋爱军师团》在 GitHub 开发和测试，实际节目从本机工作台运行。两处共用这份源码和角色定版记录。
+
+| 项目 | 定版值 |
+| --- | --- |
+| Vidu 角色名称 | 咖啡馆里的温柔凝视 |
+| Vidu 资产 ID | `1015851675149152256` |
+| 百炼 TTS 音色 | `longtian_v3.1` |
+| 游戏展示图 | `romance-advisors/static/assets/preview-male-3x4.png` |
+| 展示图 SHA-256 | `30294e6e775dcdb55aa689bdd290256ecf2cfe06a3a967c0c27de52d5a9cef00` |
+
+2026-11-05 已在本机 Studio 的状态接口核对选中资产与音色。运行 `shasum -a 256 romance-advisors/static/assets/preview-male-3x4.png` 可核对游戏展示图。
+
+首次配置本机 Studio 时，在资产库同步并选择表中的 ID，按[配置示例](config-examples/README.md#资产与音色)绑定音色，再核对选中资产与音色。Studio 独立试验可自行选择其他角色。
+
 ## 目录
 
 | 路径 | 用途 |

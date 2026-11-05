@@ -59,7 +59,8 @@ class FakeAvatar:
         self.sent.append((dict(record), text))
         # No cloud playback or handoff receipt is needed to advance the game.
         return {"job_id": record["job_id"], "generation": self.generation,
-                "status": "sent", "send_complete": True, "playback_confirmed": False}
+                "status": "sent", "send_complete": True, "playback_confirmed": False,
+                "short_action_sent": record.get("mode") == "motion"}
 
     async def stop(self):
         self.calls.append("stop")
@@ -91,6 +92,24 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         if self.wb.job:
             await self.wb.job
 
+    async def test_prepare_freezes_independent_message_motion_plan(self):
+        await self.start()
+        first = self.wb.program.prepare("first-round", "我想认真回答。")
+        second = self.wb.program.prepare("second-round", "我想认真回答。")
+        plan = second["message_motion_plan"]
+        self.assertEqual(set(plan), {"emotion", "actions", "recovery"})
+        self.assertEqual(len(plan["actions"]), 1)
+        action = plan["actions"][0]
+        self.assertEqual((action["kind"], action["delay_seconds"], action["hold_seconds"]), ("S", 0, 0))
+        self.assertEqual([m["part"] for m in action["motions"]], ["head", "right_arm"])
+        self.assertIn("实体手机不出镜", action["motions"][0]["description"])
+        self.assertEqual(set(plan["recovery"]), {"gaze", "expression"})
+        self.assertEqual(plan["recovery"]["gaze"], "视线短暂停在下方")
+        first["message_motion_plan"]["actions"].clear()
+        self.assertEqual(len(second["message_motion_plan"]["actions"]), 1)
+        third = self.wb.program.prepare("third-round", "我想认真回答。")
+        self.assertEqual(third["message_motion_plan"], second["message_motion_plan"])
+
     async def test_complete_round_and_automatic_next_episode_keep_run_budget(self):
         await self.start()
         program = self.wb.program
@@ -102,7 +121,7 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         await self.expire_phase()
         state = self.wb.state()
         self.assertEqual(state["episode"]["status"], "SUCCEEDED")
-        self.assertEqual(len(self.avatar.sent), 1)
+        self.assertEqual(len(self.avatar.sent), 2)
         self.assertEqual(self.avatar.sent[0][1], "我想认真回答。")
         instruction = REACTION_TTS_STYLE + "稍有忐忑，语气认真，句尾自然收住。"
         self.assertEqual(self.avatar.sent[0][0]["instruction"], instruction)
@@ -202,7 +221,7 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         await self.wb.job
         self.assertEqual(attempts, 2)
         self.assertEqual(r["phase"], "DONE")
-        self.assertEqual(len(self.avatar.sent), 1)
+        self.assertEqual(len(self.avatar.sent), 2)
         draft_payload = next(p for task, p in reversed(self.model.calls) if task == "draft")
         self.assertEqual(draft_payload["validation_error"], "invalid_reaction_instruction")
         self.assertTrue(draft_payload["selection_locked"])
@@ -218,7 +237,7 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         self.model.generate = with_ssml
         await self.start()
         await self.expire_phase()
-        self.assertEqual(len(self.avatar.sent), 1)
+        self.assertEqual(len(self.avatar.sent), 2)
         record, text = self.avatar.sent[0]
         self.assertEqual(text, "我想认真回答。")
         self.assertEqual(record["plan"]["segments"][0]["ssml"], ssml)
@@ -239,6 +258,10 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         r.pop("reaction_instruction")
         r.pop("reaction_plan")
         self.assertIsNone(r.get("performance"))
+        # Freeze an actual pre-migration pending record. Preparing it today
+        # would intentionally opt into the new message gesture.
+        r["performance"] = self.wb.program.prepare(r["id"], r["reaction"])
+        r["performance"].pop("message_motion_plan")
         game.performer = self.wb.program
         await game._perform_reaction(game._token)
         self.assertEqual(len(self.avatar.sent), 1)
@@ -501,7 +524,7 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.wb.program.state, "running")
         self.assertEqual(self.wb.game.current_round["phase"], "DONE")
         self.assertEqual(self.wb.game.data["messages"][1]["id"], man_id)
-        self.assertEqual(len(self.avatar.sent), 1)
+        self.assertEqual(len(self.avatar.sent), 2)
         self.assertEqual(self.avatar.sent[0][0]["instruction"], frozen_instruction)
         self.assertEqual(attempts, 2)
         self.assertEqual(self.model.calls[-1][1]["validation_error"], "invalid_delta")

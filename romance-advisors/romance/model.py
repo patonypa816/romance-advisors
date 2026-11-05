@@ -95,7 +95,7 @@ emotion是1—24字的情绪描述，不用固定标签字典。actions是0—1�
 emotion不会自动变成画面指令。需要让观众看见情绪时，可用现有face/head动作表达一个清楚的眉眼或视线变化，不必另加手势；有剧情理由可明显，不统一压成微笑点头。没必要就actions=[]，不为填等待表演；情绪与收束目标不必每句照搬，给上一句的收束留余地。
 每组严格为{"anchor":{"quote":"本句原文连续无标点无空白短语","occurrence":1},"motions":[{"part":"face","description":"一个具体可见的面部动作"}],"gaze":"眼神目标","expression":"可见表情"}。occurrence只计算quote在原文中连续完整出现的次数，从1开始；跨标点拼出的字词不算。例如“认，真点，认真点。”中“认真”只有一次连续出现，occurrence应为1。优先较早且自然的重心，不把动作压在最后一字，不添加秒数。
 motions必须1—2项兼容局部动作；part只允许head、face、left_arm、right_arm、both_arms、torso，同组不重复或争抢同一部位（both_arms占双臂），不使用whole_body。description为1—70字；gaze和expression各1—40字，描述简短，整组动作、眼神、表情合起来保持简洁。
-有动作时recovery必须且只含{"gaze":"收束眼神","expression":"收束表情"}，各1—40字。程序会让身体回到正常坐姿；此处写身体收住后仍延续的情绪，例如嘴硬后的局促笑意、欣喜后的忍笑，不用默认“恢复平静”抹掉刚才的表达。无动作时recovery必须为null。
+有动作时recovery必须且只含{"gaze":"收束眼神","expression":"收束表情"}，各1—40字。Q只发送眼神和表情，与GE一样不发送肢体动作；gaze只写眼神，expression只写可见表情，不写姿态、肢体或过渡动作。需要主动动作或明确返回时写入S的motions，不交给Q；此处保留仍延续的角色化情绪，例如嘴硬后的局促笑意、欣喜后的忍笑，不用默认“恢复平静”抹掉刚才的表达。无动作时recovery必须为null。
 """
 # Keep the complete draft contract last: ending on the expression subobject
 # reproduced omission of the separate message in a frozen-context sample.

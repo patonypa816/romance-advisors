@@ -5,8 +5,6 @@ import math
 
 ACTION_POST_SEND_SECONDS = 1.0  # S/L/Q成功发送后的Type9最短间隔；不限制台词或PCM。
 QUIET_DELAY_SECONDS = 1.5
-# Q描述目标姿态，避免把“收回/恢复”再解释成需要反复执行的新动作。
-QUIET_INSTRUCTION = "正常坐姿"
 READING_GAZE = "目光落在镜头下方附近"
 READING_EXPRESSION = "眼睛轻微眯起，神情专注辨认"
 READING_LEAD_SECONDS = 1.0  # 本轮试验提前量；不是平台固定渲染延迟。
@@ -61,14 +59,16 @@ def _validate_recovery(recovery: object, actions: list[dict], *, required=False)
             "expression": _ge(recovery["expression"], "恢复expression")}
 
 
-def _instruction(active: str, gaze: str, expression: str) -> str:
-    # Type9仍是文字接口；三行标签用于区分职责，并非Vidu新增的结构化API。
-    # 统一字段内空白，避免模型的换行破坏这三行；G/E实际进入发送内容。
-    pieces = [" ".join(part.split()).rstrip("。；;，, ") for part in (active, gaze, expression)]
-    instruction = "\n".join(f"{label}：{value}。" for label, value in zip(("动作", "眼神", "表情"), pieces))
-    # Structured inputs already have per-field bounds. Keep every validated
-    # word instead of imposing an unrelated total cap after compilation.
-    return instruction
+def _instruction(active: str | None, gaze: str, expression: str) -> str:
+    # GE 和 Q 共用两行格式。Q 的角色和时机由时间轴保留，发给 Vidu 的文本只写收尾神态。
+    fields = [("眼神", gaze), ("表情", expression)]
+    if active is not None:
+        fields.insert(0, ("动作", active))
+    lines = []
+    for label, value in fields:
+        clean = " ".join(value.split()).rstrip("。；;，, ")
+        lines.append(f"{label}：{clean}。")
+    return "\n".join(lines)
 
 
 def _validate_actions(actions: object) -> list[dict]:
@@ -133,7 +133,7 @@ def _compile_validated(actions: list[dict], recovery: dict | None) -> list[dict]
         delay = QUIET_DELAY_SECONDS if last["kind"] == "S" else last["hold_seconds"]
         timeline.append({"role": "Q", "kind": "Q", "index": len(actions) + 1,
                          "at_seconds": at_seconds + delay, "delay_seconds": delay,
-                         "motions": [], "instruction": _instruction(QUIET_INSTRUCTION, recovery["gaze"], recovery["expression"]),
+                         "motions": [], "instruction": _instruction(None, recovery["gaze"], recovery["expression"]),
                          "hold_seconds": 0.0, "gaze": recovery["gaze"], "expression": recovery["expression"]})
     return timeline
 
@@ -440,7 +440,7 @@ def compile_reading_timeline(reading: dict, actions: list[dict], recovery: dict,
         # 即使回答没有主动动作，阅读引入的姿态也有S0与唯一的尾Q。
         answer = [{"role": "Q", "kind": "Q", "motions": [], "hold_seconds": 0.0,
                    "delay_seconds": QUIET_DELAY_SECONDS,
-                   "instruction": _instruction(QUIET_INSTRUCTION, recovery["gaze"], recovery["expression"]),
+                   "instruction": _instruction(None, recovery["gaze"], recovery["expression"]),
                    **recovery}]
     at_seconds = recovery_seconds
     for index, node in enumerate(answer, 3):

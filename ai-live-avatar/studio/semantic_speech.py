@@ -17,9 +17,9 @@ except ImportError:
     from speech_markup import parse_speech_markup
 
 try:
-    from .action_schema import ACTION_POST_SEND_SECONDS, PARTS, QUIET_DELAY_SECONDS, QUIET_INSTRUCTION, _ge, _instruction, _text, _validate_reading, _validate_recovery, compile_timeline
+    from .action_schema import ACTION_POST_SEND_SECONDS, PARTS, QUIET_DELAY_SECONDS, _ge, _instruction, _text, _validate_reading, _validate_recovery, compile_timeline
 except ImportError:
-    from action_schema import ACTION_POST_SEND_SECONDS, PARTS, QUIET_DELAY_SECONDS, QUIET_INSTRUCTION, _ge, _instruction, _text, _validate_reading, _validate_recovery, compile_timeline
+    from action_schema import ACTION_POST_SEND_SECONDS, PARTS, QUIET_DELAY_SECONDS, _ge, _instruction, _text, _validate_reading, _validate_recovery, compile_timeline
 
 
 MAX_TEXT = 120
@@ -301,11 +301,9 @@ def compile_dialogue_motion_timeline(actions, recovery):
     if any(motion["part"] == "whole_body" for motion in actions[0]["motions"]):
         raise ValueError("A方案S短动作不支持whole_body")
     node = timeline[0]
-    # GE独立表达眼神和表情；S与Q仍使用已校验的三行Type9指令。
-    pieces = [" ".join(node[key].split()).rstrip("。；;，, ") for key in ("gaze", "expression")]
     lead = {"role": "GE", "kind": "GE", "index": 1, "at_seconds": 0.0,
             "delay_seconds": 0.0, "motions": [], "hold_seconds": 0.0,
-            "instruction": "\n".join(f"{label}：{value}。" for label, value in zip(("眼神", "表情"), pieces)),
+            "instruction": _instruction(None, node["gaze"], node["expression"]),
             "gaze": node["gaze"], "expression": node["expression"]}
     node.update(index=2, at_seconds=DIALOGUE_GE_LEAD_SECONDS, delay_seconds=DIALOGUE_GE_LEAD_SECONDS)
     timeline[1].update(index=3, at_seconds=DIALOGUE_GE_LEAD_SECONDS + DIALOGUE_S_TO_Q_SECONDS,
@@ -509,11 +507,11 @@ def compile_semantic_timeline(actions, recovery, alignment, audio_seconds, *, ac
                 "minimum_" + action_kind.lower() + "_seconds": minimum,
                 "minimum_post_send_seconds": ACTION_POST_SEND_SECONDS,
                 "audio_seconds": seconds})
-        ge = "\n".join(f"{label}：{group[key].rstrip('。')}。" for label, key in (("眼神", "gaze"), ("表情", "expression")))
+        ge = _instruction(None, group["gaze"], group["expression"])
         active = "，同时".join(m["description"] for m in group["motions"])
         entries = [(action_kind, start, group["motions"], _instruction(active, group["gaze"], group["expression"]),
                     group, q_at - start if action_kind == "L" else 0.0),
-                   ("Q", q_at, [], _instruction(QUIET_INSTRUCTION, recovery["gaze"], recovery["expression"]), recovery, 0.0)]
+                   ("Q", q_at, [], _instruction(None, recovery["gaze"], recovery["expression"]), recovery, 0.0)]
         if ge_lead_seconds is not None:
             entries.insert(0, ("GE", start - ge_lead_seconds, [], ge, group, 0.0))
         for role, at, motions, instruction, gaze_expression, hold in entries:

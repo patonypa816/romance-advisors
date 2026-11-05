@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import unittest
+from unittest.mock import patch
 
 from romance.game import Game
 from test_game import FakeModel
@@ -96,6 +97,100 @@ class PerformanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["episode"]["score"], 54)
         self.assertEqual(len(self.performer.calls), 1)
         self.assertEqual(len(self.performer.prepared), 1)
+
+    def use_typing_performer(self, *, fail_after_s=False):
+        prepare = self.performer.prepare
+        self.performer.prepare = lambda round_id, text: {
+            **prepare(round_id, text), "message_motion_plan": {"emotion": "专注"}}
+        before_s, allow_s = asyncio.Event(), asyncio.Event()
+        after_s, allow_tail = asyncio.Event(), asyncio.Event()
+
+        async def perform(record, text, *, on_message_action):
+            before_s.set()
+            await allow_s.wait()
+            on_message_action()
+            # Repeated polls for the same S must leave one message in storage.
+            on_message_action()
+            after_s.set()
+            await allow_tail.wait()
+            if fail_after_s:
+                raise RuntimeError("typing tail lost")
+            motion = {**self.performer.receipt, "job_id": record["job_id"] + ":typing",
+                      "generation": record["generation"], "short_action_sent": True}
+            return {**self.performer.receipt, "message_motion_receipt": motion}
+
+        self.performer.perform = perform
+        return before_s, allow_s, after_s, allow_tail
+
+    async def test_message_released_on_s_while_reply_waits_for_typing_tail(self):
+        before_s, allow_s, after_s, allow_tail = self.use_typing_performer()
+        task = asyncio.create_task(self.finish())
+        await asyncio.wait_for(before_s.wait(), 1)
+        self.assert_unsettled(self.game.public_state())
+        allow_s.set()
+        await asyncio.wait_for(after_s.wait(), 1)
+        self.assertEqual([m["role"] for m in self.game.public_state()["messages"]], ["woman", "man"])
+        self.assertTrue(self.game.storage.load()["rounds"][-1]["performance"]["man_released"])
+        self.assertFalse(any(name == "reply" for name, _ in self.model.calls))
+        allow_tail.set()
+        final = await task
+        self.assertEqual([m["role"] for m in final["messages"]], ["woman", "man", "woman"])
+        self.assertEqual(final["round"]["phase"], "DONE")
+
+    async def test_failed_typing_tail_preserves_public_message_without_settling(self):
+        before_s, allow_s, _, allow_tail = self.use_typing_performer(fail_after_s=True)
+        task = asyncio.create_task(self.finish())
+        await asyncio.wait_for(before_s.wait(), 1)
+        allow_s.set()
+        allow_tail.set()
+        state = await task
+        self.assertIsNotNone(state["error"])
+        self.assertEqual([m["role"] for m in state["messages"]], ["woman", "man"])
+        self.assertEqual(state["episode"]["score"], 50)
+        self.assertFalse(any(name == "reply" for name, _ in self.model.calls))
+
+    async def test_late_typing_s_after_abort_cannot_publish_the_hidden_message(self):
+        before_s, allow_s, _, allow_tail = self.use_typing_performer()
+        task = asyncio.create_task(self.finish())
+        await asyncio.wait_for(before_s.wait(), 1)
+        self.game.abort_episode()
+        allow_s.set()
+        allow_tail.set()
+        state = await task
+        self.assertEqual(state["round"]["phase"], "ABORTED")
+        self.assert_unsettled(state)
+
+    async def test_abort_during_minimum_woman_typing_cannot_commit_finale(self):
+        self.model.delta = 50
+        generated = asyncio.Event()
+        original = self.model.generate
+
+        async def generate(task, payload):
+            result = await original(task, payload)
+            if task == "reply":
+                generated.set()
+            return result
+
+        self.model.generate = generate
+        with patch("romance.game.WOMAN_TYPING_SECONDS", .1):
+            task = asyncio.create_task(self.finish())
+            try:
+                await asyncio.wait_for(generated.wait(), 1)
+                pending = self.game.public_state()
+                self.assertTrue(pending["round"]["woman_typing"])
+                self.assertEqual(pending["episode"]["score"], 50)
+                self.assertIsNone(pending["finale"])
+                self.game.abort_episode()
+                state = await asyncio.wait_for(task, 1)
+                self.assertEqual(state["episode"]["status"], "TECH_ENDED")
+                self.assertEqual(state["episode"]["score"], 50)
+                self.assertIsNone(state["finale"])
+                self.assertFalse(state["round"]["woman_typing"])
+                self.assertEqual(len(state["messages"]), 2)
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def test_stop_rejects_late_receipt_without_releasing_or_replying(self):
         self.performer.release.clear()

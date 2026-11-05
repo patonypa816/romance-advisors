@@ -1,4 +1,4 @@
-import {el,phaseText,appendMessages} from './ui.js';
+import {el,phaseText,appendMessages,TERMINAL} from './ui.js';
 import {layoutRects} from './layout.js';
 import {createAffinityPanel} from './affinity-panel.js';
 import {createFinaleOverlay} from './finale-overlay.js';
@@ -53,7 +53,8 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   let first=true,optionsSignature='',boardsSignature='',lastDisplayMode=null;
   const seenMessages=new Set();
   const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
-  let contextScrollFrame=null,contextScrollKey=null,followFrame=null,disposed=false;
+  let contextScrollFrame=null,contextScrollKey=null,followFrame=null,disposed=false,typingKey=null;
+  function clearTyping(){chat.querySelector('.woman-typing')?.remove();typingKey=null;}
   function stopContextScroll(){if(contextScrollFrame!==null)cancelAnimationFrame(contextScrollFrame);contextScrollFrame=null;contextScrollKey=null;}
   function scrollVotingContext(key,isVoting,contextId){
     const node=[...chat.querySelectorAll('[data-message-id]')].find(item=>item.dataset.messageId===String(contextId));
@@ -102,8 +103,31 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
       const followLatest=first||lastDisplayMode!==isVoting||messages.some(message=>!seenMessages.has(String(message.id)));
       lastDisplayMode=isVoting;
       const context=[...messages].reverse().find(message=>message.role==='woman');
-      if (!messages.length) {chat.replaceChildren(el('p','live-empty',episode?'等她发来第一条消息…':'从一条消息，开始这场心动。'));}
-      else {if(chat.querySelector('.live-empty'))chat.replaceChildren();appendMessages(chat,messages,state,{animate:message=>!first&&!seenMessages.has(String(message.id)),follow:true});}
+      // This indicator is transient UI, never part of the saved message list.
+      const key=episode?.id && current?.id ? `${episode.id}:${current.id}` : null;
+      const reply=messages.find(message=>message.role==='woman' && message.round_id===current?.id);
+      const typing=key && current.woman_typing===true && !reply && !state.error
+        && !TERMINAL.includes(episode.status) && current.phase!=='ABORTED';
+      const replyJustArrived=reply && typingKey!==null && typingKey===key && !seenMessages.has(String(reply.id));
+      if(!typing || typingKey!==key)clearTyping();
+      if (!messages.length) {
+        const emptyText=episode?'等她发来第一条消息…':'从一条消息，开始这场心动。';
+        const empty=chat.querySelector('.live-empty');
+        if(empty)empty.textContent=emptyText;
+        else if(!chat.querySelector('.woman-typing'))chat.replaceChildren(el('p','live-empty',emptyText));
+      } else {if(chat.querySelector('.live-empty'))chat.replaceChildren();appendMessages(chat,messages,state,{animate:message=>!first&&!seenMessages.has(String(message.id)),follow:true});}
+      if(replyJustArrived){
+        const row=[...chat.querySelectorAll('[data-message-id]')].find(node=>node.dataset.messageId===String(reply.id));
+        row?.classList.add('woman-reply-arriving');
+      }
+      if(typing && !chat.querySelector('.woman-typing')){
+        chat.querySelector('.live-empty')?.remove();
+        const row=el('div','chat-message woman woman-typing');row.setAttribute('role','status');row.setAttribute('aria-label',`${episode.woman_name || '女生'}正在输入`);
+        row.append(el('span','message-name',episode.woman_name || '女生'));
+        const bubble=el('div','message-bubble typing-bubble');bubble.setAttribute('aria-hidden','true');
+        for(let i=0;i<3;i++)bubble.append(el('span','typing-dot'));
+        row.append(bubble);chat.append(row);typingKey=key;chat.scrollTop=chat.scrollHeight;
+      }
       // The phone shows only the two characters' sent chat messages. The man's
       // spoken reaction belongs to the avatar performance, not this chat log.
       messages.forEach(message=>seenMessages.add(String(message.id)));
@@ -145,8 +169,8 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
     },
     suspend(){finale.suspend();},
     resume(){finale.resume();},
-    dispose(){finale.dispose();disposed=true;if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
-    offline(){phase.textContent='游戏状态读取失败';},
-    renderFailed(){phase.textContent='画面更新失败';}
+    dispose(){finale.dispose();disposed=true;clearTyping();if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
+    offline(){clearTyping();phase.textContent='游戏状态读取失败';},
+    renderFailed(){clearTyping();phase.textContent='画面更新失败';}
   };
 }

@@ -58,7 +58,7 @@ class TwoLongActionReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(timeline[3]["audio_at_seconds"], 8.18)
         self.assertEqual([n["group_index"] for n in timeline], [1, 1, 1, 2, 2, 2])
         for index in (2, 5):
-            self.assertIn("正常坐姿", timeline[index]["instruction"])
+            self.assertEqual(timeline[index]["instruction"], "眼神：自然看向镜头。\n表情：神情温和。")
         parsed["segments"][0]["timeline"] = []
         validate_long_action_replay_plan(parsed, group_count=2)
         self.assertEqual(len(parsed["segments"][0]["timeline"]), 6)

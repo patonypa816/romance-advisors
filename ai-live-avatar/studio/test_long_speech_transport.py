@@ -70,7 +70,8 @@ class LongSpeechTransportTests(unittest.IsolatedAsyncioTestCase):
             ge, s, q = motions[group_index*3:group_index*3+3]
             self.assertGreaterEqual(s["started"] - ge["completed"], .49)
             self.assertGreaterEqual(q["started"] - s["completed"], 1.49)
-            self.assertIn("正常坐姿", q["frame"]["payload"]["text_msg"]["content"])
+            self.assertEqual(q["frame"]["payload"]["text_msg"]["content"],
+                             "眼神：自然看向镜头。\n表情：神情温和。")
             self.assertNotIn("双手向外轻摊", q["frame"]["payload"]["text_msg"]["content"])
             if group_index:
                 offset = group_index*3-.5

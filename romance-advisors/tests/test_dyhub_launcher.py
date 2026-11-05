@@ -14,7 +14,8 @@ class DyHubLauncherTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='dyhub-launcher-test-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name) / 'repo with spaces'
+        # zsh resolves macOS's /var symlink when locating the launcher.
+        self.root = Path(self.temp.name).resolve() / 'repo with spaces'
         self.root.mkdir()
         self.script = self.root/'ai-live-avatar/studio/启动评论采集.command'
         self.script.parent.mkdir(parents=True)

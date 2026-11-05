@@ -33,6 +33,42 @@ class SpeechComponent(fixtures.FakeComponent):
 
 
 class ExternalWaitReceiptTests(unittest.TestCase):
+    def test_short_action_progress_is_scoped_to_current_motion_job(self):
+        item = {"id": "comment-one", "status": "sending", "external_job_id": "thinking",
+                "external_generation": "current", "external_owner_id": "owner"}
+        events = []
+        external = ExternalGame(SimpleNamespace(generation="current", current=SimpleNamespace(
+            component=SimpleNamespace(motion_events=events))))
+        external.owner_id, external.generation = "owner", "current"
+        job = {"job_id": "thinking", "mode": "motion", "item": item}
+        external.jobs[job["job_id"]] = job
+        event = {"role": "S", "comment_id": "comment-one", "job_id": "thinking"}
+        for changed in ({"role": "GE"}, {"role": "Q"}, {"comment_id": "other"},
+                        {"job_id": "other"}, {"job_id": None}):
+            events[:] = [{**event, **changed}]
+            self.assertFalse(external.job_public(job)["short_action_sent"])
+        events[:] = [event]
+        self.assertTrue(external.job_public(job)["short_action_sent"])
+        for field, value in (("external_generation", "previous"), ("external_owner_id", "other"),
+                             ("external_job_id", "other")):
+            original = item[field]
+            item[field] = value
+            self.assertFalse(external.job_public(job)["short_action_sent"])
+            item[field] = original
+        external.studio.generation = "new-session"
+        self.assertFalse(external.job_public(job)["short_action_sent"])
+        external.studio.generation = "current"
+        job["mode"] = "speech"
+        self.assertFalse(external.job_public(job)["short_action_sent"])
+        job["mode"] = "motion"
+        self.assertFalse(external.job_public(dict(job))["short_action_sent"])
+        # Terminal evidence remains useful after the active component is replaced.
+        events.clear()
+        item.update(status="cancelled", motion_receipts=[{"motion_events": [event]}])
+        result = external.job_public(job)
+        self.assertTrue(result["short_action_sent"])
+        self.assertFalse(result["playback_confirmed"])
+
     def test_only_completed_final_speech_tail_is_exposed(self):
         external = ExternalGame(SimpleNamespace())
         external.generation = "offline-generation"
@@ -163,6 +199,7 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.submit_motion(expires_at=time.time() + 3)).status, 200)
                 await clock.settle()
                 self.assertEqual([e["role"] for e in renderer.motion_events], ["GE"])
+                self.assertFalse((await (await self.get_job("thinking:1")).json())["short_action_sent"])
                 lead = renderer._ws.sent[0]["frame"]["payload"]["text_msg"]["content"]
                 self.assertEqual(lead.splitlines(), ["眼神：看向画面下方。", "表情：专注思考。"])
                 cancelled = await (await self.post("external/jobs/thinking:1/cancel", self.identity)).json()
@@ -171,17 +208,24 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.submit(job_id="formal")).status, 409)
                 await clock.advance(1.1)
                 self.assertEqual([e["role"] for e in renderer.motion_events], ["GE", "S"])
+                progress = await (await self.get_job("thinking:1")).json()
+                self.assertEqual(progress["status"], "sending")
+                self.assertTrue(progress["short_action_sent"])
+                self.assertFalse(progress["playback_confirmed"])
                 await clock.advance(1.5)
                 await asyncio.wait_for(s.work.join(), 1)
                 self.assertEqual([e["role"] for e in renderer.motion_events], ["GE", "S", "Q"])
                 self.assertEqual(renderer.motion_events[1]["actual_interval_seconds"], 1.1)
                 self.assertEqual(renderer.motion_events[-1]["actual_interval_seconds"], 1.5)
                 self.assertEqual([r["frame"]["type"] for r in renderer._ws.sent], [9, 9, 9])
-                self.assertIn("动作：正常坐姿。", renderer._ws.sent[-1]["frame"]["payload"]["text_msg"]["content"])
+                self.assertEqual(renderer._ws.sent[-1]["frame"]["payload"]["text_msg"]["content"],
+                                 "眼神：回到镜头。\n表情：自然专注。")
+                self.assertTrue(renderer._ws.sent[1]["frame"]["payload"]["text_msg"]["content"].startswith("动作："))
                 self.assertEqual(renderer._ws.binary, [])
                 job = await (await self.get_job("thinking:1")).json()
                 self.assertEqual(job["mode"], "motion")
                 self.assertEqual(job["status"], "sent")
+                self.assertTrue(job["short_action_sent"])
                 self.assertTrue(job["send_complete"])
                 self.assertFalse(job["handoff_wait_elapsed"])
                 self.assertFalse(job["worker_pending"])
@@ -192,6 +236,45 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
                 self.ai.generate_reply.assert_not_awaited()
                 s.timed_action_planner.assert_not_awaited()
         finally:
+            s.component = original
+
+    async def test_motion_s_attempt_and_failed_write_do_not_report_sent(self):
+        await self.claim()
+        self.live()
+        s = self.studio.current
+        original = s.component
+        renderer = self.renderer(s, fail_motion=2)
+        clock = ManualClock()
+        renderer._wait = lambda seconds: clock.wait(renderer, seconds)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_send = renderer._ws.send_json
+
+        async def blocked_s(frame):
+            if renderer._ws.motion_attempts == 1:
+                entered.set()
+                await release.wait()
+            await original_send(frame)
+
+        renderer._ws.send_json = blocked_s
+        fake_time = SimpleNamespace(monotonic=lambda: clock.now, time=time.time)
+        s.component = renderer
+        try:
+            with patch("motion_component.time", fake_time), patch("component_live.time", fake_time):
+                self.assertEqual((await self.submit_motion()).status, 200)
+                await clock.advance(1.1)
+                await asyncio.wait_for(entered.wait(), 1)
+                progress = await (await self.get_job("thinking:1")).json()
+                self.assertTrue(progress["delivery_started"])
+                self.assertFalse(progress["short_action_sent"])
+                self.assertEqual([e["role"] for e in renderer.motion_events], ["GE"])
+                release.set()
+                await asyncio.wait_for(s.work.join(), 1)
+                result = await (await self.get_job("thinking:1")).json()
+                self.assertEqual(result["status"], "error")
+                self.assertFalse(result["short_action_sent"])
+                self.assertFalse(result["playback_confirmed"])
+        finally:
+            release.set()
             s.component = original
 
     async def test_motion_duplicate_plan_mode_and_deadlines_are_frozen(self):
@@ -293,6 +376,7 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(s.work.join(), 1)
                 job = await (await self.get_job("thinking:1")).json()
                 self.assertEqual(job["status"], "error")
+                self.assertTrue(job["short_action_sent"])
                 self.assertTrue(job["delivery_started"])
                 self.assertFalse(job["send_complete"])
                 self.assertFalse(job["worker_pending"])
@@ -632,6 +716,11 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(s.work.join(), 1)
                 self.assertEqual([e["role"] for e in renderer.motion_events], ["GE", "S", "Q"])
                 self.assertEqual(renderer.motion_events[-1]["expression"], "保持着急又好笑的神情")
+                frames = [row["frame"] for row in renderer._ws.sent if row["frame"]["type"] == 9]
+                self.assertEqual(len(frames), 3)
+                self.assertTrue(frames[1]["payload"]["text_msg"]["content"].startswith("动作："))
+                self.assertEqual(frames[2]["payload"]["text_msg"]["content"],
+                                 "眼神：继续看向镜头。\n表情：保持着急又好笑的神情。")
                 self.assertEqual((await (await self.get_job()).json())["status"], "sent")
         finally:
             s.component = original

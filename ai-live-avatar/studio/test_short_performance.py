@@ -255,7 +255,8 @@ class ShortPerformanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(s["started"] - ge["completed"], 0.65)
         self.assertGreaterEqual(q["started"] - s["completed"], 1.49)
         self.assertLess(q["started"] - s["completed"], 1.65)
-        self.assertIn("动作：正常坐姿。", q["frame"]["payload"]["text_msg"]["content"])
+        self.assertEqual(q["frame"]["payload"]["text_msg"]["content"],
+                         "眼神：自然看向镜头。\n表情：神情温和。")
         self.assertFalse(c._ws.binary)
         self.assertEqual(c.utterances_started, 0)
         credentials.assert_not_called()

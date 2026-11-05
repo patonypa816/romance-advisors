@@ -105,17 +105,17 @@ HISTORICAL_ACTION_WRITING_RULES = HISTORICAL_PERFORMANCE_DIRECTION + """【动�
 忠实保留请求中的明确动作与动词，用简短直接的动作指令表达，不改成近似动作。
 需要动作时，默认少量有意义的动作；同一Type9描述允许自然连续动作，可按语义与发送时序需要拆成节点。
 不自行把一个动作拆成抬手、手指轨迹、低头、收手等细小步骤，不为填字段添加无关姿态或心理戏。
-用户未安排的常规收势交给程序末尾Q；明确要求的返回、先后动作和等待必须保留，不能由Q替代。
+Q只发送眼神和表情，与GE一样不发送肢体动作；明确要求的主动返回、先后动作和等待必须保留在S/L中，不能由Q替代。
 【字段职责】
 motions.description：写清该项表演的动作与效果，保留关键动词与必要部位；眼神与表情分别写入gaze和expression。
 gaze：必填，只写与动作兼容的简短眼神目标；未指定时保守自然，不附带头部或身体动作。
 expression：必填，只写与语义兼容的简短表情；微笑、认真等明确短词即可，不编造心理活动。
 recovery：只写整组结束时的眼神和表情状态，例如gaze="注视镜头"、expression="神情温和"。
-Q的姿态由程序写为“正常坐姿”；recovery不用“收回、恢复、回看、转回、回到”等过渡动作措辞，
-不描述如何到达目标状态。这条只约束recovery，不改写用户明确要求的主动动作。
+Q只发送眼神和表情；recovery的gaze只写眼神，expression只写可见表情，不写姿态、肢体或过渡动作。
+保留角色化情绪，不默认抹平成平静。这条只约束recovery，不改写用户明确要求的主动动作。
 例如请求“抠鼻子”，可写description="右手抠鼻子"、gaze="目光自然"、expression="表情平静"；
 不能把“抠鼻子”换成“捏鼻子”，或擅加低头、皱眉、自嘲。示例只说明写法，不是动作词表或固定映射。
-只输出既有JSON字段；字段值不加“动作：”“眼神：”“表情：”标签，三行Type9文字由程序编排。
+只输出既有JSON字段；字段值不加“动作：”“眼神：”“表情：”标签，Type9文字由程序编排；Q只发送眼神和表情，不附带动作行。
 description的70字和gaze/expression的40字均为硬上限，不是写作目标；无需凑字，也不设机械短词字数门槛。
 【输出自检】
 检查原动作语义是否保留、是否出现无必要的细小步骤或额外节点、G/E是否简洁且兼容动作；
@@ -138,7 +138,7 @@ ACTION_WRITING_RULES = """【表达与字段职责】
 motions.description写该项完整画面表现，保留请求中的关键动词、对象和预期结果。用连贯直接的描述组织少量有意义的表演，按语义与顺序需要分组。
 part标记该项涉及的身体部位，用于本地协调同时动作；description承载该项表演的完整内容。
 gaze写与表演兼容的眼神目标，expression写兼容的可见表情；以清楚可见的表现表达，不添加无关心理解释。
-recovery只写结束时的眼神与表情目标状态，常规收势由程序处理。请求明确的主动返回、先后动作和等待仍保留在actions中，不能由末尾恢复替代。
+Q只发送眼神和表情，与GE一样不发送肢体动作；recovery的gaze只写眼神，expression只写可见表情，不写姿态、肢体或过渡动作，保留角色化情绪。请求明确的主动返回、先后动作和等待仍保留在actions的S/L中，不能由Q替代。
 字段值直接写内容，不添加“动作：”“眼神：”“表情：”标签。长度限制是上限，按表达需要简洁书写。
 """
 
@@ -150,7 +150,7 @@ S用于短窗口，hold_seconds为0，motions含1至2项兼容描述，part取he
 L用于较长完整窗口，hold_seconds大于1.5且不超过30，motions恰好1项，part只能whole_body或torso；L后节点间隔至少为该L的hold_seconds。
 同节点部位应兼容，相同part冲突，both_arms占左右臂；whole_body使用L，不能伪装成局部部位。
 description为1至70字，gaze、expression各1至40字；完整指令保留各字段的全部文字。
-recovery必须且只能含gaze、expression，各1至40字。程序在整组末尾补恢复指令，S后等待1.5秒，L保留其完整窗口；模型不输出Q、GE或timeline。
+recovery必须且只能含gaze、expression，各1至40字。程序在整组末尾补Q；Q只发送眼神和表情，S后等待1.5秒，L保留其完整窗口；模型不输出Q、GE或timeline。
 本模式不生成台词、reading、segments或音频。
 """
 
@@ -186,7 +186,7 @@ REPLY_PROMPT = """你是直播数字人的回复大脑。按下列可信角色�
 """ + SPEECH_OUTPUT_CONTRACT + HISTORICAL_ACTION_WRITING_RULES
 
 DIRECTOR_ACTION_RULES = """动作合同：每个actions节点只能包含kind、delay_seconds、motions、hold_seconds、gaze、expression。
-kind只能S或L，模型不得规划Q、R、S0或timeline；程序只在整组末尾补一次Q回正。
+kind只能S或L，模型不得规划Q、R、S0或timeline；程序只在整组末尾补一次Q；Q只发送眼神和表情。
 每句或纯动作组的首节点delay_seconds必须为数值0；后续间隔至少1秒且不超过30秒，
 它相对于本组前一条Type9成功发送计时，不能沿用上一句间隔。每句/组最多6个主动节点。
 S/L/Q成功发送后，下一条Type9动作指令（含下一组GE）至少等待1秒；只约束动作指令，Type10台词与PCM连续发送。
@@ -233,7 +233,7 @@ kind必须为S，delay_seconds和hold_seconds必须为数值0。motions恰好一
 part只能head、face、left_arm、right_arm、both_arms、torso；description为1至70字，允许自然连续动作。
 gaze、expression各1至40字，分别只描述兼容动作的眼神与表情。
 同一description允许自然连续动作，须遵守本试验恰好一个节点及既定时序，不增拆节点。
-recovery必须且只能含gaze、expression，各1至40字，只写结束状态；编译后的Type9保留上述各字段的全部文字。
+recovery必须且只能含gaze、expression，各1至40字，只写结束时的眼神与可见表情，不写姿态、肢体或过渡动作；Q只发送眼神和表情，保留角色化情绪。编译后的Type9保留上述各字段的全部文字。
 """
 SHORT_SPEECH_CONTRACT = """【完整输出结构】顶层必须且只能含emotion、observation、reading、segments。
 emotion为1至24字，observation为1至300字，只写已观察事实或明确未知；reading必须为null。
@@ -297,7 +297,7 @@ actions必须恰好两个节点，每个必须且只能含kind、delay_seconds�
 description为1至70字，允许自然连续动作。gaze和expression各1至40字，只写兼容该动作的眼神与表情目标。
 同一description允许自然连续动作，须遵守本试验恰好两个节点及既定时序，不增拆节点；gaze只写眼神，expression只写表情。
 recovery必须且只能含gaze、expression，各1至40字，描述两组共同的结束目标状态。
-Q姿态仍由程序写为“正常坐姿”；recovery不写收回、恢复、转回等过渡动作。编译后的Type9保留上述各字段的全部文字。
+Q只发送眼神和表情；recovery的gaze只写眼神，expression只写可见表情，不写姿态、肢体或过渡动作，保留角色化情绪。编译后的Type9保留上述各字段的全部文字。
 每组均为GE→0.5秒→S→1.5秒→Q，两组都使用同一个recovery；语音从首S成功发送后开始，与动作并行。
 第二组GE计划位于首段PCM成功写入后2.5秒附近，第二S计划距首S为3.0秒；运行以实际成功写入为准。
 这是发送试验计划，不是画面精确同步或动作完成证明。不输出GE、Q、timeline、id或lease，不得输出L、第二段或reading对象。
@@ -354,7 +354,7 @@ actions必须为1至6个节点的数组，不强制两个；按内容选择动�
 description为1至70字，允许自然连续动作。gaze和expression各1至40字，只写兼容该动作的眼神与表情目标。
 同一Type9描述允许自然连续动作；可按语义与发送时序需要拆节点，gaze只写眼神，expression只写表情。
 recovery必须且只能含gaze、expression，各1至40字，描述所有组共同的结束目标状态。
-每组Q姿态仍由程序写为“正常坐姿”；recovery不写收回、恢复、转回等过渡动作。编译后的Type9保留上述各字段的全部文字。
+每组Q只发送眼神和表情；recovery的gaze只写眼神，expression只写可见表情，不写姿态、肢体或过渡动作，保留角色化情绪。编译后的Type9保留上述各字段的全部文字。
 每组均为GE→0.5秒→S→1.5秒→Q，所有组都使用同一个recovery；语音从首S成功发送后开始，与动作并行。
 各组S计划相对首S为0、3、6秒依次递增；第二组起GE计划位于首PCM成功写入后2.5、5.5秒依次递增，
 实际调度还要等待前组Q成功写入及PCM进度阈值。时间线只是试验计划，不证明画面同步或动作完成。
@@ -425,7 +425,7 @@ reading每轮必填，可为null或仅含text、instruction的对象。结合当
 自然选择整套读弹幕或直接接话；新话题或需要辨认时可读，简短应答或连续追问可直接接话，不按固定概率、次数或关键词轮换。
 reading.text必须是本轮原评论的连续子串，1至30字，通常可选2至6字，可只念短语，不补全、不扩写、不添加前缀。
 reading.instruction为1至160字，轻声短读原文，清晰自然、像喃喃辨认，不拖长、不刻意压嗓。
-选择reading时前倾、眯眼、短读为整套；具体阅读前导与回正由程序加入，模型只给reading与首段recovery。
+选择reading时前倾、眯眼、短读为整套；具体阅读前导与主动返回S0由程序加入；S0不是Q，Q只发送眼神和表情，模型只给reading与首段recovery。
 reading=null则整套省略。历史中的计划选择不等于已经发送，发送标记不等于视觉完成；排队或失败状态不能当整套已完成。
 """
 

@@ -1,12 +1,16 @@
 """Real game/client/Studio HTTP handshake, with only TTS and rendering faked."""
 import asyncio
 import copy
+import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 import test_external_game as fixtures
+from test_semantic_progress import ManualClock
 
 # Keep the application boundary real: these tests catch protocol mismatches
 # which separate fake-client and fake-server unit tests cannot see.
@@ -17,6 +21,7 @@ for directory in (GAME_ROOT, GAME_ROOT / "tests"):
 
 from romance.avatar_client import AvatarClient, AvatarClientError
 from romance.expression import build_plan
+from romance.performance import MESSAGE_MOTION_PLAN
 from romance.server import Workbench
 from test_game import FakeModel
 
@@ -70,41 +75,166 @@ class GamePreparedIntegration(unittest.IsolatedAsyncioTestCase):
             while not predicate():
                 await asyncio.sleep(.01)
 
-    async def test_formal_round_recovers_lost_prepare_and_dispatch_without_repeating(self):
+    async def test_success_finale_recovers_lost_prepare_and_dispatch_without_repeating(self):
+        await self.formal_finale_round(50)
+
+    async def test_failure_finale_recovers_lost_prepare_and_dispatch_without_repeating(self):
+        await self.formal_finale_round(-50)
+
+    async def formal_finale_round(self, delta):
+        self.model.delta = delta
+        avatar_url = "https://p3.douyinpic.com/aweme/synthetic-avatar.jpeg"
         self.avatar.lose_responses = {"prepare", "dispatch"}
-        entered, release = asyncio.Event(), asyncio.Event()
-        sender = self.studio.current.component.send_aligned_expression
+        entered, release, reply_generated = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        session = self.studio.current
+        original = session.component
+        renderer = fixtures.ExternalGameContracts.renderer(self, session)
+        socket = renderer._ws
+        clock = ManualClock()
+        renderer._wait = lambda seconds: clock.wait(renderer, seconds)
+        fake_time = SimpleNamespace(monotonic=lambda: clock.now, time=time.time)
 
         async def send(*args, **kwargs):
             entered.set()
             await release.wait()
-            return {"status": "sent", "send_complete": True, "handoff_wait_elapsed": True}
+            return {"status": "sent", "send_complete": True, "handoff_wait_elapsed": True,
+                    "post_audio_wait_seconds": 0.0}
 
-        sender.side_effect = send
-        game = self.wb.game
-        game.submit_proposal("advisor", "军师", "解释紧张")
-        selected = await game.close_collection()
-        game.vote("viewer", "观众", selected["round"]["options"][0]["id"])
-        task = asyncio.create_task(game.close_voting())
-        try:
-            await asyncio.wait_for(entered.wait(), 3)
-            state = game.public_state()
-            self.assertEqual([m["role"] for m in state["messages"]], ["woman"])
+        renderer.send_aligned_expression = sender = AsyncMock(side_effect=send)
+        session.component = renderer
+        model_generate = self.model.generate
+        self.model.wait_task = "reply"
+
+        async def generate(kind, payload):
+            result = await model_generate(kind, payload)
+            if kind == "reply":
+                reply_generated.set()
+            return result
+
+        self.model.generate = generate
+        game, task = self.wb.game, None
+
+        def roles():
+            return [message["role"] for message in game.public_state()["messages"]]
+
+        def assert_no_reply():
             self.assertFalse(any(kind == "reply" for kind, _ in self.model.calls))
-            self.assertEqual(self.tts.await_count, 1)
+
+        try:
+            # Only motion scheduling uses the manual clock. The game typing
+            # window runs on real time, alongside the fake model request.
+            with (patch("motion_component.time", fake_time), patch("component_live.time", fake_time),
+                  patch("romance.game.WOMAN_TYPING_SECONDS", .4),
+                  patch.object(self.studio, "player_public", return_value={"connected": True})):
+                # Enter through the same comment boundary used by DyHub, keeping
+                # the original author and avatar through the prepared show.
+                game.accept_comment({"event_id": "dyhub:synthetic", "author_id": "advisor",
+                    "nickname": "军师", "text": "解释紧张", "avatar_url": avatar_url,
+                    "expected_round_id": game.current_round["id"], "expected_phase": "COLLECTING"})
+                selected = await game.close_collection()
+                score_before = selected["episode"]["score"]
+                game.vote("viewer", "观众", selected["round"]["options"][0]["id"])
+                task = asyncio.create_task(game.close_voting())
+                await asyncio.wait_for(entered.wait(), 3)
+                self.assertEqual(roles(), ["woman"])
+                self.assertEqual(renderer.motion_events, [])
+                assert_no_reply()
+                self.assertEqual(self.tts.await_count, 1)
+                release.set()
+
+                await self.eventually(lambda: len(renderer.motion_events) == 1)
+                self.assertEqual([event["role"] for event in renderer.motion_events], ["GE"])
+                self.assertEqual(roles(), ["woman"])
+                motion = next(job for job in self.studio.external_game.jobs.values() if job["mode"] == "motion")
+                self.assertEqual(motion["submitted_plan"]["actions"], MESSAGE_MOTION_PLAN["actions"])
+                self.assertEqual(motion["submitted_plan"]["recovery"], MESSAGE_MOTION_PLAN["recovery"])
+                self.assertFalse(self.studio.external_game.job_public(motion)["short_action_sent"])
+                self.assertFalse(game.public_state()["round"]["woman_typing"])
+                assert_no_reply()
+
+                await clock.advance(1.1)
+                await self.eventually(lambda: game.public_state()["round"]["performance"]["man_released"])
+                self.assertEqual([event["role"] for event in renderer.motion_events], ["GE", "S"])
+                self.assertEqual(roles(), ["woman", "man"])
+                self.assertEqual(game.public_state()["round"]["phase"], "WAITING_REPLY")
+                self.assertTrue(self.studio.external_game.job_public(motion)["short_action_sent"])
+                self.assertFalse(game.public_state()["round"]["woman_typing"])
+                self.assertFalse(task.done())
+                assert_no_reply()
+
+                await clock.advance(1.5)
+                await asyncio.wait_for(self.model.started.wait(), 3)
+                typing = game.public_state()
+                self.assertEqual([event["role"] for event in renderer.motion_events], ["GE", "S", "Q"])
+                self.assertTrue(typing["round"]["woman_typing"])
+                self.assertEqual(roles(), ["woman", "man"])
+                self.assertEqual(typing["episode"]["score"], score_before)
+                self.assertIsNone(typing["round"]["delta"])
+                self.assertIsNone(typing["finale"])
+                # A fast generated reply still waits for the visible typing
+                # window; neither its body nor its score leaks early.
+                self.model.release.set()
+                await asyncio.wait_for(reply_generated.wait(), 1)
+                typing = game.public_state()
+                self.assertTrue(typing["round"]["woman_typing"])
+                self.assertEqual(roles(), ["woman", "man"])
+                self.assertEqual(typing["episode"]["score"], score_before)
+                self.assertIsNone(typing["round"]["delta"])
+                self.assertIsNone(typing["finale"])
+                self.assertFalse(task.done())
+
+                # Finale time must start at the joint woman/score commit, not
+                # at S, Q, model completion, or the first public-state poll.
+                commit_not_before = time.time()
+                result = await asyncio.wait_for(task, 3)
+                self.assertEqual(result["round"]["phase"], "DONE", result.get("error"))
+                self.assertFalse(result["round"]["woman_typing"])
+                self.assertTrue(result["round"]["performance"]["man_released"])
+                self.assertFalse(result["round"]["performance"]["playback_confirmed"])
+                self.assertEqual(roles(), ["woman", "man", "woman"])
+                self.assertEqual(result["episode"]["score"], score_before + self.model.delta)
+                finale = result["finale"]
+                self.assertEqual(finale["status"], "SUCCEEDED" if delta > 0 else "FAILED")
+                self.assertGreaterEqual(finale["started_at"], commit_not_before)
+                self.assertEqual(finale["duration_ms"], 6800)
+                award = finale["awards"]["best" if delta > 0 else "worst"]
+                self.assertEqual(award["author_id"], "advisor")
+                self.assertEqual(award["avatar_url"], avatar_url)
+                self.assertNotIn(avatar_url, json.dumps(self.model.calls))
+                frozen = copy.deepcopy(game.episode["finale"])
+                await game.retry()
+                for _ in range(3):
+                    self.assertEqual(game.public_state()["finale"]["started_at"], frozen["started_at"])
+                self.assertEqual(game.episode["finale"], frozen)
+                self.assertEqual(game.storage.load()["episodes"][-1]["finale"], frozen)
+                self.assertEqual(result["round"]["delta"], self.model.delta)
+                self.assertEqual(self.tts.await_count, 1)
+                self.assertEqual(sender.await_count, 1)
+                self.assertEqual(self.avatar.lose_responses, set())
+                self.assertEqual(self.avatar.paths.count("external/jobs/prepare"), 1)
+                # A prepared response may require one same-ID redispatch; only
+                # the real worker send count proves no duplicate performance.
+                self.assertIn(sum(path.endswith("/dispatch") for path in self.avatar.paths), (1, 2))
+                self.assertEqual(self.avatar.paths.count("external/jobs"), 1)
+                self.assertEqual(len(self.studio.external_game.jobs), 2)
+                self.assertEqual(motion["job_id"], game.current_round["performance"]["job_id"] + ":typing")
+                self.assertEqual([row["frame"]["type"] for row in socket.sent], [9, 9, 9])
+                action_text = socket.sent[1]["frame"]["payload"]["text_msg"]["content"]
+                for movement in MESSAGE_MOTION_PLAN["actions"][0]["motions"]:
+                    self.assertIn(movement["description"], action_text)
+                self.assertEqual(socket.binary, [])
+                self.assertIs(renderer._ws, socket)
+                self.assertFalse(session.stopping)
+                self.assertEqual(len(self.wb.program.expression_context()["recent_performances"]), 1)
+                self.ai.generate_reply.assert_not_awaited()
+                session.timed_action_planner.assert_not_awaited()
         finally:
             release.set()
-        result = await asyncio.wait_for(task, 3)
-        self.assertEqual(result["round"]["phase"], "DONE", result.get("error"))
-        self.assertTrue(result["round"]["performance"]["man_released"])
-        self.assertFalse(result["round"]["performance"]["playback_confirmed"])
-        self.assertEqual([m["role"] for m in result["messages"]], ["woman", "man", "woman"])
-        self.assertEqual(self.tts.await_count, 1)
-        self.assertEqual(sender.await_count, 1)
-        self.assertEqual(self.avatar.paths.count("external/jobs/prepare"), 1)
-        self.assertEqual(sum(p.endswith("/dispatch") for p in self.avatar.paths), 1)
-        self.assertEqual(len(self.studio.external_game.jobs), 1)
-        self.assertEqual(len(self.wb.program.expression_context()["recent_performances"]), 1)
+            self.model.release.set()
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            session.component = original
 
     async def test_next_is_prepared_over_http_while_current_is_sending(self):
         entered, release, next_tts = asyncio.Event(), asyncio.Event(), asyncio.Event()

@@ -35,7 +35,7 @@ class ContinuousContractTests(unittest.TestCase):
             for node, baseline in zip(actual, single):
                 for key in ("instruction", "gaze", "expression", "motions", "kind", "hold_seconds"):
                     self.assertEqual(node[key], baseline[key])
-            self.assertEqual(actual[2]["instruction"], "动作：正常坐姿。\n眼神：注视镜头。\n表情：神情温和。")
+            self.assertEqual(actual[2]["instruction"], "眼神：注视镜头。\n表情：神情温和。")
 
     def test_constants_and_valid_plan_keep_complete_schema(self):
         self.assertEqual(schema.CONTINUOUS_SECOND_S_SECONDS, 3.0)

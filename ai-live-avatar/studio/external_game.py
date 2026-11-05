@@ -67,6 +67,26 @@ class ExternalGame:
                       "finish_before": job["item"].get("finish_before")}
                      for job in self.jobs.values()]})
 
+    def short_action_sent(self, job):
+        item = job["item"]
+        if (job.get("mode", "speech") != "motion" or not self.active
+                or self.generation != getattr(self.studio, "generation", None)
+                or self.jobs.get(job["job_id"]) is not job
+                or item.get("external_job_id") != job["job_id"]
+                or item.get("external_generation") != self.generation
+                or item.get("external_owner_id") != self.owner_id
+                or item.get("id") is None):
+            return False
+        # motion_events is appended only after send_json succeeds. Read it while
+        # sending, and the item's copied receipts after completion/cancellation;
+        # a GE write, a diagnostic attempt, or another job is not an S receipt.
+        events = getattr(self.studio.current.component, "motion_events", [])
+        sources = [events, *(r.get("motion_events", []) for r in item.get("motion_receipts", []))]
+        return any(event.get("role") == "S"
+                   and event.get("comment_id") == item["id"]
+                   and event.get("job_id") == job["job_id"]
+                   for source in sources for event in source)
+
     def job_public(self, job):
         item = job["item"]
         receipts = item.get("motion_receipts", [])
@@ -84,6 +104,7 @@ class ExternalGame:
                 "mode": job.get("mode", "speech"),
                 "status": item["status"], "segments_sent": item.get("segments_sent", 0),
                 "delivery_started": bool(item.get("delivery_started")),
+                "short_action_sent": self.short_action_sent(job),
                 "worker_pending": bool(item.get("external_worker_pending")),
                 "preparation_pending": bool(item.get("external_preparation_pending")),
                 "submission_mode": job.get("submission_mode", "legacy"),

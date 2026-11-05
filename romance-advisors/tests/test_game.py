@@ -2,8 +2,10 @@ import asyncio
 import copy
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from romance.game import Game
 
@@ -84,6 +86,35 @@ class GameTests(unittest.IsolatedAsyncioTestCase):
         options = await self.options()
         self.game.vote("v", "投票者", options[0]["id"])
         return await self.game.close_voting()
+
+    async def test_fast_reply_stays_private_while_typing_then_commits_with_score(self):
+        # A short real display interval lets us observe the normal public API
+        # after the synthetic model returned but before either result is public.
+        with patch("romance.game.WOMAN_TYPING_SECONDS", .12):
+            started = time.monotonic()
+            task = asyncio.create_task(self.finish())
+            await asyncio.sleep(.025)
+            self.assertTrue(any(name == "reply" for name, _ in self.model.calls))
+            state = self.game.public_state()
+            self.assertTrue(state["round"]["woman_typing"])
+            self.assertEqual([m["role"] for m in state["messages"]], ["woman", "man"])
+            self.assertEqual(state["episode"]["score"], 50)
+            final = await task
+            self.assertGreaterEqual(time.monotonic() - started, .12)
+            self.assertFalse(final["round"]["woman_typing"])
+            self.assertEqual([m["role"] for m in final["messages"]], ["woman", "man", "woman"])
+            self.assertEqual(final["episode"]["score"], 54)
+
+    async def test_abort_during_typing_discards_prepared_reply(self):
+        with patch("romance.game.WOMAN_TYPING_SECONDS", .12):
+            task = asyncio.create_task(self.finish())
+            await asyncio.sleep(.025)
+            self.assertTrue(self.game.public_state()["round"]["woman_typing"])
+            self.game.abort_episode()
+            final = await task
+        self.assertFalse(final["round"]["woman_typing"])
+        self.assertEqual([m["role"] for m in final["messages"]], ["woman", "man"])
+        self.assertEqual(final["episode"]["score"], 50)
 
     async def test_count_change_invalid_vote_and_after_close(self):
         options = await self.options()

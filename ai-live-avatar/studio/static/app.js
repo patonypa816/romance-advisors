@@ -444,7 +444,7 @@ function render(data) {
   const dialoguePolicy = studio.dialogue_action_policy;
   $('semanticSpeechHint').hidden = studio.semantic_speech !== true || !!replay;
   $('semanticSpeechHint').textContent = dialoguePolicy?.name === 'A'
-    ? `口播默认动作：A 方案。眼神、表情提前 ${fixed(dialoguePolicy.ge_lead_seconds, 1)} 秒，短动作后 ${fixed(dialoguePolicy.short_to_q_seconds, 1)} 秒恢复坐姿；随本次台词安排。`
+    ? `口播默认动作：A 方案。眼神、表情提前 ${fixed(dialoguePolicy.ge_lead_seconds, 1)} 秒，短动作后 ${fixed(dialoguePolicy.short_to_q_seconds, 1)} 秒发 Q；Q只发送眼神和表情，与 GE 一样不发送肢体动作；随本次台词安排。`
     : '动作随台词内容安排；回复记录可查看动作对应的语句与时间。';
   $('shortPerformanceHint').hidden = !shortTest;
   $('continuousSpeechHint').hidden = !continuousTest;
@@ -458,9 +458,9 @@ function render(data) {
     ? (replay.semantic_speech
       ? (replay.minute_replay
         ? `${fixed(replay.audio_seconds, 2)} 秒连续口播，六个随台词发生的动作；录制后导出 60 秒视频。`
-        : `共用同一份 ${fixed(replay.audio_seconds, 2)} 秒音频与 ${replay.actions.length} 处动作，观察连续表达、动作衔接与恢复坐姿。`)
+        : `共用同一份 ${fixed(replay.audio_seconds, 2)} 秒音频与 ${replay.actions.length} 处动作，观察连续表达、动作衔接与眼神表情延续；Q只发送眼神和表情。`)
       : replay.action_kind === 'L'
-      ? (replay.long_action_group_count === 2 ? '复用原音频和台词，每两个原动作组成一条 L，两组之间发 Q 回到正常坐姿。' : '复用原音频和台词，将原四个动作合成一条完整 L 描述。')
+      ? (replay.long_action_group_count === 2 ? '复用原音频和台词，每两个原动作组成一条 L，两组之间发 Q；Q只发送眼神和表情。' : '复用原音频和台词，将原四个动作合成一条完整 L 描述。')
       : '固定对照仅改变动作组间距；原音频、台词与动作保持一致。')
     : '观众互动优先，主讲在空档接续。暂停接单与暂停主讲分别控制。';
   if (replay) {
@@ -472,7 +472,7 @@ function render(data) {
         : replay.first_q_after_seconds === 3 ? '双 L · 第一 Q 提前至 3 秒' : '双 L 分组对照')
       : longAction ? '单 L 长动作对照' : '5 秒间距对照';
     $('fixedReplaySummary').textContent = semanticReplay
-      ? `${replay.minute_replay ? '沿用A方案，两段真实语音拼成一段连续播放。' : ''}${replay.independent_ge ? `先发眼神表情，${fixed(replay.ge_lead_seconds, 1)} 秒后发动作。` : '眼神、表情与动作合在同一条指令中发送。'}${replay.actions.length} 处 S 在 ${replay.s_seconds.map(n => fixed(n, 2)).join('、')} 秒开始，各自 1.5 秒后发恢复指令；原音频 ${fixed(replay.audio_seconds, 2)} 秒完整播放。`
+      ? `${replay.minute_replay ? '沿用A方案，两段真实语音拼成一段连续播放。' : ''}${replay.independent_ge ? `先发眼神表情，${fixed(replay.ge_lead_seconds, 1)} 秒后发动作。` : '眼神、表情与动作合在同一条指令中发送。'}${replay.actions.length} 处 S 在 ${replay.s_seconds.map(n => fixed(n, 2)).join('、')} 秒开始，各自 1.5 秒后发 Q（Q只发送眼神和表情）；原音频 ${fixed(replay.audio_seconds, 2)} 秒完整播放。`
       : pairedLongAction
       ? `原样本 ${display(replay.source_comment_id)} · 音频 ${fixed(replay.audio_seconds, 2)} 秒。第一组 L 发出 ${fixed(replay.group_holds_seconds?.[0], 2)} 秒后发 Q，至少 ${fixed(replay.q_to_next_l_seconds, 2)} 秒后发第二组 L（中间含 GE 前导）；共 6 条 Type9。第二组 L 计划在语音开始后 ${fixed(replay.second_l_audio_seconds, 2)} 秒发送，末尾 Q 仍在 ${fixed(replay.last_q_audio_seconds, 2)} 秒；实际以成功写入重新计时。`
       : longAction
@@ -481,9 +481,9 @@ function render(data) {
     $('fixedReplayContext').textContent = replay.interaction_context ? `互动情境：${replay.interaction_context}` : '';
     $('fixedReplayText').textContent = replay.text;
     $('fixedReplayActions').textContent = semanticReplay
-      ? replay.actions.map((action, index) => `S${index + 1}：${action} → 恢复坐姿`).join(' → ')
+      ? replay.actions.map((action, index) => `S${index + 1}：${action} → Q（仅眼神和表情）`).join(' → ')
       : pairedLongAction
-      ? `L₁：${replay.actions[0]} → Q：正常坐姿 → L₂：${replay.actions[1]} → Q：正常坐姿`
+      ? `L₁：${replay.actions[0]} → Q：仅眼神和表情 → L₂：${replay.actions[1]} → Q：仅眼神和表情`
       : `${longAction ? 'L 动作描述' : '原动作顺序'}：${replay.actions.join(' → ')}`;
   }
   renderReplayCommands(replay, session, studio, data.comments);

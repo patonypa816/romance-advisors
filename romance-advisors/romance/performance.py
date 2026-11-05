@@ -11,12 +11,14 @@ import time
 from .expression import ExpressionValidationError, parse_ambient_result
 
 
-THINKING_PLAN = {
-    "emotion": "专注思考",
+# 正式口播后固定执行；GE/S/Q 与间隔仍由 Studio 编译，recovery 只描述眼神和表情。
+MESSAGE_MOTION_PLAN = {
+    "emotion": "专注输入消息",
     "actions": [{"kind": "S", "delay_seconds": 0, "hold_seconds": 0,
-                 "motions": [{"part": "head", "description": "轻轻低头看向画面下方，像在认真措辞；不拿出或生成手机及其他物品"}],
-                 "gaze": "看向画面下方", "expression": "嘴唇自然轻合，专注思考"}],
-    "recovery": {"gaze": "自然看向镜头", "expression": "保持专注，准备开口"},
+                 "motions": [{"part": "head", "description": "垂下下巴，低头看向桌面靠近自己的位置，脸颊轻靠托腮的手，实体手机不出镜"},
+                             {"part": "right_arm", "description": "空闲的右手在画面下沿轻点两下，像在输入文字"}],
+                 "gaze": "专注看向近处桌面下沿", "expression": "嘴唇自然轻合，专注认真"}],
+    "recovery": {"gaze": "视线短暂停在下方", "expression": "嘴唇自然轻合，神情放松"},
 }
 
 
@@ -39,7 +41,6 @@ class AmbientPerformance:
         self._remembered_jobs = set()
         self.attempts = 0
         self.nudged = False
-        self.thinking_attempted = False
         self.history = []
         self.events = []
         self.error = ""
@@ -103,7 +104,7 @@ class AmbientPerformance:
         if content_mode == "conversation":
             return (current and e.get("status") != "TECH_ENDED" and r.get("phase") != "ABORTED"
                     and facts == self.facts_for())
-        # A thinking motion and a call for participation depend on this phase.
+        # A call for participation depends on this phase.
         # Ordinary conversation instead follows its public story facts above.
         return current and scope == self.scope_for(wb.game.public_state()) and (scope[3] == "DRAFTING" or (
             wb.deadline is not None and time.time() < wb.deadline and not wb.game.busy))
@@ -169,7 +170,6 @@ class AmbientPerformance:
             self.invalidate_stale()
             self.scope = scope
             self.attempts, self.nudged = 0, False
-            self.thinking_attempted = False
             # A 20-second collection window should not waste its first second
             # before any generation has even begun. Failure backoff is separate.
             self.next_attempt = 0.0
@@ -190,19 +190,6 @@ class AmbientPerformance:
                 or not wb.game.episode or wb.game.episode.get("status") in {"PREPARING", "TECH_ENDED"}):
             return
         selected = self.selected_comments(scope, now)
-        if phase == "DRAFTING" and not self.thinking_attempted:
-            self.thinking_attempted = True
-            # A glance gets one idle opportunity; it never closes the whole
-            # drafting phase to speech or takes priority over a real comment.
-            if p.current or p.next or p.send_lock.locked():
-                self.event("motion_skipped", reason="sender_busy")
-            elif not selected:
-                epoch = self.epoch
-                candidate = p.reserve_next(kind="motion", valid=lambda: self.current(epoch, scope),
-                                           epoch=epoch, scope=scope)
-                if candidate:
-                    self.task = p.schedule_candidate(candidate, self.run_thinking(epoch, scope, candidate))
-                    return
         if p.current and ((p.current.get("record") or {}).get("mode") == "motion"
                           or not (p.current.get("receipt") or {}).get("delivery_started")):
             # Until delivery is confirmed the model cannot treat current as
@@ -269,30 +256,6 @@ class AmbientPerformance:
                        comments=[{"id": c["id"], "nickname": c["nickname"], "text": c["text"]} for c in comments],
                        **self.program.expression_context())
         return payload
-
-    async def run_thinking(self, epoch, scope, candidate):
-        """一次固定低头，不调用模型/TTS，也不写进已说过的台词历史。"""
-        try:
-            if not self.current(epoch, scope):
-                return
-            self.record = {"job_id": "ambient:thinking:" + scope[2],
-                           "owner_id": self.program.run_id, "generation": self.program.client.generation,
-                           "mode": "motion", "plan": copy.deepcopy(THINKING_PLAN),
-                           "expires_at": time.time() + 3}
-            receipt = await self.program.send(self.record, "", optional=True,
-                                             valid=lambda: self.current(epoch, scope), candidate=candidate)
-            self.event("motion_sent" if receipt["status"] == "sent" else "motion_skipped",
-                       reason=receipt["status"], trigger="drafting")
-        except asyncio.CancelledError:
-            self.event("motion_skipped", reason="scene_changed")
-        except Exception:
-            # 与有声互动共用发送失败保护，不能把可能已发出的动作当作没发生。
-            self.error = "措辞动作的发送状态未确认，自动联调已停止。"
-            self.event("error", reason="thinking_delivery_unconfirmed")
-        finally:
-            self.record = None
-            if self.program.next is candidate and candidate["state"] == "planning":
-                self.program.next = None
 
     async def run(self, snapshot, epoch, scope, candidate):
         sent = False

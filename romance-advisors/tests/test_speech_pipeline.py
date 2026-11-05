@@ -85,6 +85,7 @@ class BarrierAvatar(ControlledAvatar):
 
     def finish(self, name):
         self.jobs[name].update(status='sent', send_complete=True, delivery_started=True,
+                               short_action_sent=self.jobs[name].get('mode') == 'motion',
                                preparation_pending=False, worker_pending=False)
         if self.active_sender == name:
             self.active_sender = None
@@ -134,6 +135,8 @@ class SpeechPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     def formal(self):
         record = self.p.prepare('formal', '正式决定。')
+        # These barriers isolate the pre-existing speech priority contract.
+        record.pop('message_motion_plan')
         t = asyncio.create_task(self.p.perform(record, '正式决定。'))
         self.tasks.append(t)
         return record['job_id'], t
@@ -142,6 +145,147 @@ class SpeechPipelineTests(unittest.IsolatedAsyncioTestCase):
         r = self.wb.game.current_round
         return self.wb.accept_comment({'event_id': name, 'author_id': name, 'nickname': '观众',
             'text': '别紧张，慢慢说。', 'expected_round_id': r['id'], 'expected_phase': r['phase']})
+
+    def message_performance(self, callback):
+        record = self.p.prepare('message-round', '我想认真回答。')
+        task = asyncio.create_task(self.p.perform(record, '我想认真回答。', on_message_action=callback))
+        self.tasks.append(task)
+        return record, task
+
+    async def start_message_motion(self, callback):
+        record, task = self.message_performance(callback)
+        await self.until(lambda: record['job_id'] in self.avatar.dispatches)
+        self.avatar.finish(record['job_id'])
+        typing = record['job_id'] + ':typing'
+        await self.until(lambda: typing in self.avatar.dispatches)
+        return record, typing, task
+
+    async def test_message_action_follows_complete_speech_notifies_once_at_s_and_waits_for_q(self):
+        notified = []
+        record, task = self.message_performance(lambda: notified.append(self.avatar.active_sender))
+        speech, typing = record['job_id'], record['job_id'] + ':typing'
+        self.avatar.lose_after.add(typing)
+        await self.until(lambda: speech in self.avatar.dispatches)
+        self.avatar.started(speech)
+        self.avatar.jobs[speech].update(status='sent', send_complete=True)
+        for _ in range(5):
+            await REAL_SLEEP(0)
+        self.assertNotIn(typing, self.avatar.dispatches)  # Speech worker still owes its tail.
+        self.avatar.finish(speech)
+        await self.until(lambda: typing in self.avatar.dispatches)
+        self.avatar.started(typing)  # GE/start does not expose a message.
+        await self.until(lambda: self.p.current['receipt'].get('delivery_started'))
+        self.assertEqual(notified, [])
+        self.assertEqual(self.p.formal_waiting, 1)
+        self.comment('during-typing')
+        for _ in range(5):
+            await REAL_SLEEP(0)
+        self.assertFalse(any(name == 'ambient' for name, _ in self.model.calls))
+        self.avatar.jobs[typing]['short_action_sent'] = True
+        await self.until(lambda: bool(notified))
+        self.assertEqual(notified, [typing])
+        self.avatar.jobs[typing].update(status='sent', send_complete=True)
+        for _ in range(8):
+            await REAL_SLEEP(0)
+        self.assertEqual(notified, [typing])  # Repeated S receipts never repeat the callback.
+        self.assertFalse(task.done())  # S and terminal text do not stand in for Q/worker cleanup.
+        self.assertEqual(self.p.formal_waiting, 1)
+        self.avatar.finish(typing)
+        receipt = await task
+        self.assertEqual(receipt['job_id'], speech)
+        self.assertEqual(receipt['message_motion_receipt']['job_id'], typing)
+        self.assertTrue(receipt['message_motion_receipt']['short_action_sent'])
+        self.assertEqual(self.avatar.prepares, [speech])  # Silent motion never synthesizes audio.
+        self.assertEqual(self.avatar.dispatches, [speech, typing])
+        self.assertEqual(self.avatar.trace.count(('dispatch', typing)), 1)
+        self.assertFalse(self.p.sender_failed)
+        self.assertEqual(self.p.formal_waiting, 0)
+
+    async def test_message_motion_missing_s_or_error_before_s_never_notifies(self):
+        # Exercise the terminal guard separately from the event notification.
+        for status, evidence in (('sent', False), ('error', False), ('sent', 1)):
+            with self.subTest(status=status, evidence=evidence):
+                notified = []
+                _, typing, task = await self.start_message_motion(lambda: notified.append(True))
+                self.avatar.jobs[typing].update(status=status, send_complete=True,
+                                                worker_pending=False, short_action_sent=evidence)
+                self.avatar.active_sender = None
+                with self.assertRaisesRegex(ValueError, 'invalid_performance_send'):
+                    await task
+                self.assertEqual(notified, [])
+                self.assertTrue(self.p.sender_failed)
+                self.assertEqual(self.p.formal_waiting, 0)
+                self.p.sender_failed, self.p.current = False, None
+                self.avatar.jobs.clear()
+                self.avatar.dispatches.clear()
+
+    async def test_message_motion_q_failure_preserves_already_notified_s(self):
+        notified = []
+        _, typing, task = await self.start_message_motion(lambda: notified.append(True))
+        self.avatar.jobs[typing]['short_action_sent'] = True
+        await self.until(lambda: bool(notified))
+        self.avatar.jobs[typing].update(status='error', send_complete=False, worker_pending=False)
+        with self.assertRaisesRegex(ValueError, 'invalid_performance_send'):
+            await task
+        self.assertEqual(notified, [True])
+        self.assertTrue(self.p.sender_failed)
+
+    async def test_message_motion_s_requires_current_owner_generation_and_job(self):
+        notified = []
+        record = {'job_id': 'identity:typing', 'owner_id': self.p.run_id,
+                  'generation': self.avatar.generation, 'mode': 'motion'}
+        candidate = {'record': record, 'job_id': record['job_id'], 'optional': False,
+                     'require_short_action': True, 'on_message_action': lambda: notified.append(True)}
+        receipt = dict(self.avatar.receipt(record, 'sent'), short_action_sent=True)
+        original_run, original_generation = self.p.run_id, self.avatar.generation
+        for mismatch in ('stopped', 'owner', 'generation', 'current', 'job', 'receipt_generation',
+                         'candidate_job', 'receipt_owner'):
+            with self.subTest(mismatch=mismatch):
+                self.p.current = candidate
+                value = dict(receipt)
+                if mismatch == 'stopped':
+                    self.p.state = 'stopping'
+                elif mismatch == 'owner':
+                    self.p.run_id = 'another-owner'
+                elif mismatch == 'generation':
+                    self.avatar.generation = 'new-generation'
+                elif mismatch == 'current':
+                    self.p.current = dict(candidate)
+                elif mismatch == 'job':
+                    value['job_id'] = 'another:typing'
+                elif mismatch == 'candidate_job':
+                    candidate['job_id'] = 'another:typing'
+                elif mismatch == 'receipt_owner':
+                    value['owner_id'] = 'another-owner'
+                else:
+                    value['generation'] = 'old-generation'
+                with self.assertRaises(ValueError):
+                    await self.p._follow(candidate, value)
+                self.assertEqual(notified, [])
+                self.p.state, self.p.run_id = 'running', original_run
+                self.avatar.generation = original_generation
+                candidate['job_id'] = record['job_id']
+        self.p.current = None
+
+    async def test_stop_during_message_motion_blocks_late_s_callback(self):
+        notified = []
+        _, typing, task = await self.start_message_motion(lambda: notified.append(True))
+        await self.p.stop()
+        self.avatar.jobs[typing]['short_action_sent'] = True
+        with self.assertRaises(ValueError):
+            await task
+        self.assertEqual(notified, [])
+        self.assertEqual(self.p.formal_waiting, 0)
+
+    async def test_message_speech_failure_never_submits_motion(self):
+        notified = []
+        record, task = self.message_performance(lambda: notified.append(True))
+        await self.until(lambda: record['job_id'] in self.avatar.dispatches)
+        self.avatar.jobs[record['job_id']].update(status='error', worker_pending=False)
+        with self.assertRaisesRegex(ValueError, 'invalid_performance_send'):
+            await task
+        self.assertEqual(self.avatar.dispatches, [record['job_id']])
+        self.assertEqual(notified, [])
 
     async def test_a_sends_while_b_prepares_and_only_one_sender(self):
         a, ta = self.line('a')

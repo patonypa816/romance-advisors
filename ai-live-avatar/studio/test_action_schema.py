@@ -101,7 +101,7 @@ class ActionSchemaTests(unittest.TestCase):
         self.assertEqual([item["index"] for item in timeline], [1, 2, 3, 4, 5, 6])
         self.assertEqual([item["at_seconds"] for item in timeline], [0, 2, 4, 6, 8, 9.5])
         self.assertEqual(timeline[-1]["delay_seconds"], 1.5)
-        self.assertEqual(timeline[-1]["instruction"], "动作：正常坐姿。\n眼神：自然看向镜头。\n表情：神情温和。")
+        self.assertEqual(timeline[-1]["instruction"], "眼神：自然看向镜头。\n表情：神情温和。")
 
     def test_empty_actions_do_not_add_q(self):
         self.assertEqual(compile_timeline([]), [])
@@ -363,7 +363,7 @@ class ActionSchemaTests(unittest.TestCase):
             self.assertEqual(node["expression"], target["expression"])
             self.assertIn(target["gaze"], node["instruction"])
             self.assertIn(target["expression"], node["instruction"])
-        self.assertTrue(timeline[-1]["instruction"].startswith("动作：正常坐姿。\n"))
+        self.assertEqual(timeline[-1]["instruction"], "眼神：注视镜头。\n表情：神情温和，略带好奇。")
         self.assertNotIn("望向窗外", timeline[-1]["instruction"])
 
     def test_missing_ge_or_recovery_and_old_plan_are_rejected(self):

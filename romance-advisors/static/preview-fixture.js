@@ -1,5 +1,5 @@
-// Static preview portrait: approved evening Vidu asset 1015465797675401216, 1086×1448.
-// preview-male-3x4.png is an unchanged local cache copy (SHA-256 2940c9ea0de3b55047d1939102dc1692a8866b389c49e54c4c5a0b928ef28fe8).
+// Static preview portrait: café portrait Vidu asset 1015851675149152256, 1086×1448.
+// preview-male-3x4.png is an unchanged local cache copy (SHA-256 30294e6e775dcdb55aa689bdd290256ecf2cfe06a3a967c0c27de52d5a9cef00).
 // Disposable front-end data only: no API, storage, model or avatar session is involved.
 // Keep option summaries within the same concise 8–12-character display contract.
 export function createPreviewFixture() {

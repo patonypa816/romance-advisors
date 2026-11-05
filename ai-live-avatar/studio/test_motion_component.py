@@ -185,7 +185,7 @@ class MotionComponentTests(unittest.IsolatedAsyncioTestCase):
         motions = component._ws.motions()
         self.assertEqual(len(motions), 2)
         self.assertEqual(motions[0]["frame"]["payload"]["text_msg"]["content"], "动作：同时双手向外轻摊，并头部轻轻右倾。\n眼神：自然看向镜头。\n表情：神情温和。")
-        self.assertEqual(motions[1]["frame"]["payload"]["text_msg"]["content"], "动作：正常坐姿。\n眼神：自然看向镜头。\n表情：神情温和。")
+        self.assertEqual(motions[1]["frame"]["payload"]["text_msg"]["content"], "眼神：自然看向镜头。\n表情：神情温和。")
         self.assertEqual([event["role"] for event in component.motion_events], ["S", "Q"])
         self.assertEqual(component.motion_events[0]["simultaneous_count"], 2)
         self.assertTrue(receipt["actions_sent_complete"])
@@ -589,21 +589,42 @@ class MotionComponentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(component.motion_events[0]["simultaneous_count"], 2)
         self.assertNotIn("望向桌面", component._ws.motions()[-1]["frame"]["payload"]["text_msg"]["content"])
 
-    async def test_missing_ge_recovery_and_oversized_field_fail_before_send(self):
+    async def test_missing_ge_recovery_and_overlong_fields_fail_before_send(self):
         missing = short()
         del missing["gaze"]
-        huge = short(pair=True)
-        # 字段仍有70字上限；合法字段合成后超过200字已经允许。
-        for motion in huge["motions"]:
-            motion["description"] = "动" * 71
-        huge.update(gaze="看" * 40, expression="情" * 40)
-        for actions, recovery in [([missing], GE), ([short()], None), ([huge], GE), ([], GE)]:
+        overlong = []
+        for field, value in (("description", "动" * 71), ("gaze", "看" * 41), ("expression", "情" * 41)):
+            node = short(pair=True)
+            if field == "description":
+                node["motions"][0][field] = value
+            else:
+                node[field] = value
+            overlong.append(([node], GE))
+        for actions, recovery in [([missing], GE), ([short()], None), *overlong, ([], GE)]:
             with self.subTest(actions=actions, recovery=recovery):
                 component = self.component()
                 with self.assertRaises(ValueError):
                     await component.send_expression(b"\0\0", "咱听着。", actions, 1, recovery=recovery)
                 self.assertEqual(component._ws.attempts, [])
                 component._audio.assert_not_awaited()
+
+    async def test_long_combined_s_keeps_complete_fields_and_ge_only_q(self):
+        node = short(pair=True)
+        for motion in node["motions"]:
+            motion["description"] = "动" * 70
+        node.update(gaze="看" * 40, expression="情" * 40)
+        component = self.component()
+        with patch("motion_component.compile_timeline", side_effect=compressed_timeline), \
+                patch("motion_component.ACTION_POST_SEND_SECONDS", .02):
+            await component.send_expression(b"\0\0", "咱听着。", [node], 1, recovery=GE)
+        frames = component._ws.motions()
+        # 各字段合法时，组合后的总长可以超过旧的200字限制；实际发送不能裁剪原文。
+        expected = f"动作：同时{'动' * 70}，并{'动' * 70}。\n眼神：{'看' * 40}。\n表情：{'情' * 40}。"
+        self.assertGreater(len(expected), 200)
+        self.assertEqual(frames[0]["frame"]["payload"]["text_msg"]["content"], expected)
+        self.assertEqual(frames[1]["frame"]["payload"]["text_msg"]["content"],
+                         "眼神：自然看向镜头。\n表情：神情温和。")
+        self.assertEqual([event["role"] for event in component.motion_events], ["S", "Q"])
 
     async def test_reading_real_pcm_then_s0_and_answer_are_one_continuous_group(self):
         # 保留真实paced _audio和真实1秒/1.5秒等待；立即返回的mock会伪造R→S0时序。
