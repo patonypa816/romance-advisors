@@ -6,7 +6,7 @@ let previewDemo=$('show-preview-demo').checked;
 function setPreviewDemo(enabled){
   previewDemo=Boolean(enabled);$('show-preview-demo').checked=previewDemo;
   const source=previewDemo?'/overlay?demo=1':'/overlay';
-  if($('preview-frame').getAttribute('src')!==source)$('preview-frame').src=source;
+  if($('preview-frame').getAttribute('src')!==source){$('phone-preview').classList.remove('has-finale');$('preview-frame').src=source;}
   $('avatar-preview-image').hidden=!previewDemo;
   $('phone-preview').classList.toggle('preview-demo',previewDemo);
   $('preview-mode-note').textContent=previewDemo?'排版示例 · 静态人物与虚构内容，不写入游戏。':'实时游戏画面';
@@ -272,3 +272,11 @@ renderParticipants();renderCommentControls();renderLayout(loadLayout());observeL
 
 // The screenshot overlay is a visual reference only; it never enters the public game output.
 $('show-douyin-reference').addEventListener('change',()=>{$('douyin-reference').hidden=!$('show-douyin-reference').checked;});
+
+// Only the same-origin overlay iframe can control its own stacking. No game
+// state, player URL, or external postMessage is accepted through this channel.
+window.addEventListener('message',event=>{
+  if(event.origin!==location.origin||event.source!==$('preview-frame').contentWindow||
+    event.data?.type!=='romance-finale-visibility'||typeof event.data.visible!=='boolean')return;
+  $('phone-preview').classList.toggle('has-finale',!previewDemo&&event.data.visible);
+});

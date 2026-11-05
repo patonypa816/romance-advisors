@@ -20,13 +20,16 @@ class Node {
   append(...nodes){for(const node of nodes){node.parent=this;this.children.push(node);}}
   replaceChildren(...nodes){this._text='';this.children=[];this.append(...nodes);}
   setAttribute(name,value){this.attributes[name]=value;}
+  removeAttribute(name){delete this.attributes[name];}
+  addEventListener(name,fn){this.events??={};this.events[name]=fn;}
   getBoundingClientRect(){this.transitionAtLayout=this.style.transition;return {};}
-  animate(){const animation={cancelled:false,cancel(){this.cancelled=true;}};this.animations??=[];this.animations.push(animation);return animation;}
+  animate(){const animation={cancelled:false,currentTime:null,pause(){},cancel(){this.cancelled=true;}};this.animations??=[];this.animations.push(animation);return animation;}
   querySelectorAll(selector){
+    if(selector.includes(' ')){const [head,...tail]=selector.split(' ');return this.querySelectorAll(head).flatMap(node=>node.querySelectorAll(tail.join(' ')));}
     const found=[];
     for(const child of this.children){
       if(selector==='[data-message-id]'?child.dataset.messageId!==undefined:
-         selector.startsWith('.')&&child.classList.contains(selector.slice(1)))found.push(child);
+         selector.startsWith('.')?child.classList.contains(selector.slice(1)):child.tag===selector)found.push(child);
       found.push(...child.querySelectorAll(selector));
     }
     return found;
@@ -43,7 +46,7 @@ function harness({reduced=true}={}){
   const media={matches:reduced,addEventListener:(_,fn)=>listeners.add(fn),removeEventListener:(_,fn)=>listeners.delete(fn)};
   let frameId=0,fetchCount=0,current=state(),fetchError=null;
   const context=vm.createContext({document:{createElement:tag=>new Node(tag)},URLSearchParams,
-    matchMedia:()=>media,performance:{now:()=>clock},
+    URL,matchMedia:()=>media,performance:{now:()=>clock},
     setTimeout:(callback,delay)=>{timers.set(++timerId,{callback,at:clock+delay});return timerId;},clearTimeout:id=>timers.delete(id),
     requestAnimationFrame:callback=>{frames.set(++frameId,callback);return frameId;},
     cancelAnimationFrame:id=>frames.delete(id),root,
@@ -52,11 +55,14 @@ function harness({reduced=true}={}){
     fetch:async()=>{fetchCount++;if(fetchError)throw fetchError;return {ok:true,json:async()=>current};}});
   vm.runInContext(read('ui.js').replaceAll('export ',''),context);
   vm.runInContext(read('affinity-panel.js').replace(/^import .*;\n/gm,'').replace('export function ','function '),context);
+  vm.runInContext(read('finale-overlay.js').replace(/^import .*;\n/gm,'').replaceAll('export ',''),context);
   vm.runInContext(read('renderer.js').replace(/^import .*;\n/gm,'').replace('export function ','function ')+
     ';var renderer=createLiveRenderer(root);',context);
   const overlay=read('overlay.js');
   vm.runInContext(overlay.slice(overlay.indexOf('let running='),overlay.indexOf('// Demo stays')),context);
   return {root,frames,timers,listeners,errors,renderer:context.renderer,
+    safeAvatar:value=>context.safeFinaleAvatar(value),
+    get finale(){return root.querySelector('.finale-layer');},
     get card(){return root.querySelector('.affinity-card');},
     get number(){return root.querySelector('.affinity-number');},
     get change(){return root.querySelector('.affinity-change');},
@@ -267,7 +273,7 @@ test('reduced motion settles in-flight numbers, keeps static feedback and never 
 
 test('renderer disposal removes affinity callbacks and later polls cannot restart its motion',()=>{
   const h=harness({reduced:false});h.render();h.flushFrames();settle(h,60,10);h.render();h.flushFrames();
-  assert.equal(h.listeners.size,1);assert.equal(h.timers.size,1);assert.equal(h.frames.size,1);
+  assert.equal(h.listeners.size,2);assert.equal(h.timers.size,1);assert.equal(h.frames.size,1);
   h.renderer.dispose();assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);assert.equal(h.frames.size,0);
   settle(h,70,10,'r2');h.render();h.flushFrames();
   assert.equal(h.timers.size,0);assert.equal(h.frames.size,0);assert.equal(h.change.textContent,'');
@@ -292,4 +298,107 @@ test('disposal cancels a pending first-follow callback before it can restart scr
   assert.equal(h.frames.size,1);h.renderer.dispose();h.flushFrames();
   assert.equal(h.frames.size,0);assert.equal(h.listeners.size,0);
   h.render();h.flushFrames();assert.equal(h.frames.size,0);
+});
+
+
+function endEpisode(h,{status='SUCCEEDED',elapsed=0,awards={best:{nickname:'最强本人'},worst:{nickname:'敢说本人'}}}={}) {
+  h.state.episode.status=status;h.state.episode.score=status==='SUCCEEDED'?100:0;
+  h.state.round.phase='DONE';
+  h.state.finale={episode_id:h.state.episode.id,status,started_at:1000,duration_ms:6800,elapsed_ms:elapsed,awards};
+}
+function flight(h){return h.root.querySelector('.emblem-flight').animations.at(-1);}
+
+test('committed success adds one overlay above the unchanged game and repeated polls only advance',()=>{
+  const h=harness({reduced:false});h.render();h.flushFrames();
+  const phone=h.root.querySelector('.live-conversation'),chat=h.root.querySelector('.live-chat');
+  endEpisode(h);h.render();h.flushFrames();
+  const initial=flight(h),card=h.root.querySelector('.medal-best');
+  assert.equal(h.finale.hidden,false);assert.equal(h.finale.dataset.mode,'success');
+  assert.equal(h.finale.dataset.state,'burst');assert.equal(initial.currentTime,0);
+  h.advance(1000);assert.equal(initial.currentTime,1000);
+  h.state.finale.awards.best.nickname='不得替换的晚到数据';h.state.finale.elapsed_ms=10;
+  for(let i=0;i<4;i++)h.render();
+  assert.equal(flight(h),initial);assert.equal(initial.currentTime,1000);
+  assert.equal(h.root.querySelector('.medal-best'),card);assert.equal(card.querySelector('h3').textContent,'最强本人');
+  assert.equal(h.root.querySelector('.live-conversation'),phone);assert.equal(h.root.querySelector('.live-chat'),chat);
+  h.advance(6000);assert.equal(initial.currentTime,6800);assert.equal(h.finale.dataset.state,'complete');
+  h.render();h.flushFrames();assert.equal(h.frames.size,0);assert.equal(flight(h),initial);
+});
+
+test('refresh resumes at server elapsed time and old or missing timing shows a static result',()=>{
+  const h=harness({reduced:false});endEpisode(h,{elapsed:3500});h.render();h.flushFrames();
+  assert.equal(flight(h).currentTime,3500);assert.equal(h.finale.dataset.state,'awards');
+  const old=harness({reduced:false});endEpisode(old,{elapsed:900000});old.render();old.flushFrames();
+  assert.equal(flight(old).currentTime,6800);assert.equal(old.frames.size,0);
+  const missing=harness({reduced:false});endEpisode(missing);delete missing.state.finale.elapsed_ms;
+  missing.render();missing.flushFrames();assert.equal(flight(missing).currentTime,6800);
+});
+
+test('failed results use the approved failure copy, with empty awards instead of fake people',()=>{
+  const h=harness({reduced:true});endEpisode(h,{status:'FAILED',awards:{best:null,worst:null}});h.render();h.flushFrames();
+  assert.equal(h.finale.dataset.mode,'failure');assert.equal(h.root.querySelector('.main-result').textContent,'没成…');
+  assert.equal(h.root.querySelector('.main-joke').textContent,'建议军师先别开班。');
+  assert.equal(h.root.querySelector('.medal-best').querySelector('h3').textContent,'本期暂缺');
+  assert.equal(h.root.querySelector('.medal-goofy').querySelector('h3').textContent,'本期暂缺');
+  assert.equal(h.frames.size,0);
+});
+
+test('no terminal score inference, technical ending, mismatched episode or stale snapshot can start an overlay',()=>{
+  const h=harness();h.state.episode.score=100;h.render();assert.equal(h.finale.hidden,true);
+  endEpisode(h);h.state.finale.episode_id='old-episode';h.render();assert.equal(h.finale.hidden,true);
+  endEpisode(h);h.state.episode.status='TECH_ENDED';h.render();assert.equal(h.finale.hidden,true);
+  endEpisode(h);h.state.finale.started_at=NaN;h.render();assert.equal(h.finale.hidden,true);
+  endEpisode(h);delete h.state.finale;h.render();assert.equal(h.finale.hidden,true);
+});
+
+test('episode replacement, reset and renderer disposal cancel effects without touching the game DOM',()=>{
+  const h=harness({reduced:false});endEpisode(h);h.render();h.flushFrames();const a=flight(h);
+  h.state.episode={id:'e2',status:'ACTIVE',score:50};h.state.finale=null;h.render();h.flushFrames();
+  assert.equal(h.finale.hidden,true);assert.equal(a.cancelled,true);assert.equal(h.frames.size,0);
+  endEpisode(h);h.render();h.flushFrames();const b=flight(h);assert.notEqual(b,a);
+  h.renderer.dispose();assert.equal(b.cancelled,true);assert.equal(h.finale.hidden,true);assert.equal(h.listeners.size,0);
+  h.render();h.advance(9000);assert.equal(h.frames.size,0);assert.equal(h.finale.hidden,true);
+});
+
+test('changing reduced motion mid-flight settles once and never replays on toggle or poll',()=>{
+  const h=harness({reduced:false});endEpisode(h);h.render();h.flushFrames();h.advance(800);
+  const a=flight(h);h.setReduced(true);assert.equal(a.currentTime,6800);assert.equal(h.frames.size,0);
+  h.setReduced(false);h.state.finale.elapsed_ms=1200;h.render();h.flushFrames();
+  assert.equal(flight(h),a);assert.equal(a.currentTime,6800);assert.equal(h.frames.size,0);
+});
+
+test('suspending for browser history pauses callbacks, then resumes from server elapsed',()=>{
+  const h=harness({reduced:false});endEpisode(h);h.render();h.flushFrames();const a=flight(h);
+  h.renderer.suspend();h.state.finale.elapsed_ms=3500;h.render();h.advance(3500);
+  assert.equal(h.frames.size,0);assert.equal(a.currentTime,0);
+  h.renderer.resume();h.render();assert.equal(a.currentTime,3500);
+  h.finale.isConnected=false;h.flushFrames();assert.equal(a.cancelled,true);assert.equal(h.frames.size,0);
+});
+
+test('award names are text-only and unsafe or missing avatars use circular initials',()=>{
+  const name='<img src=x onerror=alert(1)>';
+  const h=harness();endEpisode(h,{awards:{best:{nickname:name,avatar_url:'javascript:alert(1)'},worst:{nickname:'  阿明',avatar_url:'https://p3.douyinpic.com/avatar.jpg'}}});h.render();
+  const best=h.root.querySelector('.medal-best'),worst=h.root.querySelector('.medal-goofy');
+  assert.equal(best.querySelector('h3').textContent,name);assert.equal(best.querySelector('h3').children.length,0);
+  assert.equal(best.querySelector('img').hidden,true);assert.equal(best.querySelector('img').src,undefined);
+  assert.equal(worst.querySelector('img').hidden,false);assert.equal(worst.querySelector('img').referrerPolicy,'no-referrer');
+  worst.querySelector('img').events.error();assert.equal(worst.querySelector('img').hidden,true);
+  for(const url of ['http://p3.douyinpic.com/a','https://evil.test/a','https://douyinpic.com.evil.test/a','https://user:pass@douyinpic.com/a','https://douyinpic.com:8443/a','data:image/svg+xml,test','https://p3.douyinpic.com/a#x','https://p3.douyinpic.com/a b','https://p3.douyinpic.com\\evil.test/a'])assert.equal(h.safeAvatar(url),'',url);
+  assert.equal(h.safeAvatar('https://p3.douyinpic.com/a'),'https://p3.douyinpic.com/a');
+  assert.doesNotMatch(read('finale-overlay.js'),/innerHTML|insertAdjacentHTML|\.outerHTML/);
+});
+
+test('production keeps preview controls out and only trusts its own overlay for iframe stacking',()=>{
+  assert.match(read('overlay.html'),/href="\/static\/finale-overlay.css"/);
+  assert.doesNotMatch(read('finale-overlay.js'),/createElement\('(?:button|input)'\)|postMessage|fetch\(/);
+  assert.match(read('workbench.js'),/event.origin!==location.origin\|\|event.source!==\$\('preview-frame'\).contentWindow/);
+  assert.match(read('workbench.css'),/has-finale #preview-frame\{z-index:2;pointer-events:none\}/);
+  assert.match(read('overlay.js'),/event.persisted\)\{renderer.resume\(\)/);
+});
+
+
+test('random fallback award is explicitly labelled as a playful draw, not a negative score',()=>{
+  const h=harness();endEpisode(h,{awards:{best:null,worst:{nickname:'仅提过建议',adopted:0,selection_reason:'random_suggestion'}}});h.render();
+  assert.equal(h.root.querySelector('.medal-goofy').querySelector('small').textContent,'本期随机彩蛋');
+  assert.equal(h.root.querySelector('.medal-goofy').querySelector('h3').textContent,'仅提过建议');
 });

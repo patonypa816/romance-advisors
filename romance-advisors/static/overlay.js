@@ -3,7 +3,13 @@ import {createLiveRenderer} from './renderer.js';
 import {loadLayout,observeLayout,normalizeLayout} from './layout.js';
 import {createPreviewFixture} from './preview-fixture.js';
 const root=document.getElementById('overlay-root');
-const renderer=createLiveRenderer(root);
+function reportFinale(visible){
+  // The workbench owns the one live avatar iframe. Raise this transparent
+  // game iframe only while the veil is visible, without touching that player.
+  if(window.parent!==window)window.parent.postMessage({type:'romance-finale-visibility',visible},location.origin);
+}
+const renderer=createLiveRenderer(root,{onFinaleVisibility:reportFinale});
+reportFinale(false);
 renderer.setLayout(loadLayout());observeLayout(value=>renderer.setLayout(value));
 function fit(){const scale=Math.min(innerWidth/1080,innerHeight/1920);root.style.transform=`translate(-50%, -50%) scale(${scale})`;}
 window.addEventListener('resize',fit);fit();
@@ -37,4 +43,13 @@ async function poll(){
 if(new URLSearchParams(location.search).get('demo')==='1'){
   root.classList.add('is-preview-fixture');
   renderer.render(createPreviewFixture());
-}else{poll();setInterval(poll,900);}
+}else{
+  let interval=setInterval(poll,900);poll();
+  window.addEventListener('pagehide',event=>{
+    clearInterval(interval);reportFinale(false);
+    if(event.persisted)renderer.suspend();else renderer.dispose();
+  });
+  window.addEventListener('pageshow',event=>{
+    if(event.persisted){renderer.resume();reportFinale(!root.querySelector('.finale-layer').hidden);poll();interval=setInterval(poll,900);}
+  });
+}

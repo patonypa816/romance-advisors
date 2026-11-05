@@ -1,6 +1,7 @@
 import {el,phaseText,appendMessages} from './ui.js';
 import {layoutRects} from './layout.js';
 import {createAffinityPanel} from './affinity-panel.js';
+import {createFinaleOverlay} from './finale-overlay.js';
 // Match the approved preview: one fill color, interpolated in OKLab by score.
 function affinityLab(rgb) {
   const [r,g,b]=rgb.map(value=>{
@@ -34,7 +35,7 @@ function affinityColor(value) {
     Math.round(255*Math.max(0,Math.min(1,v<=.0031308?12.92*v:1.055*(Math.max(0,v)**(1/2.4))-.055))));
   return `rgb(${rgb.join(',')})`;
 }
-export function createLiveRenderer(root) {
+export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   root.replaceChildren();
   const phase=el('span','live-phase','等待开场');
   const conversation=el('section','live-conversation');conversation.setAttribute('aria-label','两人的聊天');
@@ -48,6 +49,7 @@ export function createLiveRenderer(root) {
   const poll=el('section','live-poll'), pollLabel=el('div','live-poll-title'), pollHeading=el('span','','下一句，你来支招'), pollStatus=el('span','','');pollLabel.append(pollHeading,pollStatus);
   const options=el('div','live-options');poll.append(pollLabel,options);
   const boards=el('section','live-boards');root.append(conversation,poll,boards);
+  const finale=createFinaleOverlay({onVisibility:onFinaleVisibility});root.append(finale.element);
   let first=true,optionsSignature='',boardsSignature='',lastDisplayMode=null;
   const seenMessages=new Set();
   const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
@@ -94,6 +96,7 @@ export function createLiveRenderer(root) {
       const isVoting=current?.phase==='VOTING';root.classList.toggle('is-voting',isVoting);
       phase.textContent=phaseText(state);
       affinity.update(state);
+      finale.update(state);
       pair.textContent=episode?`${episode.man_name} × ${episode.woman_name}`:'两人的聊天';round.textContent=current?`第 ${current.number} 轮`:'';
       const messages=state.messages || [];
       const followLatest=first||lastDisplayMode!==isVoting||messages.some(message=>!seenMessages.has(String(message.id)));
@@ -140,7 +143,9 @@ export function createLiveRenderer(root) {
       else scrollVotingContext(`${episode?.id}:${context?.id}`,isVoting,context?.id);
       first=false;
     },
-    dispose(){disposed=true;if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
+    suspend(){finale.suspend();},
+    resume(){finale.resume();},
+    dispose(){finale.dispose();disposed=true;if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
     offline(){phase.textContent='游戏状态读取失败';},
     renderFailed(){phase.textContent='画面更新失败';}
   };
