@@ -79,6 +79,59 @@ test('votes and leaderboard update while the same messages remain visible',()=>{
   assert.equal(h.phase,'观众投票中');
 });
 
+test('affinity fill matches the preview anchors and OKLab intermediate colors',()=>{
+  const h=harness(),track=h.root.querySelector('.live-score-track'),fill=track.children[0];
+  const samples=[
+    [0,'rgb(120,135,159)'],[1,'rgb(122,136,161)'],[12.5,'rgb(150,153,186)'],
+    [25,'rgb(181,172,213)'],[37.5,'rgb(205,206,176)'],[50,'rgb(232,238,122)'],
+    [62.5,'rgb(245,209,128)'],[75,'rgb(255,179,132)'],[87.5,'rgb(255,147,126)'],
+    [99,'rgb(255,114,121)'],[100,'rgb(255,111,120)'],
+  ];
+  for(const [value,color] of samples){
+    h.state.episode.score=value;h.render();
+    assert.equal(fill.style.backgroundColor,color,`score ${value}`);
+    assert.equal(fill.style.width,`${value}%`);
+    assert.equal(h.root.querySelector('.live-score-row').children[2].textContent,String(value));
+  }
+  assert.deepEqual(Object.keys(fill.style).sort(),['backgroundColor','width']);
+  assert.deepEqual(track.style,{});
+  assert.match(read('overlay.css'),/transition:width \.7s ease,background-color \.7s ease/);
+});
+
+test('affinity colors are continuous at anchors and clamp only the color input',()=>{
+  const h=harness(),fill=h.root.querySelector('.live-score-track').children[0];
+  for(const [value,color] of [[25,'rgb(181,172,213)'],[50,'rgb(232,238,122)'],[75,'rgb(255,179,132)']]){
+    for(const offset of [-.001,0,.001]){
+      h.state.episode.score=value+offset;h.render();
+      assert.equal(fill.style.backgroundColor,color);
+      assert.equal(fill.style.width,`${value+offset}%`);
+    }
+  }
+  for(const [value,color] of [[-5,'rgb(120,135,159)'],[105,'rgb(255,111,120)']]){
+    h.state.episode.score=value;h.render();
+    assert.equal(fill.style.backgroundColor,color);
+    assert.equal(fill.style.width,`${value}%`); // Width behavior stays unchanged.
+  }
+  h.state={messages:[],leaderboards:{best:[],worst:[]}};h.render();
+  assert.equal(fill.style.width,'0%');
+  assert.equal(h.root.querySelector('.live-score-row').children[2].textContent,'—');
+});
+
+test('polling updates affinity colors in either direction without replacing the fill',async()=>{
+  const h=harness(),track=h.root.querySelector('.live-score-track'),fill=track.children[0];
+  for(const [value,color] of [[50,'rgb(232,238,122)'],[100,'rgb(255,111,120)'],[0,'rgb(120,135,159)'],[37.5,'rgb(205,206,176)'],[50,'rgb(232,238,122)']]){
+    h.state.episode.score=value;
+    for(let i=0;i<3;i++){
+      await h.poll();h.flushFrames();
+      assert.strictEqual(track.children[0],fill);
+      assert.equal(fill.style.backgroundColor,color);
+      assert.equal(fill.style.width,`${value}%`);
+      assert.equal(h.running,false);assert.equal(h.frames.size,0);
+    }
+  }
+  assert.equal(h.fetchCount,15);assert.equal(h.errors.length,0);
+});
+
 test('new messages follow latest and stable voting retains only one scroll loop',()=>{
   const h=harness();h.render();h.flushFrames();
   h.state.messages.push({id:'m2',role:'woman',text:'新增的一段长回复'});h.render();

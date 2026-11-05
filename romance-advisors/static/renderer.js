@@ -1,5 +1,38 @@
 import {el,phaseText,appendMessages} from './ui.js';
 import {layoutRects} from './layout.js';
+// Match the approved preview: one fill color, interpolated in OKLab by score.
+function affinityLab(rgb) {
+  const [r,g,b]=rgb.map(value=>{
+    const v=value/255;
+    return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
+  });
+  const l=Math.cbrt(.4122214708*r+.5363325363*g+.0514459929*b);
+  const m=Math.cbrt(.2119034982*r+.6806995451*g+.1073969566*b);
+  const s=Math.cbrt(.0883024619*r+.2817188376*g+.6299787005*b);
+  return [.2104542553*l+.793617785*m-.0040720468*s,
+    1.9779984951*l-2.428592205*m+.4505937099*s,
+    .0259040371*l+.7827717662*m-.808675766*s];
+}
+const affinityStops=[
+  [120,135,159], // 0: cool blue-gray
+  [181,172,213], // 25: soft purple
+  [232,238,122], // 50: lemon
+  [255,179,132], // 75: warm apricot
+  [255,111,120], // 100: coral
+].map(affinityLab);
+function affinityColor(value) {
+  const score=Math.max(0,Math.min(100,Number(value)||0));
+  const index=Math.min(3,Math.floor(score/25)),t=(score-index*25)/25;
+  const [L,a,b]=affinityStops[index].map((v,i)=>v+(affinityStops[index+1][i]-v)*t);
+  const l=(L+.3963377774*a+.2158037573*b)**3;
+  const m=(L-.1055613458*a-.0638541728*b)**3;
+  const s=(L-.0894841775*a-1.291485548*b)**3;
+  const rgb=[4.0767416621*l-3.3077115913*m+.2309699292*s,
+    -1.2684380046*l+2.6097574011*m-.3413193965*s,
+    -.0041960863*l-.7034186147*m+1.707614701*s].map(v=>
+    Math.round(255*Math.max(0,Math.min(1,v<=.0031308?12.92*v:1.055*(Math.max(0,v)**(1/2.4))-.055))));
+  return `rgb(${rgb.join(',')})`;
+}
 export function createLiveRenderer(root) {
   root.replaceChildren();
   const phase=el('span','live-phase','等待开场');
@@ -59,6 +92,7 @@ export function createLiveRenderer(root) {
       const isVoting=current?.phase==='VOTING';root.classList.toggle('is-voting',isVoting);
       phase.textContent=phaseText(state);
       const value=episode?.score ?? 50;score.textContent=episode?String(value):'—';fill.style.width=episode?`${value}%`:'0%';
+      fill.style.backgroundColor=affinityColor(value);
       const change=current?.delta;delta.textContent=typeof change==='number' ? `${change>0?'+':''}${change}` : '';delta.className=`live-delta ${change<0?'negative':''}`;
       pair.textContent=episode?`${episode.man_name} × ${episode.woman_name}`:'两人的聊天';round.textContent=current?`第 ${current.number} 轮`:'';
       const messages=state.messages || [];
