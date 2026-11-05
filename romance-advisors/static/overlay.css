@@ -11,13 +11,6 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
 .live-chat-title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;font-size:34px;line-height:1.25;color:var(--paper);margin:0 8px 12px;min-width:0}
 .live-chat-title>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .live-chat-title>span:last-child{font-size:28px;color:var(--muted);white-space:nowrap}
-.live-score-row{display:flex;align-items:center;gap:10px;flex-shrink:0;padding:10px 14px;background:var(--lime);border-radius:12px;color:var(--ink);margin-bottom:12px}
-.live-score-row>span:first-child{font-size:30px;white-space:nowrap}
-.live-score-row>strong{font-size:56px;line-height:1;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
-.live-delta{font-size:30px;line-height:1.2;font-weight:600;color:#29483a}
-.live-delta:empty{display:none}.live-delta.negative{color:#8c3524}
-.live-score-track{height:6px;min-width:24px;flex:1;overflow:hidden;background:#b8cd51;border-radius:4px}
-.live-score-track i{display:block;width:50%;height:100%;background:var(--ink);transition:width .7s ease}
 .live-chat{position:relative;overflow:auto;scrollbar-width:thin;scrollbar-color:#82998b transparent;flex:1;min-height:0;overscroll-behavior:contain;background:#eaf0e5;color:var(--ink);border-radius:20px;padding:16px 12px}
 .chat-message{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:22px}
 .chat-message.man{align-items:flex-end}
