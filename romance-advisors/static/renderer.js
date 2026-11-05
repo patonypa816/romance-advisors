@@ -1,5 +1,6 @@
 import {el,phaseText,appendMessages} from './ui.js';
 import {layoutRects} from './layout.js';
+import {createAffinityPanel} from './affinity-panel.js';
 // Match the approved preview: one fill color, interpolated in OKLab by score.
 function affinityLab(rgb) {
   const [r,g,b]=rgb.map(value=>{
@@ -40,17 +41,17 @@ export function createLiveRenderer(root) {
   const speaker=el('div','phone-speaker');speaker.setAttribute('aria-hidden','true');
   const topLine=el('div','phone-topline');topLine.append(speaker,phase);
   const chatTitle=el('div','live-chat-title'),pair=el('span','','等待第一条来信'),round=el('span','','');chatTitle.append(pair,round);
-  const scoreRow=el('div','live-score-row'),scoreLabel=el('span','','亲密度'),track=el('div','live-score-track'),fill=el('i'),score=el('strong','','—'),delta=el('span','live-delta');track.append(fill);scoreRow.append(scoreLabel,track,score,delta);
+  const affinity=createAffinityPanel(affinityColor);
   const chat=el('div','live-chat');chat.setAttribute('aria-live','polite');
   const home=el('div','phone-home');home.setAttribute('aria-hidden','true');
-  conversation.append(topLine,chatTitle,scoreRow,chat,home);
+  conversation.append(topLine,chatTitle,affinity.element,chat,home);
   const poll=el('section','live-poll'), pollLabel=el('div','live-poll-title'), pollHeading=el('span','','下一句，你来支招'), pollStatus=el('span','','');pollLabel.append(pollHeading,pollStatus);
   const options=el('div','live-options');poll.append(pollLabel,options);
   const boards=el('section','live-boards');root.append(conversation,poll,boards);
   let first=true,optionsSignature='',boardsSignature='',lastDisplayMode=null;
   const seenMessages=new Set();
   const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
-  let contextScrollFrame=null,contextScrollKey=null;
+  let contextScrollFrame=null,contextScrollKey=null,followFrame=null,disposed=false;
   function stopContextScroll(){if(contextScrollFrame!==null)cancelAnimationFrame(contextScrollFrame);contextScrollFrame=null;contextScrollKey=null;}
   function scrollVotingContext(key,isVoting,contextId){
     const node=[...chat.querySelectorAll('[data-message-id]')].find(item=>item.dataset.messageId===String(contextId));
@@ -88,12 +89,11 @@ export function createLiveRenderer(root) {
       }
     },
     render(state) {
+      if(disposed)return;
       const episode=state.episode, current=state.round;
       const isVoting=current?.phase==='VOTING';root.classList.toggle('is-voting',isVoting);
       phase.textContent=phaseText(state);
-      const value=episode?.score ?? 50;score.textContent=episode?String(value):'—';fill.style.width=episode?`${value}%`:'0%';
-      fill.style.backgroundColor=affinityColor(value);
-      const change=current?.delta;delta.textContent=typeof change==='number' ? `${change>0?'+':''}${change}` : '';delta.className=`live-delta ${change<0?'negative':''}`;
+      affinity.update(state);
       pair.textContent=episode?`${episode.man_name} × ${episode.woman_name}`:'两人的聊天';round.textContent=current?`第 ${current.number} 轮`:'';
       const messages=state.messages || [];
       const followLatest=first||lastDisplayMode!==isVoting||messages.some(message=>!seenMessages.has(String(message.id)));
@@ -129,13 +129,18 @@ export function createLiveRenderer(root) {
       }
       // Follow after layout/typing changes. If the latest reply is unusually
       // long, its own reading window takes over while votes are being collected.
-      if(followLatest)requestAnimationFrame(()=>{
-        chat.scrollTop=chat.scrollHeight;
-        scrollVotingContext(`${episode?.id}:${context?.id}`,isVoting,context?.id);
-      });
+      if(followLatest){
+        if(followFrame!==null)cancelAnimationFrame(followFrame);
+        followFrame=requestAnimationFrame(()=>{
+          followFrame=null;if(disposed)return;
+          chat.scrollTop=chat.scrollHeight;
+          scrollVotingContext(`${episode?.id}:${context?.id}`,isVoting,context?.id);
+        });
+      }
       else scrollVotingContext(`${episode?.id}:${context?.id}`,isVoting,context?.id);
       first=false;
     },
+    dispose(){disposed=true;if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
     offline(){phase.textContent='游戏状态读取失败';},
     renderFailed(){phase.textContent='画面更新失败';}
   };
