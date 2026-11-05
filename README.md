@@ -104,7 +104,9 @@ cd romance-advisors
 .venv/bin/python -B -m romance.launcher
 ```
 
-游戏启动器会打开本机页面；数字人桥接默认读取同级 `ai-live-avatar/studio/data/runtime.json`。Studio 必须使用 `--preview`，直接双击其原有启动脚本默认采用 OBS 接收模式，不能替代这里的步骤。
+游戏启动器会打开本机页面，数字人桥接默认读取同级 `ai-live-avatar/studio/data/runtime.json`。上述命令把工作台预览设为数字人接收端。
+
+**使用 OBS 输出节目时**，从两个项目各自目录启动：在 `ai-live-avatar/` 执行 `.venv/bin/python -B studio/server.py`，在 `romance-advisors/` 执行 `.venv/bin/python -B -m romance.server --obs-output`。以游戏终端打印的本机地址打开工作台。给 OBS 浏览器源填写同一游戏地址加 `/static/obs-output.html`，设置为 1080 × 1920、30 fps。每次使用随机端口重新启动游戏后更新来源地址。将 OBS 虚拟摄像机输出设为节目（Program），在抖音直播伴侣竖屏场景中选择 OBS Virtual Camera。手机预览的对照框、抖音底图和排版示例仅用于工作台。[手机预览与节目输出](romance-advisors/docs/04-本地工作台使用.md#916预览与透明输出)
 
 在 Studio 同步并选择用户自己的 Vidu 资产；创建新资产或开启会话可能产生费用。音色使用本机 `data/local.json` 中的 `tts_voices` 映射，按模板说明配置自己的合法音色；该映射未随 Git 保存。不要用模板整文件覆盖自动生成的 `local.json`，其中包含访问令牌和其他设置。
 

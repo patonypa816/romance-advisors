@@ -129,17 +129,20 @@ class ExternalGame:
 
     async def claim(self, request):
         body = await request.json()
-        if not isinstance(body, dict) or set(body) != {"owner_id"}:
-            raise web.HTTPBadRequest(text="游戏接管只接受owner_id")
+        if (not isinstance(body, dict) or set(body) not in ({"owner_id"}, {"owner_id", "receiver_mode"})
+                or body.get("receiver_mode", "preview") not in ("preview", "obs")):
+            raise web.HTTPBadRequest(text="游戏接管需要有效的所有者和接收模式")
         owner = self.identifier(body["owner_id"])
         async with self.studio.lock:
+            if self.studio.receiver_mode != body.get("receiver_mode", "preview"):
+                raise web.HTTPConflict(text="游戏输出位置与本场 Studio 接收模式不一致")
             if self.active:
                 if owner != self.owner_id:
                     raise web.HTTPConflict(text="当前场次已由另一游戏接管")
                 return web.json_response({"generation": self.generation, "owner_id": self.owner_id})
             s, a = self.studio.current, self.studio.automation
             topic = self.studio.director.topic
-            if (self.studio.receiver_mode != "preview" or not self.studio.semantic_speech
+            if (not self.studio.semantic_speech
                     or self.studio.replay_fixture or self.studio.closing or s.started or s.stopping
                     or s.component.state != "idle" or a.enabled
                     or any(c["status"] in IN_FLIGHT for c in s.comments)
@@ -149,7 +152,7 @@ class ExternalGame:
                     or (topic and topic["state"] not in {"completed", "stopped"})
                     or self.studio.idle_motion_busy()
                     or s.component.idle_motions_public().get("recovery_failed")):
-                raise web.HTTPConflict(text="游戏只能接管未开场且无在途内容的普通预览会话")
+                raise web.HTTPConflict(text="游戏只能接管未开场且无在途内容的普通会话")
             self.owner_id, self.generation = owner, self.studio.generation
             # Explicit game ownership is granted only before any paid start.
             # Drop an old idle preview so can_start waits for the game's iframe;

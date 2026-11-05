@@ -1,0 +1,11 @@
+/* Only the outer scene scales. overlay.css positions its root at the viewport
+   center; undo that rule inside this fixed-coordinate composition. */
+html,body{background:#262125!important;color-scheme:dark}
+.program-scene{position:absolute;left:50%;top:50%;width:1080px;height:1920px;overflow:hidden;transform-origin:center;background:var(--program-backdrop);isolation:isolate}
+.program-scene>.overlay-root{position:absolute;inset:0;left:0;top:0;transform:none;width:1080px;height:1920px;z-index:2;pointer-events:none}
+.program-avatar{position:absolute;z-index:1;overflow:hidden;border-radius:26px;background:#453533}
+.program-avatar iframe,.program-avatar img,.avatar-placeholder{position:absolute;inset:0;width:100%;height:100%;border:0}
+.program-avatar img{object-fit:cover}
+.avatar-placeholder{display:grid;place-items:center;background:linear-gradient(155deg,#5a4038,#352a2d);color:#e0c8b7;font-size:28px}
+.avatar-still-label{position:absolute;left:14px;bottom:14px;z-index:1;background:#30252bdc;padding:7px 12px;border-radius:8px;font-size:19px;color:#f6e9dd;letter-spacing:.06em}
+.program-avatar iframe{z-index:2;background:#352a2d}

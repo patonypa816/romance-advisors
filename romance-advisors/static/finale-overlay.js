@@ -15,7 +15,9 @@ export function safeFinaleAvatar(value) {
 export function createFinaleOverlay({onVisibility=()=>{}}={}) {
   const layer=el('section','finale-layer');layer.hidden=true;
   layer.setAttribute('aria-label','本期结算');layer.setAttribute('aria-hidden','true');
-  const veil=el('div','grey-veil'),canvas=el('div','finale-canvas');layer.append(veil,canvas);
+  const veil=el('div','grey-veil'),canvas=el('div','finale-canvas');
+  const content=el('div','phone-content-frame');
+  content.append(canvas);layer.append(veil,content);
   const nodes=new Map();
   function part(tag,name,parent=canvas,text='') {
     const node=el(tag,name,text);nodes.set(name,node);parent.append(node);return node;

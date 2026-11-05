@@ -78,8 +78,9 @@ function renderProgram(){
   $('program-avatar').textContent=`数字人：${program.avatar_name||'咖啡馆里的温柔凝视'}`;
   const avatarLabels={off:'云会话未启动',idle:'云会话空闲',starting:'云会话正在启动',creating:'正在创建云会话',connecting:'正在连接数字人',waiting_stage:'等待数字人舞台就绪',creation_unknown:'云会话创建结果不明',stop_unconfirmed:'云会话结束尚未确认',running:'云会话运行中',stopping:'云会话正在结束',stopped:'云会话已结束',ended:'云会话已结束',error:'云会话异常',ready:'云会话已就绪'};
   $('program-avatar-state').textContent=program.ready?'数字人服务已就绪':avatarLabels[program.avatar_state]||(running?'等待数字人服务就绪':'云会话未启动');
+  if(program.obs_output)$('program-avatar-state').textContent+=' · 画面输出到 OBS';
   const round=state?.round;
-  const startupLabels={preparing_session:'正在检查会话状态与独占权限。',waiting_player:'等待唯一预览播放器连接；连接后开始创建云会话。',starting:'正在提交云会话启动请求。',creating:'正在创建数字人云会话，请稍候。',connecting:'云会话已创建，正在连接数字人。',waiting_stage:'数字人已连接，等待舞台就绪后自动开场。'};
+  const startupLabels={preparing_session:'正在检查会话状态与独占权限。',waiting_player:program.obs_output?'等待 OBS 场景接收画面。':'等待唯一预览播放器连接；连接后开始创建云会话。',starting:'正在提交云会话启动请求。',creating:'正在创建数字人云会话，请稍候。',connecting:'云会话已创建，正在连接数字人。',waiting_stage:'数字人已连接，等待舞台就绪后自动开场。'};
   const progress=program.state==='starting'?(startupLabels[program.startup_stage]||'正在准备数字人，完成后自动开场。'):program.state==='stopping'?'正在停止自动推进并结束数字人云会话，请稍候。':program.state==='running'?state?.error?'游戏步骤遇到错误，已停止继续发送；记录保留，查看下方原因。':avatarSendPending(round)?'正在处理数字人口播与低头动作 · 完成发送后自动继续聊天与结算':round?.remaining_seconds!=null?`${PHASES[round.phase]||round.phase} · 剩余 ${Math.ceil(round.remaining_seconds)} 秒` :TERMINAL.includes(state?.episode?.status)?'本期已结束 · 自动准备下一期':`${phaseText(state)} · 自动继续`:'自动收集 → 编选 → 投票 → 发送数字人短反应 → 聊天与结算 → 下轮／下期';
   $('program-progress').textContent=progress;$('program-progress').hidden=!running;
   const message=safeProgramMessage(programRequestError||program.error||heartbeatError);

@@ -426,6 +426,29 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
         await self.claim()  # An idempotent owner request must not drop its new iframe.
         self.assertEqual(self.studio.player["client_id"], new["client_id"])
 
+    async def test_obs_claim_requires_explicit_matching_mode_and_never_starts_cloud(self):
+        self.studio.receiver_mode = "obs"
+        for body in ({"owner_id": "offline-obs"},
+                     {"owner_id": "offline-obs", "receiver_mode": "preview"}):
+            response = await self.post("external/claim", body)
+            self.assertEqual(response.status, 409)
+            self.assertIsNone(self.studio.external_game.owner_id)
+        body = {"owner_id": "offline-obs", "receiver_mode": "obs"}
+        response = await self.post("external/claim", body)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual((await response.json())["owner_id"], "offline-obs")
+        self.assertEqual((await self.post("external/claim", body)).status, 200)
+        self.assertFalse(self.studio.current.started)
+        self.studio.current.component.start.assert_not_awaited()
+        self.tts.assert_not_awaited()
+
+    async def test_preview_studio_rejects_explicit_obs_claim(self):
+        response = await self.post("external/claim", {"owner_id": "offline-obs", "receiver_mode": "obs"})
+        self.assertEqual(response.status, 409)
+        self.assertIsNone(self.studio.external_game.owner_id)
+        self.studio.current.component.start.assert_not_awaited()
+        self.tts.assert_not_awaited()
+
     async def test_claim_refuses_nonpreview_started_busy_source_topic_and_idle_motion(self):
         cases = [(self.studio, "receiver_mode", "obs"), (self.studio.current, "started", True),
                  (self.studio.automation, "enabled", True),

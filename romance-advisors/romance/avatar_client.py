@@ -23,6 +23,7 @@ STARTUP_MESSAGES = {
     "runtime_invalid": "数字人本机连接记录无效，请先启动预览工作台。",
     "request_rejected": "数字人接口未接受当前操作，请检查预览模式、独占权限和会话状态。",
     "connection_unconfirmed": "数字人本机连接未确认，已停止自动推进。",
+    "obs_required": "请以 OBS 接收模式启动 Studio，并打开 OBS 节目场景。",
     "preview_required": "请先以预览模式启动数字人工作台。",
     "session_in_use": "已有数字人会话尚未结束，请先在数字人工作台处理。",
     "generation_unconfirmed": "数字人场次标识未确认。",
@@ -61,7 +62,8 @@ def check_startup_blocker(snapshot):
 
 
 class AvatarClient:
-    def __init__(self, runtime_path=None):
+    def __init__(self, runtime_path=None, *, obs_output=False):
+        self.obs_output = obs_output
         self.runtime_path = Path(runtime_path or os.environ.get("ROMANCE_AVATAR_RUNTIME", DEFAULT_RUNTIME))
         self.origin = ""
         self.control_url = ""
@@ -85,7 +87,7 @@ class AvatarClient:
             if urls[0][1] != urls[1][1]:
                 raise ValueError()
             self.control_url, self.origin = urls[0]
-            self.player_url = urls[1][0] + "?preview=1"
+            self.player_url = urls[1][0] + ("" if self.obs_output else "?preview=1")
         except (OSError, ValueError, KeyError, TypeError):
             raise ValueError(STARTUP_MESSAGES["runtime_invalid"]) from None
 
@@ -112,8 +114,8 @@ class AvatarClient:
         except ValueError:
             raise AvatarClientError("runtime_invalid") from None
         snapshot = await self.snapshot()
-        if snapshot.get("studio", {}).get("receiver_mode") != "preview":
-            raise AvatarClientError("preview_required")
+        if snapshot.get("studio", {}).get("receiver_mode") != ("obs" if self.obs_output else "preview"):
+            raise AvatarClientError("obs_required" if self.obs_output else "preview_required")
         if snapshot.get("session", {}).get("state") != "idle":
             if not snapshot.get("studio", {}).get("can_new"):
                 raise AvatarClientError("session_in_use")
@@ -126,11 +128,15 @@ class AvatarClient:
         self.generation = snapshot.get("session", {}).get("generation")
         if not self.generation:
             raise AvatarClientError("generation_unconfirmed")
-        claim = await self.request("external/claim", body={"owner_id": owner_id})
+        body = {"owner_id": owner_id}
+        if self.obs_output:
+            body["receiver_mode"] = "obs"
+        claim = await self.request("external/claim", body=body)
         if claim.get("owner_id") != owner_id or claim.get("generation") != self.generation:
             raise AvatarClientError("claim_unconfirmed")
         self.generation = claim["generation"]
-        self.player_url += "&game_owner=" + quote(owner_id, safe="")
+        separator = "?" if self.obs_output else "&"
+        self.player_url += separator + "game_owner=" + quote(owner_id, safe="")
         return await self.snapshot()
 
     def owner(self):

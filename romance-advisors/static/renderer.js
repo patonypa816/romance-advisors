@@ -48,7 +48,12 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   conversation.append(topLine,chatTitle,affinity.element,chat,home);
   const poll=el('section','live-poll'), pollLabel=el('div','live-poll-title'), pollHeading=el('span','','下一句，你来支招'), pollStatus=el('span','','');pollLabel.append(pollHeading,pollStatus);
   const options=el('div','live-options');poll.append(pollLabel,options);
-  const boards=el('section','live-boards');root.append(conversation,poll,boards);
+  const boards=el('section','live-boards');
+  const content=el('div','phone-content-frame');
+  const nameplate=el('h1','show-nameplate');
+  const titleArt=el('img');titleArt.src='/static/assets/show-nameplate-cafe-natural.png';
+  titleArt.alt='军师帮帮我';nameplate.append(titleArt);
+  content.append(nameplate,conversation,poll,boards);root.append(content);
   const finale=createFinaleOverlay({onVisibility:onFinaleVisibility});root.append(finale.element);
   let first=true,optionsSignature='',boardsSignature='',lastDisplayMode=null;
   const seenMessages=new Set();
@@ -85,6 +90,8 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   return {
     setLayout(layout) {
       const {phone,poll:pollRect,boards:boardsRect}=layoutRects(layout);
+      // Anchor the bottom edge so the artwork's natural height grows away from the chat.
+      nameplate.style.top = `${Math.min(322, phone.y - 14)}px`;
       // The phone and avatar share the upper row. The two-column vote grid
       // keeps its own lower region, so four choices never shrink the chat.
       for(const [node,rect] of [[conversation,phone],[poll,pollRect],[boards,boardsRect]]){

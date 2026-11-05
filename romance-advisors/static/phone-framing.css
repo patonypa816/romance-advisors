@@ -1,0 +1,15 @@
+/* The 851 × 1848 phone reference sees this fraction of a 1080 × 1920
+   source when filled to its height. Keep original layout coordinates and
+   scale foreground layers once, around the same top-center point. */
+:root {
+  /* The operator's phone preview and the OBS programme share one backdrop. */
+  --program-backdrop: radial-gradient(ellipse at 75% 22%, #65443e 0, transparent 48%),
+    linear-gradient(165deg, #3b2e30, #262125 75%);
+  --phone-content-scale: 0.818662819; /* (851 / 1848) / (1080 / 1920) */
+}
+.phone-content-frame {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 0;
+  transform: scale(var(--phone-content-scale));
+}

@@ -31,7 +31,7 @@ REPAIRABLE_CONTENT_ERRORS = {
 class Program:
     def __init__(self, workbench, client=None):
         self.workbench = workbench
-        self.client = client or AvatarClient()
+        self.client = client or AvatarClient(obs_output=workbench.obs_output)
         if hasattr(self.client, "discover"):
             with contextlib.suppress(ValueError):
                 self.client.discover()
@@ -70,6 +70,10 @@ class Program:
     def enabled(self):
         return self.state == "running"
 
+    @property
+    def player_url(self):
+        return self._player_url if self.active else ""
+
     def public(self, *, operator=False):
         now = self.ended_at or time.monotonic()
         value = {"state": self.state, "ready": self.ready, "run_id": self.run_id,
@@ -77,7 +81,8 @@ class Program:
                  "limit_minutes": 20, "avatar_name": "咖啡馆里的温柔凝视",
                  "avatar_state": self.avatar_state, "startup_stage": self.startup_stage, "error": self.error}
         if operator:
-            value["player_url"] = self._player_url if self.active else ""
+            value["obs_output"] = self.workbench.obs_output
+            value["player_url"] = "" if self.workbench.obs_output else self.player_url
             value["last_failure"] = dict(self.last_failure) if self.last_failure else None
             value["cleanup"] = {"cloud_stop_confirmed": self.cleanup["cloud_stop_confirmed"],
                                 "errors": [dict(item) for item in self.cleanup["errors"]],

@@ -50,7 +50,8 @@ def error_text(code):
 
 
 class Workbench:
-    def __init__(self, db_path: Path | str, model=None, avatar_client=None):
+    def __init__(self, db_path: Path | str, model=None, avatar_client=None, *, obs_output=False):
+        self.obs_output = obs_output
         self.model = model or QwenModel()
         self.game = Game(db_path, self.model)
         self.settings_path = Path(db_path).with_suffix(".settings.json") if str(db_path) != ":memory:" else None
@@ -355,9 +356,9 @@ async def local_only(request, handler):
         return web.json_response({"error": "请求内容不正确，请检查输入。"}, status=400)
 
 
-def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=None):
+def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=None, obs_output=False):
     app = web.Application(middlewares=[local_only], client_max_size=32_768)
-    workbench = Workbench(db_path, model=model, avatar_client=avatar_client)
+    workbench = Workbench(db_path, model=model, avatar_client=avatar_client, obs_output=obs_output)
     app["workbench"] = workbench
     register_dyhub_routes(app, workbench)
 
@@ -379,6 +380,14 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
                       "vote_version": request.query.get("vote_version"),
                       "comment_limit": request.query.get("comment_limit", "500")}
         return web.json_response(workbench.state(operator=request.path != "/api/public", **cursor), dumps=lambda x: json.dumps(x, ensure_ascii=False, allow_nan=False))
+
+    async def obs_state(request):
+        # Only the chosen receiver gets the player URL. This read must never
+        # count as operator presence or start a session when OBS opens the scene.
+        state = workbench.state()
+        state["obs_output"] = workbench.obs_output
+        state["player_url"] = (workbench.program.player_url or None) if workbench.obs_output else None
+        return web.json_response(state)
 
     async def mutation(request):
         try:
@@ -440,6 +449,7 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
     app.router.add_get("/api/state", state)
     app.router.add_get("/api/operator-state", state)
     app.router.add_get("/api/public", state)
+    app.router.add_get("/api/obs-output", obs_state)
     for path in ("session/new", "episode/new", "round/start", "collection/close", "voting/close", "retry", "episode/abort", "comments", "proposals", "votes", "settings", "layout", "program/start", "program/stop", "program/heartbeat"):
         app.router.add_post("/api/" + path, mutation)
     app.router.add_get("/", index)
@@ -460,7 +470,7 @@ async def serve(args):
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit("这个游戏数据库已有工作台在运行，请使用已有窗口。")
-    runner = web.AppRunner(create_app(database, model=QwenModel(model=args.model, credentials_file=Path(args.credentials_file) if args.credentials_file else None)), access_log=None)
+    runner = web.AppRunner(create_app(database, obs_output=args.obs_output, model=QwenModel(model=args.model, credentials_file=Path(args.credentials_file) if args.credentials_file else None)), access_log=None)
     await runner.setup()
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -486,6 +496,7 @@ async def serve(args):
 
 def main():
     parser = argparse.ArgumentParser(description="恋爱军师团本地游戏工作台（仅127.0.0.1）")
+    parser.add_argument("--obs-output", action="store_true", help="由 OBS 节目页独占接收数字人画面")
     parser.add_argument("--port", type=int, default=0, help="0使用空闲端口")
     parser.add_argument("--db", default=str(ROOT / "data/game.sqlite"))
     parser.add_argument("--model", default=None)
