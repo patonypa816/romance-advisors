@@ -120,12 +120,16 @@ def _safe_business_event(event: dict, room_id: str, *, avatar_validator=None) ->
         group_id = payload.get("groupId")
         if isinstance(group_id, str) and 1 <= len(group_id) <= 256:
             data["groupId"] = group_id
+        if type(payload.get("combo")) is bool:
+            data["combo"] = payload["combo"]
+        if type(payload.get("sourceTimeKnown")) is bool:
+            data["sourceTimeKnown"] = payload["sourceTimeKnown"]
         if type(payload.get("repeatEnd")) is bool:
             data["repeatEnd"] = payload["repeatEnd"]
     else:
         if type(payload.get("isSetToAdmin")) is bool:
             data["isSetToAdmin"] = payload["isSetToAdmin"]
-    number_fields = {"gift": ("repeatCount", "comboCount", "groupCount"),
+    number_fields = {"gift": ("diamondCount", "repeatCount", "comboCount", "groupCount"),
                      "member": ("action", "enterType")}.get(kind, ())
     for key in number_fields:
         number = payload.get(key)

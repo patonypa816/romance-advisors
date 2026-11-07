@@ -20,6 +20,10 @@ export function makeMessage(message, state, {animate = false} = {}) {
   const row = el('div', `chat-message ${message.role === 'man' ? 'man' : 'woman'}`);
   row.dataset.messageId = String(message.id);
   const name = message.role === 'man' ? state.episode?.man_name || '男主' : state.episode?.woman_name || '女生';
+  if(message.role==='man'){
+    const source=appearanceImage(message.portrait?.key);
+    if(source){const avatar=el('img','message-portrait');avatar.src=source;avatar.alt=`这条消息的造型：${APPEARANCE_LABELS[message.portrait.key]}`;avatar.addEventListener('error',()=>{avatar.hidden=true;});row.append(avatar);}
+  }
   row.append(el('span','message-name',name));
   const bubble = el('div','message-bubble',message.text);
   row.append(bubble);
@@ -90,7 +94,10 @@ export function createOperatorCache() {
 }
 const operatorCache=createOperatorCache();
 export async function getState(publicOnly = false) {
-  const response = await fetch(publicOnly ? '/api/public' : '/api/operator-state?'+operatorCache.query(),{cache:'no-store'});
+  const query = new URLSearchParams(publicOnly ? '' : operatorCache.query());
+  if (new URLSearchParams(globalThis.location?.search).get('debug') === '1') query.set('debug', '1');
+  const path = publicOnly ? '/api/public' : '/api/operator-state';
+  const response = await fetch(query.size ? path + '?' + query : path, {cache:'no-store'});
   if (!response.ok) throw new Error(`连接失败（${response.status}）`);
   const data = await response.json();
   if (data.error && !('episode' in data)) throw new Error(data.error);
@@ -101,4 +108,35 @@ export async function post(path, body={}) {
   const data=await response.json().catch(()=>({error:`服务返回异常（${response.status}）`}));
   if (!response.ok || data.error) throw new Error(data.error || '操作未完成，请重试');
   return data;
+}
+
+// Only approved local artwork is used. Historical portraits never read today's tier.
+export const APPEARANCE_LABELS={fish:'鱼人头',rough:'通宵残局',tired:'没睡醒',normal:'咖啡馆日常',refined:'收拾好了',stellar:'约会高光'};
+export function appearanceImage(key){return Object.hasOwn(APPEARANCE_LABELS,key)?`/static/assets/appearance/${key}.jpg`:'';}
+export function createAppearanceMedia(image,video){
+  const seen=new Set();let playing=null;
+  video.muted=true;video.playsInline=true;video.preload='auto';video.hidden=true;
+  function finish(){video.hidden=true;playing=null;}
+  video.addEventListener('ended',finish);video.addEventListener('error',finish);
+  return {
+    update(appearance){
+      if(appearance?.mode!=='rehearsal'){
+        if(playing!==null){video.pause();finish();}
+        return;
+      }
+      const source=appearanceImage(appearance.tier);
+      if(source&&image.getAttribute('src')!==source)image.src=source;
+      const change=appearance.transition;
+      if(!change?.id||seen.has(change.id))return;
+      seen.add(change.id);
+      const elapsed=Math.max(0,Date.now()/1000-Number(change.at));
+      // Refresh can resume a current clip, but an old event never replays.
+      if(!Number.isFinite(elapsed)||elapsed>=1.4||!['up','down'].includes(change.direction))return;
+      video.src=`/static/assets/appearance/${change.direction}.mp4`;
+      playing=change.id;video.currentTime=elapsed;video.hidden=false;
+      const attempt=video.play();
+      if(attempt?.catch)attempt.catch(()=>{if(playing===change.id)finish();});
+    },
+    dispose(){if(playing!==null)video.pause();finish();}
+  };
 }

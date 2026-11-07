@@ -10,7 +10,8 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from romance.model import COMMON, PROMPTS, Credentials, ModelError, ModelInputTooLarge, QwenModel, load_credentials, strict_json
+from romance.model import COMMON, PROMPTS, PRIVATE_PREFERENCES_REPAIR_PROMPT, Credentials, ModelError, ModelInputTooLarge, QwenModel, load_credentials, strict_json
+from romance.game import Game
 
 
 class ModelBoundaryTests(unittest.TestCase):
@@ -51,6 +52,61 @@ def valid_response(**overrides):
 
 
 class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_private_preferences_correction_keeps_validated_story_and_does_not_reroll(self):
+        seen = []
+        character = {"name": "阿澈", "age": 28, "personality": "慢热认真", "background": "书店店员",
+                     "speech_style": "简短直白"}
+        story = {"title": "书店的约定", "man": character, "woman": dict(character, name="小雨"),
+                 "shared_background": "朋友介绍认识，约好周末逛书店", "public_hints": ["认识一个月"],
+                 "opening": "周末的事，你是不是忘了？"}
+        preferences = "喜欢认真落实约定，不喜欢只说不做，期待对方主动确认时间。"
+
+        async def handler(request):
+            seen.append(await request.json())
+            # Deliberate unrelated edits in the correction must not replace the
+            # validated original. Only the requested private field is consumed.
+            value = story if len(seen) == 1 else {
+                "title": "不应替换原故事", "woman": {"name": "不应替换原角色", "private_preferences": preferences}}
+            response = valid_response()
+            response["choices"][0]["message"]["content"] = json.dumps(value, ensure_ascii=False)
+            return web.json_response(response)
+
+        app = web.Application()
+        app.router.add_post("/model", handler)
+        model = QwenModel()
+        game = Game(":memory:", model)
+        async with TestServer(app) as server:
+            try:
+                with patch("romance.model.load_credentials", return_value=Credentials("synthetic-key", str(server.make_url("/model")))):
+                    first = await game.new_episode()
+                    episode_id = game.episode["id"]
+                    self.assertEqual(first["error"]["code"], "invalid_private_preferences")
+                    self.assertEqual(first["messages"], [])
+                    self.assertNotIn("woman", game.storage.load()["episodes"][-1])
+                    final = await game.retry()
+                self.assertEqual(len(seen), 2)
+                first_context, correction = [json.loads(request["messages"][1]["content"]) for request in seen]
+                self.assertIn("variation", first_context)
+                self.assertNotIn("variation", correction)
+                self.assertEqual(seen[0]["messages"][0]["content"], COMMON + PROMPTS["prepare"])
+                self.assertEqual(seen[1]["messages"][0]["content"], COMMON + PRIVATE_PREFERENCES_REPAIR_PROMPT)
+                self.assertEqual(correction["validation_error"], "invalid_private_preferences")
+                self.assertEqual(correction["private_preferences_context"], story)
+                self.assertEqual(game.episode["id"], episode_id)
+                self.assertIsNone(final["error"])
+                self.assertEqual(final["round"]["phase"], "COLLECTING")
+                self.assertEqual(game.episode["title"], story["title"])
+                self.assertEqual(game.episode["woman"], dict(story["woman"], private_preferences=preferences))
+                self.assertEqual(final["episode"]["hints"], story["public_hints"])
+                self.assertEqual([message["text"] for message in final["messages"]], [story["opening"]])
+                self.assertNotIn(preferences, json.dumps(final, ensure_ascii=False))
+                self.assertNotIn(preferences, json.dumps(game._man_payload(), ensure_ascii=False))
+                self.assertNotIn("private_preferences_context", json.dumps(game.data))
+                self.assertIsNone(game._prepare_candidate)
+            finally:
+                game.close()
+                await model.aclose()
+
     async def test_prepare_uses_current_persona_guidance_and_fresh_variation_each_time(self):
         seen = []
 

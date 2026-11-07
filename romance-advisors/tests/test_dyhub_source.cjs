@@ -23,7 +23,7 @@ function setup(fetch) {
     stop: () => field('source-stop').handlers.click()};
 }
 
-test('page load reads status but never auto-connects', async () => {
+test('opening a tab reads the server watcher without starting another one', async () => {
   const calls = [];
   const ui = setup(async (...args) => { calls.push(args); return response(state(false)); });
   await flush();
@@ -40,7 +40,7 @@ test('repeated connect submits once and late initial read cannot overwrite it', 
     return new Promise(resolve => { if (opts?.method === 'POST') resolveWrite = resolve; else resolveRead = resolve; });
   });
   ui.submit(); ui.submit();
-  assert.equal(calls.filter(url => url.endsWith('/start')).length, 1);
+  assert.equal(calls.filter(url => url.endsWith('/auto')).length, 1);
   resolveWrite(response(state(true)));
   await flush();
   resolveRead(response(state(false)));

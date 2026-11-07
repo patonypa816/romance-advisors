@@ -21,8 +21,10 @@ const fixture = protobuf.parse(`
     uint64 entry = 9;
     uint64 operation = 10;
   }
-  message FixtureGiftInfo { int64 ident = 5; string label = 16; }
+  message FixtureCommon { int64 created = 4; }
+  message FixtureGiftInfo { int64 ident = 5; bool combinable = 10; int32 diamonds = 12; string label = 16; }
   message FixtureGift {
+    FixtureCommon common = 1;
     int64 ident = 2;
     int64 groupQuantity = 4;
     int64 repeats = 5;
@@ -142,4 +144,25 @@ test('chat preserves content and viewer identity without mistaking ordinary leve
   assert.equal(actual.id, 'fixture-message');
   assert.deepEqual(actual.data, { content: '原评论内容' });
   assert.deepEqual(actual.user, { id: '123', nickname: '测试观众' });
+});
+
+
+test('gift price is explicit per item and unknown price/time are not fabricated', () => {
+  const absent = event('FixtureGift', 'WebcastGiftMessage', { ident: 1, info: {} });
+  assert.equal(Object.hasOwn(absent.data, 'diamondCount'), false);
+  assert.equal(Object.hasOwn(absent.data, 'combo'), false);
+  assert.equal(absent.data.sourceTimeKnown, false);
+  const zero = event('FixtureGift', 'WebcastGiftMessage', { ident: 1, info: { diamonds: 0, combinable: false } });
+  assert.equal(zero.data.diamondCount, 0);
+  assert.equal(zero.data.combo, false);
+  const priced = event('FixtureGift', 'WebcastGiftMessage', {
+    ident: 1, info: { diamonds: 6 }, repeats: 3, groupQuantity: 99, combos: 99,
+    common: { created: 1700000000 },
+  });
+  assert.equal(priced.data.diamondCount, 6);
+  assert.equal(priced.data.repeatCount, 3);
+  assert.equal(priced.data.sourceTimeKnown, true);
+  assert.equal(priced.ts, 1700000000000);
+  const malformed = event('FixtureGift', 'WebcastGiftMessage', { ident: 1, info: { diamonds: -1 } });
+  assert.equal(Object.hasOwn(malformed.data, 'diamondCount'), false);
 });

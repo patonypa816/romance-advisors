@@ -54,6 +54,7 @@ function harness({reduced=true}={}){
     layoutRects:()=>({phone:{},poll:{},boards:{}}),normalizeLayout:value=>value,
     console:{error:(...args)=>errors.push(args)},
     fetch:async()=>{fetchCount++;if(fetchError)throw fetchError;return {ok:true,json:async()=>current};}});
+  vm.runInContext(read('scene-layout.js').replace(/^import .*;\n/gm,'').replaceAll('export ',''),context);
   vm.runInContext(read('ui.js').replaceAll('export ',''),context);
   vm.runInContext(read('affinity-panel.js').replace(/^import .*;\n/gm,'').replace('export function ','function '),context);
   vm.runInContext(read('finale-overlay.js').replace(/^import .*;\n/gm,'').replaceAll('export ',''),context);

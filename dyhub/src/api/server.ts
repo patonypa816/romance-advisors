@@ -13,6 +13,7 @@ import * as cookieStore from '../collector/cookieStore.js';
 import { EventBus } from '../pipeline/eventBus.js';
 import { WebhookDispatcher } from '../dispatch/webhook.js';
 import { registerSseRoute } from '../dispatch/sseServer.js';
+import { fetchLiveIdentity } from '../collector/roomMeta.js';
 
 /**
  * 房间号归一化：兼容全角数字（中文输入法）、直接粘贴的直播间 URL、
@@ -41,6 +42,8 @@ export interface ApiDeps {
 export function buildApi(deps: ApiDeps): FastifyInstance {
   const app = Fastify({ logger: false });
 
+  app.get('/api/health', async () => ({app: 'dyhub', pid: process.pid, features: {live_status: true}}));
+
   // 控制台静态资源
   const uiDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'ui');
   app.register(fastifyStatic, { root: uiDir, prefix: '/', index: ['dashboard.html'] });
@@ -63,6 +66,14 @@ export function buildApi(deps: ApiDeps): FastifyInstance {
 
   // ---- 房间管理 ----
   app.get('/api/rooms', async () => ({ rooms: deps.collector.getRooms() }));
+
+  // 这是公开页的只读探测，不启动采集；不把 socket connected 当作抖音开播。
+  app.get('/api/rooms/:roomId/live-status', async (req, reply) => {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip)) return reply.code(403).send({error: 'local_only'});
+    const roomId = (req.params as {roomId: string}).roomId;
+    if (!/^\d{1,32}$/.test(roomId)) return reply.code(400).send({error: 'invalid_room'});
+    return {roomId, ...(await fetchLiveIdentity(roomId)), checkedAt: Date.now()};
+  });
 
   app.post('/api/rooms/connect', async (req, reply) => {
     const { roomId: rawRoomId, cookie } = (req.body ?? {}) as { roomId?: string; cookie?: string };

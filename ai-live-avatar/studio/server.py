@@ -57,7 +57,7 @@ def _startup_source_version():
     A new session snapshots files again for its archive; that disk snapshot can
     change during development without changing the already running Python code.
     """
-    paths = [HERE / name for name in SOURCE_FILES]
+    paths = [HERE / name for name in (*SOURCE_FILES, "external_appearance.py")]
     paths.extend(path for path in (HERE / "static").iterdir() if path.is_file())
     paths.extend(HERE / "sdk" / name for name in ("helper.mjs", "package.json", "package-lock.json"))
     manifest = {str(path.relative_to(HERE)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -201,6 +201,7 @@ class Studio:
         for source in (HERE / "static").glob("*"):
             if source.is_file():
                 shutil.copyfile(source, self.current.out / "source-used" / source.name)
+        shutil.copyfile(HERE / "external_appearance.py", self.current.out / "source-used" / "external_appearance.py")
         sdk_snapshot = self.current.out / "source-used" / "sdk"
         sdk_snapshot.mkdir(exist_ok=True)
         for name in ("helper.mjs", "package.json", "package-lock.json"):
@@ -1602,6 +1603,12 @@ class Studio:
         app.router.add_post(self.prefix + "/external/jobs/{job_id}/cancel", self.external_game.cancel_job)
         app.router.add_post(self.prefix + "/external/jobs/{job_id}/dispatch", self.external_game.dispatch)
         app.router.add_get(self.prefix + "/external/state", self.external_game.state)
+        appearance = self.external_game.appearance
+        app.router.add_post(self.prefix + "/external/appearance/lifecycle", appearance.lifecycle)
+        app.router.add_post(self.prefix + "/external/appearance", appearance.submit)
+        app.router.add_get(self.prefix + "/external/appearance", appearance.state)
+        app.router.add_get(self.prefix + "/external/appearance/{request_id}", appearance.get)
+        app.router.add_post(self.prefix + "/external/appearance/{request_id}/confirm", appearance.confirm)
         app.router.add_get(self.prefix + "/avatars", self.avatars_state)
         app.router.add_get(self.prefix + "/avatars/{avatar_id}/image", self.avatars_image)
         for path, handler in (("sync", self.avatars_sync), ("create", self.avatars_create),

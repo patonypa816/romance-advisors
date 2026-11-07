@@ -1,5 +1,6 @@
 import {createLiveRenderer} from './renderer.js';
-import {layoutRects,normalizeLayout} from './layout.js';
+import {normalizeLayout} from './layout.js';
+import {applyPortraitLayout,shotForState} from './scene-layout.js';
 import {createPlayerMount} from './obs-output-player.js';
 const $=id=>document.getElementById(id),scene=$('program-scene'),root=$('overlay-root');
 const renderer=createLiveRenderer(root);
@@ -23,16 +24,17 @@ async function poll(){
     // Use server coordinates, never a browser's localStorage layout. Invalid
     // layout leaves the last valid composition and player untouched.
     const layout=normalizeLayout(state.layout);
-    const {avatar}=layoutRects(layout);
     renderer.setLayout(layout);
-    Object.assign($('program-avatar').style,{left:`${avatar.x}px`,top:`${avatar.y}px`,width:`${avatar.w}px`,height:`${avatar.h}px`});
+    const shot=shotForState(state);
+    applyPortraitLayout($('program-avatar'),layout,shot);
+    scene.dataset.shot=shot;
     renderer.render(state);
     player.update(state,location.href);
     diagnostic.lastStateAt=new Date().toISOString();record('state','ready');
   }catch{
     // Keep the current iframe mounted on transient GET/render failure. Rendering
     // an idle portrait here would misrepresent a disconnected live programme.
-    player.disconnected();record('state','unavailable');
+    renderer.offline();player.disconnected();record('state','unavailable');
   }finally{polling=false;if(!stopped)timer=setTimeout(poll,900);}
 }
 poll();

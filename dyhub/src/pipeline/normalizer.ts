@@ -119,14 +119,16 @@ export function normalize(msg: RawProtoMessage, meta: { roomId: string }): Danma
             Array.isArray(iconUrls) && iconUrls.length && typeof iconUrls[0] === 'string' && iconUrls[0].startsWith('http')
               ? iconUrls[0]
               : undefined,
-          diamondCount: Number(gift?.diamondCount ?? 0),
+          diamondCount: ownUnsignedInteger(gift, 'diamondCount'),
+          // Do not let the generic display-time fallback make an old gift look fresh.
+          sourceTimeKnown: Number.isFinite(Number(body.common?.createTime)) && Number(body.common?.createTime) > 0,
           repeatCount: ownUnsignedInteger(body, 'repeatCount'),
           comboCount: ownUnsignedInteger(body, 'comboCount'),
           groupCount: ownUnsignedInteger(body, 'groupCount'),
           repeatEnd: Object.hasOwn(body, 'repeatEnd') && [0, 1].includes(body.repeatEnd)
             ? Boolean(body.repeatEnd) : undefined,
           groupId: Object.hasOwn(body, 'groupId') ? longToStr(body.groupId) || undefined : undefined,
-          combo: Boolean(gift?.combo),
+          combo: ownBoolean(gift, 'combo'),
           sendType: Number(body.sendType ?? 0),
           traceId: body.traceId || undefined,
         },

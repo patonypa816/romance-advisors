@@ -57,7 +57,8 @@ export interface GiftEvent extends BaseDanmakuEvent {
     giftId: string;
     giftName: string;
     giftIcon?: string;       // 礼物图标 URL
-    diamondCount?: number;   // 价值（钻石）
+    diamondCount?: number;   // 已知的单件价值（钻石）；缺失不补零
+    sourceTimeKnown?: boolean; // 是否确有平台发生时间，不能用接收时间证明所属期
     repeatCount?: number;    // 连击次数（本组累计）
     comboCount?: number;     // 连击（主播端口径）
     groupCount?: number;     // 每次送出的数量（礼物组）

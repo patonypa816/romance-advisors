@@ -13,3 +13,19 @@
   transform-origin: 50% 0;
   transform: scale(var(--phone-content-scale));
 }
+
+/* One persistent 3:4 carrier moves within the outer 9:16 raster. Scaling this
+   element never replaces its iframe or changes the RTC receiver URL. */
+.portrait-carrier {
+  position:absolute;left:0;top:0;width:100%;height:auto;aspect-ratio:3/4;
+  transform-origin:0 0;overflow:hidden;z-index:1;
+  transition:transform 600ms cubic-bezier(.22,.68,.22,1),border-radius 600ms ease;
+  background:#453533;
+}
+.portrait-carrier[data-shot="portrait"]{border-radius:0}
+.portrait-carrier[data-shot="game"]{border-radius:26px}
+.portrait-carrier iframe,.portrait-carrier img{position:absolute;inset:0;width:100%;height:100%;border:0}
+.portrait-carrier img{object-fit:cover}
+.portrait-carrier .avatar-still-label{left:50%;bottom:24px;transform:translateX(-50%);white-space:nowrap}
+@media(prefers-reduced-motion:reduce){.portrait-carrier{transition:none!important}}
+.portrait-carrier:not([data-placed="true"]){transform:translate(-16.666666667%,0) scale(1.333333333);transition:none}

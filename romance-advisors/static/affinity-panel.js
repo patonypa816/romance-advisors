@@ -1,13 +1,13 @@
 import {el} from './ui.js';
 
 // Presentation only. Scores and settled round deltas remain owned by the game.
-export function createAffinityPanel(colorForScore) {
+export function createAffinityPanel(colorForScore,{label:scoreLabel='亲密度',numberSize=52}={}) {
   const card=el('div','affinity-card');
   const main=el('div','affinity-main'),heading=el('div','affinity-heading');
-  const label=el('span','affinity-label','亲密度'),change=el('span','affinity-change');
+  const label=el('span','affinity-label',scoreLabel),change=el('span','affinity-change');
   change.setAttribute('aria-hidden','true');heading.append(label,change);
   const track=el('div','affinity-track'),fill=el('i','affinity-fill');track.append(fill);
-  track.setAttribute('role','progressbar');track.setAttribute('aria-label','亲密度');
+  track.setAttribute('role','progressbar');track.setAttribute('aria-label',scoreLabel);
   track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
   main.append(heading,track);
   const number=el('strong','affinity-number','—');number.setAttribute('aria-hidden','true');
@@ -22,8 +22,8 @@ export function createAffinityPanel(colorForScore) {
   const display=value=>typeof value==='number'?String(Number(value.toPrecision(12))):String(value);
   function showNumber(value){
     const text=display(value);number.textContent=text;number.title=String(value);
-    // Keep the approved 52px integers; legal fractional scores fit the same slot.
-    number.style.fontSize=`${Math.min(52,156/text.length)}px`;
+    // Keep each card's chosen integer size; legal fractions fit the same slot.
+    number.style.fontSize=`${Math.min(numberSize,numberSize*3/text.length)}px`;
   }
   function stopNumber(){if(frame!==null)cancelAnimationFrame(frame);frame=null;}
   function clearFeedback(){
@@ -52,7 +52,7 @@ export function createAffinityPanel(colorForScore) {
     const freshSettlement=settled&&!completedRounds.has(currentRound);
     if(settled)completedRounds.add(currentRound);
     track.setAttribute('aria-valuenow',String(next));
-    track.setAttribute('aria-valuetext',episode?`${display(next)} / 100`:'暂无亲密度');
+    track.setAttribute('aria-valuetext',episode?`${display(next)} / 100`:`暂无${scoreLabel}`);
     card.classList.toggle('is-reduced',media.matches);
     // A new episode must not slide from the previous episode's score/color.
     if(reset)fill.style.transition='none';
@@ -80,7 +80,7 @@ export function createAffinityPanel(colorForScore) {
       if(freshSettlement&&current.delta!==0&&Math.abs(current.delta-actual)<1e-8){
         const positive=actual>0;card.classList.add(positive?'gain':'loss');
         change.textContent=`${positive?'+':'−'}${display(Math.abs(current.delta))}`;
-        announce.textContent=`亲密度${positive?'增加':'减少'} ${display(Math.abs(current.delta))}，当前 ${display(next)} 分`;
+        announce.textContent=`${scoreLabel}${positive?'增加':'减少'} ${display(Math.abs(current.delta))}，当前 ${display(next)} 分`;
         if(!media.matches&&typeof change.animate==='function'){
           animations.push(change.animate([
             {opacity:0,transform:`translateY(${positive?5:-5}px)`},

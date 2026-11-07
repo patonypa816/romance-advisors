@@ -21,6 +21,9 @@ class Node {
   replaceChildren(...nodes){this._text='';this.children=[];this.append(...nodes);}
   setAttribute(name,value){this.attributes[name]=value;}
   removeAttribute(name){delete this.attributes[name];}
+  getAttribute(name){return name==='src'?this.src:this.attributes[name];}
+  play(){this.plays=(this.plays||0)+1;return Promise.resolve();}
+  pause(){this.pauses=(this.pauses||0)+1;}
   addEventListener(name,fn){this.events??={};this.events[name]=fn;}
   getBoundingClientRect(){this.transitionAtLayout=this.style.transition;return {};}
   animate(){const animation={cancelled:false,currentTime:null,pause(){},cancel(){this.cancelled=true;}};this.animations??=[];this.animations.push(animation);return animation;}
@@ -40,7 +43,7 @@ function state(){return {episode:{id:'e1',man_name:'甲',woman_name:'乙',status
   round:{id:'r1',number:1,phase:'VOTING',remaining_seconds:20,
     options:[{id:'o1',number:1,text:'先问周末',votes:0,author:{nickname:'观众'}}]},
   messages:[{id:'m1',role:'woman',text:'周末有空吗？'}],leaderboards:{best:[],worst:[]}};}
-function harness({reduced=true}={}){
+function harness({reduced=true,rects={phone:{},poll:{},boards:{}}}={}){
   const root=new Node(),frames=new Map(),timers=new Map(),errors=[],listeners=new Set();
   let clock=0,timerId=0;
   const media={matches:reduced,addEventListener:(_,fn)=>listeners.add(fn),removeEventListener:(_,fn)=>listeners.delete(fn)};
@@ -50,12 +53,13 @@ function harness({reduced=true}={}){
     setTimeout:(callback,delay)=>{timers.set(++timerId,{callback,at:clock+delay});return timerId;},clearTimeout:id=>timers.delete(id),
     requestAnimationFrame:callback=>{frames.set(++frameId,callback);return frameId;},
     cancelAnimationFrame:id=>frames.delete(id),root,
-    layoutRects:()=>({phone:{},poll:{},boards:{}}),normalizeLayout:value=>value,
+    layoutRects:()=>rects,normalizeLayout:value=>value,
     console:{error:(...args)=>errors.push(args)},
     fetch:async()=>{fetchCount++;if(fetchError)throw fetchError;return {ok:true,json:async()=>current};}});
   vm.runInContext(read('ui.js').replaceAll('export ',''),context);
   vm.runInContext(read('affinity-panel.js').replace(/^import .*;\n/gm,'').replace('export function ','function '),context);
   vm.runInContext(read('finale-overlay.js').replace(/^import .*;\n/gm,'').replaceAll('export ',''),context);
+  vm.runInContext(read('scene-layout.js').replace(/^import .*;\n/gm,'').replaceAll('export ',''),context);
   vm.runInContext(read('renderer.js').replace(/^import .*;\n/gm,'').replace('export function ','function ')+
     ';var renderer=createLiveRenderer(root);',context);
   const overlay=read('overlay.js');
@@ -91,6 +95,7 @@ test('unchanged state renders repeatedly without an error or scroll reset',()=>{
 
 test('votes and leaderboard update while the same messages remain visible',()=>{
   const h=harness();h.render();h.flushFrames();
+  assert.match(h.root.querySelector('.live-poll-title').textContent,/发1投票/);
   h.state.round.options[0].votes=7;
   h.state.leaderboards.best=[{nickname:'军师甲',rate:1,adopted:2}];h.render();
   assert.equal(h.root.querySelector('.option-votes').textContent,'7票');
@@ -273,7 +278,7 @@ test('reduced motion settles in-flight numbers, keeps static feedback and never 
 
 test('renderer disposal removes affinity callbacks and later polls cannot restart its motion',()=>{
   const h=harness({reduced:false});h.render();h.flushFrames();settle(h,60,10);h.render();h.flushFrames();
-  assert.equal(h.listeners.size,2);assert.equal(h.timers.size,1);assert.equal(h.frames.size,1);
+  assert.equal(h.listeners.size,3);assert.equal(h.timers.size,1);assert.equal(h.frames.size,1);
   h.renderer.dispose();assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);assert.equal(h.frames.size,0);
   settle(h,70,10,'r2');h.render();h.flushFrames();
   assert.equal(h.timers.size,0);assert.equal(h.frames.size,0);assert.equal(h.change.textContent,'');
@@ -401,4 +406,137 @@ test('random fallback award uses the same ordinary caption as a scored winner',(
   const h=harness();endEpisode(h,{awards:{best:null,worst:{nickname:'仅提过建议',adopted:0,selection_reason:'random_suggestion'}}});h.render();
   assert.equal(h.root.querySelector('.medal-goofy').querySelector('small').textContent,'主打一个敢说。');
   assert.equal(h.root.querySelector('.medal-goofy').querySelector('h3').textContent,'仅提过建议');
+});
+
+
+test('ordinary chat hides all game content while matching game binding restores it',()=>{
+  const h=harness();
+  h.state.program={state:'running',content_mode:'chat',game_episode_id:null};
+  h.render();assert.equal(h.root.dataset.shot,'portrait');
+  h.state.program={state:'running',content_mode:'to_game',game_episode_id:null};
+  h.render();assert.equal(h.root.dataset.shot,'portrait');
+  h.state.program={state:'running',content_mode:'game',game_episode_id:'old'};
+  h.render();assert.equal(h.root.dataset.shot,'portrait');
+  h.state.program.game_episode_id='e1';
+  h.render();assert.equal(h.root.dataset.shot,'game');
+  h.state.program.content_mode='to_chat';h.state.program.game_episode_id=null;
+  h.render();assert.equal(h.root.dataset.shot,'game');
+  h.state.program.content_mode='chat';
+  h.render();assert.equal(h.root.dataset.shot,'portrait');
+});
+
+
+test('rehearsal paints actual tier and score on shared output, RTC removes simulated media',()=>{
+  const h=harness();h.state.appearance={mode:'rehearsal',rehearsal_active:true,score:62,tier:'normal',target:'refined',transition:{id:'switch-1',direction:'up',at:Date.now()/1000}};
+  h.render();const portrait=h.root.querySelector('.appearance-portrait'),score=h.root.querySelector('.appearance-score');
+  assert.equal(portrait.hidden,false);assert.equal(portrait.children[0].src,'/static/assets/appearance/normal.jpg');
+  assert.equal(score.hidden,false);assert.match(score.textContent,/造型值62/);assert.doesNotMatch(score.textContent,/本地试玩|咖啡馆|换形|帅|鱼/);
+  const video=portrait.children[1];assert.equal(video.plays,1);h.render();assert.equal(video.plays,1);
+  h.state.appearance={...h.state.appearance,tier:'refined',target:'refined'};h.render();
+  assert.equal(portrait.children[0].src,'/static/assets/appearance/refined.jpg');assert.match(score.textContent,/造型值62/);
+  h.state.appearance={...h.state.appearance,mode:'rtc',active:true,rehearsal_active:false};h.render();
+  assert.equal(portrait.hidden,true);assert.equal(video.hidden,true);assert.equal(video.pauses,1);assert.equal(score.hidden,false);
+});
+
+test('appearance score overlays only the existing portrait bottom without changing any layout slot',()=>{
+  const rects={avatar:{x:552,y:360,w:480,h:640},phone:{x:48,y:336,w:480,h:944},poll:{x:48,y:1304,w:984,h:304},boards:{x:552,y:1024,w:480,h:256}};
+  const h=harness({rects});h.renderer.setLayout({});
+  const slots=['.live-conversation','.live-poll','.live-boards'].map(selector=>h.root.querySelector(selector));
+  const before=slots.map(node=>JSON.stringify(node.style));
+  h.state.appearance={mode:'rehearsal',rehearsal_active:true,score:50,tier:'normal'};h.render();
+  const card=h.root.querySelector('.appearance-score');
+  assert.equal(card.parent,h.root.querySelector('.phone-content-frame'));
+  assert.equal(card.style.left,'552px');assert.equal(card.style.top,'924px');assert.equal(card.style.width,'480px');
+  assert.deepEqual(slots.map(node=>JSON.stringify(node.style)),before);
+  assert.equal(h.root.querySelector('.appearance-badge'),null);
+  const css=read('overlay.css');
+  assert.match(css,/\.appearance-score\.affinity-card\{position:absolute;[^}]*height:76px;[^}]*margin:0/);
+  // Both score cards inherit the shared left-anchored fill; appearance must not reverse it.
+  assert.doesNotMatch(css,/\.appearance-score \.affinity-(?:track|fill)\s*\{/);
+  assert.match(read('affinity-panel.css'),/\.affinity-fill\{display:block;[^}]*width:0/);
+});
+
+test('appearance score accepts exact endpoints and design sample, but never invents a value from old or inactive data',()=>{
+  const h=harness(),card=h.root.querySelector('.appearance-score'),track=card.querySelector('.affinity-track');
+  h.render();assert.equal(card.hidden,true);
+  for(const value of [0,50,100]){
+    h.state.appearance={mode:'rehearsal',rehearsal_active:true,score:value};h.render();
+    assert.equal(card.hidden,false);assert.equal(card.querySelector('.affinity-number').textContent,String(value));
+    assert.equal(card.querySelector('.affinity-fill').style.width,`${value}%`);
+    assert.equal(track.attributes['aria-label'],'造型值');assert.equal(track.attributes['aria-valuenow'],String(value));
+  }
+  for(const value of [null,{}, {mode:'off',active:true,score:50}, {mode:'rehearsal',score:50},
+    ...[undefined,null,'50',NaN,Infinity,-1,101].map(score=>({mode:'rtc',active:true,score}))]){
+    h.state.appearance=value;h.render();assert.equal(card.hidden,true,String(value?.score));
+  }
+  h.state.appearance={mode:'rtc',active:true,score:80};h.render();assert.equal(card.hidden,false);
+  h.state.episode.status='SUCCEEDED';h.render();assert.equal(card.hidden,true);
+  h.state.episode.status='ACTIVE';h.state.program={state:'running',content_mode:'chat'};h.render();assert.equal(card.hidden,true);
+  h.root.classList.add('is-preview-fixture');h.state.appearance=null;h.render();assert.equal(card.hidden,false);
+  assert.equal(card.querySelector('.affinity-number').textContent,'50');
+});
+
+test('appearance numeric motion is independent, interruptible and respects reduced motion and visibility resets',()=>{
+  const h=harness({reduced:false}),card=h.root.querySelector('.appearance-score'),number=card.querySelector('.affinity-number'),fill=card.querySelector('.affinity-fill');
+  h.state.appearance={mode:'rehearsal',rehearsal_active:true,score:50};h.render();h.flushFrames();
+  assert.equal(number.textContent,'50');assert.equal(fill.transitionAtLayout,'none');
+  h.state.appearance.score=80;h.render();h.flushFrames();h.advance(240);
+  assert(Number(number.textContent)>50&&Number(number.textContent)<80);assert.equal(fill.style.width,'80%');
+  assert.equal(h.number.textContent,'50');assert.equal(card.querySelector('.affinity-change').textContent,'');
+  const shown=Number(number.textContent);h.state.appearance.score=0;h.render();h.flushFrames();h.advance(100);
+  assert(Number(number.textContent)<shown);assert.equal(h.frames.size,1);
+  h.setReduced(true);assert.equal(number.textContent,'0');assert.equal(h.frames.size,0);
+  h.state.appearance.score=100;h.render();assert.equal(number.textContent,'100');assert.equal(fill.style.width,'100%');
+  h.setReduced(false);h.state.appearance.score=20;h.render();h.advance(100);
+  h.renderer.offline();assert.equal(card.hidden,true);assert.equal(h.frames.size,0);
+  h.render();assert.equal(card.hidden,false);assert.equal(number.textContent,'20');assert.equal(fill.transitionAtLayout,'none');
+  h.renderer.dispose();assert.equal(h.listeners.size,0);assert.equal(h.frames.size,0);
+});
+
+test('gift guide uses the real gift artwork in the outer canvas for rehearsal and layout preview',()=>{
+  const h=harness(),guide=h.root.querySelector('.appearance-gift-guide');
+  h.render();assert.equal(guide.hidden,true);
+  h.state.appearance={mode:'rehearsal',active:true,rehearsal_active:true,score:50,tier:'normal'};
+  h.render();assert.equal(guide.hidden,false);assert.equal(guide.parent,h.root);
+  assert.equal(guide.dataset.mode,'preview');assert.match(guide.textContent,/礼物造型分.*仅预览.*每个礼物 1 钻.*小心心= \+1 分.*抖音= −1 分/);
+  assert.equal(guide.querySelector('.appearance-gift-status').hidden,false);
+  assert.deepEqual(guide.querySelectorAll('img').map(node=>node.src),['/static/assets/gift-guide/463.png','/static/assets/gift-guide/164.png']);
+  const firstIcon=guide.querySelector('img');h.render();assert.equal(guide.querySelector('img'),firstIcon);
+  h.state.appearance=null;h.root.classList.add('is-preview-fixture');h.render();
+  assert.equal(guide.hidden,false);assert.equal(guide.dataset.mode,'preview');
+});
+
+test('gift guide only describes enabled current mappings during an active game and hides stale hints',()=>{
+  const h=harness(),guide=h.root.querySelector('.appearance-gift-guide');
+  const enabled={mode:'rtc',active:true,enabled:true,gift_guide_configured:true};
+  h.state.appearance=enabled;h.render();assert.equal(guide.hidden,false);assert.equal(guide.dataset.mode,'live');
+  assert.equal(guide.querySelector('.appearance-gift-status').hidden,true);
+  for(const patch of [{gift_guide_configured:false},{gift_guide_configured:undefined},{gift_guide_configured:'true'},{enabled:false},{active:false},{mode:'off'}]){
+    h.state.appearance={...enabled,...patch};h.render();assert.equal(guide.hidden,true,JSON.stringify(patch));
+  }
+  h.state.appearance=enabled;h.state.episode.status='SUCCEEDED';h.render();assert.equal(guide.hidden,true);
+  h.state.episode.status='ACTIVE';h.state.program={state:'running',content_mode:'chat'};
+  h.render();assert.equal(guide.hidden,true);
+  h.state.program={state:'running',content_mode:'game',game_episode_id:'e1'};h.render();assert.equal(guide.hidden,false);
+  h.renderer.offline();assert.equal(guide.hidden,true);h.render();assert.equal(guide.hidden,false);
+  h.renderer.renderFailed();assert.equal(guide.hidden,true);
+});
+
+test('ordinary game shows the two panels without treating the last episode or a pending switch as real points',()=>{
+  const h=harness(),guide=h.root.querySelector('.appearance-gift-guide'),score=h.root.querySelector('.appearance-score');
+  h.state.program={state:'running',content_mode:'game',game_episode_id:'e1'};
+  h.state.appearance={enabled:false,active:false,mode:'off',score:91,gift_guide_configured:true};
+  h.render();
+  assert.equal(score.hidden,false);assert.equal(score.querySelector('.affinity-number').textContent,'50');
+  assert.match(score.querySelector('.appearance-score-status').textContent,/未计分/);
+  assert.equal(guide.hidden,false);assert.equal(guide.querySelector('.appearance-gift-status').textContent,'未计分');
+  h.state.appearance.enabled=true;h.render();assert.equal(score.querySelector('.affinity-number').textContent,'—');
+  h.state.appearance.gift_guide_configured=false;h.render();assert.equal(guide.hidden,true);
+  Object.assign(h.state.appearance,{mode:'rtc',active:true,score:62,gift_guide_configured:true});h.render();
+  assert.equal(score.querySelector('.affinity-number').textContent,'62');assert.equal(score.querySelector('.appearance-score-status').hidden,true);
+  assert.equal(guide.hidden,false);assert.equal(guide.querySelector('.appearance-gift-status').hidden,true);
+  h.state.appearance.operator_test_contribution={source:'operator_test',delta:20};h.render();
+  assert.equal(score.querySelector('.appearance-score-status').textContent,'场控测试 +20');
+  assert.equal(score.querySelector('.appearance-score-status').hidden,false);
+  h.state.program.game_episode_id='old';h.render();assert.equal(score.hidden,true);assert.equal(guide.hidden,true);
 });

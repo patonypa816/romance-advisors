@@ -1,0 +1,42 @@
+{
+  "enabled": false,
+  "character_id": "请填写同一角色的稳定本机标识",
+  "voice_id": "请填写同一音色ID",
+  "broadcast_key": "stellar",
+  "assets": {
+    "fish": {
+      "avatar_id": "请填写真实已就绪资产ID",
+      "image_sha256": "请填写该资产本机原图的64位SHA256",
+      "description": "同一个人戴着鱼头遮罩。"
+    },
+    "rough": {
+      "avatar_id": "请填写真实已就绪资产ID",
+      "image_sha256": "请填写该资产本机原图的64位SHA256",
+      "description": "同一个人头发散乱、衣领皱着。"
+    },
+    "tired": {
+      "avatar_id": "请填写真实已就绪资产ID",
+      "image_sha256": "请填写该资产本机原图的64位SHA256",
+      "description": "同一个人看起来疲惫、头发稍乱。"
+    },
+    "normal": {
+      "avatar_id": "请填写真实已就绪资产ID",
+      "image_sha256": "请填写该资产本机原图的64位SHA256",
+      "description": "同一个人是日常普通打扮。"
+    },
+    "refined": {
+      "avatar_id": "请填写真实已就绪资产ID",
+      "image_sha256": "请填写该资产本机原图的64位SHA256",
+      "description": "同一个人梳好头发、理好衣领。"
+    },
+    "stellar": {
+      "avatar_id": "请填写真实已就绪资产ID",
+      "image_sha256": "请填写该资产本机原图的64位SHA256",
+      "description": "同一个人穿着讲究、精神很好。"
+    }
+  },
+  "transitions": {
+    "up": "请填写已批准且云端可访问的HTTPS升级短片",
+    "down": "请填写已批准且云端可访问的HTTPS降级短片"
+  }
+}

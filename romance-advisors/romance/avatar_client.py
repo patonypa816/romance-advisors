@@ -14,6 +14,7 @@ DEFAULT_RUNTIME = Path(__file__).resolve().parents[2] / "ai-live-avatar/studio/d
 # Only these local messages may cross into the game UI. Studio reasons and
 # transport exceptions can contain access-bearing URLs or provider details.
 STARTUP_MESSAGES = {
+    "appearance_not_ready": "已启用造型效果，但素材、过场或当前形象尚未就绪；请补齐配置，或关闭造型效果后使用原玩法。",
     "startup_blocked": "数字人启动被阻断，请到数字人工作台查看会话状态。",
     "player_timeout": "数字人播放器连接等待超时，请检查唯一预览连接后重新启动。",
     "startup_timeout": "数字人启动等待超时，自动节目已停止，请检查数字人工作台。",
@@ -184,6 +185,26 @@ class AvatarClient:
 
     async def cancel_job(self, record):
         return await self.request("external/jobs/" + quote(record["job_id"], safe="") + "/cancel", body=self.owner())
+
+    # These methods never create a session, choose a voice, or accept a URL.
+    supports_real_appearance = True
+
+    async def appearance_status(self):
+        return await self.request("external/appearance", query=self.owner())
+
+    async def appearance_lifecycle(self, record, action):
+        body = {**self.owner(), **{k: record[k] for k in ("mode_epoch", "episode_id")}, "action": action}
+        return await self.request("external/appearance/lifecycle", body=body)
+
+    async def switch_appearance(self, record):
+        return await self.request("external/appearance", body={**record, **self.owner()})
+
+    async def appearance(self, record):
+        return await self.request("external/appearance/" + quote(record["request_id"], safe=""), query=self.owner())
+
+    async def confirm_appearance(self, record, *, outcome="target_dynamic"):
+        body = {**self.owner(), **{k: record[k] for k in ("mode_epoch", "episode_id")}, "outcome": outcome}
+        return await self.request("external/appearance/" + quote(record["request_id"], safe="") + "/confirm", body=body)
 
     async def stop(self):
         if self.owner_id is not None and self.generation is not None:

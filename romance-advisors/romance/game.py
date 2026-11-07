@@ -15,6 +15,7 @@ from .expression import REACTION_TTS_STYLE, build_plan
 from .diagnostics import PerformanceMetrics
 from .model import ModelInputTooLarge
 from .viewer_avatar import safe_avatar_url
+from .appearance import appearance_snapshot
 
 
 FINALE_DURATION_MS = 6800
@@ -39,6 +40,12 @@ def clean_text(value, field, limit=12000):
     return value.strip()
 
 
+def vote_number(text: str) -> int | None:
+    """Read a standalone ballot without altering the original comment receipt."""
+    match = re.fullmatch(r"(?:投[ \t]*)?([1-4])", text.strip())
+    return int(match[1]) if match else None
+
+
 class Game:
     def __init__(self, db_path, model, *, input_char_budget=24000, performer=None):
         self.storage = Storage(db_path)
@@ -54,6 +61,7 @@ class Game:
         self._woman_typing_token = None
         self.rng = random.Random()
         self._validation_error = None
+        self._prepare_candidate = None
         self.input_char_budget = input_char_budget
         self.performer = performer
 
@@ -66,11 +74,14 @@ class Game:
         self._by_id = {table: {row["id"]: row for row in self.data[table]} for table in Storage.TABLES}
         self._round_inputs = {"proposals": {}, "votes": {}}
         self._session_comments = {}
+        self._proposal_comments = {}
         for table in self._round_inputs:
             for row in self.data[table]:
                 self._round_inputs[table].setdefault(row["round_id"], []).append(row)
         for row in self.data["comments"]:
             self._session_comments.setdefault(row["session_id"], []).append(row)
+            if row.get("proposal_id"):
+                self._proposal_comments[row["proposal_id"]] = row
 
     def _changed(self, changes):
         for table in self._versions:
@@ -124,6 +135,8 @@ class Game:
                         self._round_inputs[table].setdefault(record["round_id"], []).append(record)
                     elif table == "comments":
                         self._session_comments.setdefault(record["session_id"], []).append(record)
+                        if record.get("proposal_id"):
+                            self._proposal_comments[record["proposal_id"]] = record
         self._changed(committed)
 
     def _idle(self):
@@ -190,6 +203,7 @@ class Game:
 
     def abort_episode(self):
         self._token += 1  # Results from an already-running request lose write authority.
+        self._prepare_candidate = None
         self.busy = False
         changed_proposals = set()
         if self.episode and self.episode["status"] in ("ACTIVE", "PREPARING"):
@@ -224,6 +238,39 @@ class Game:
         self._save()
         return self.public_state()
 
+    def bind_live_broadcast(self, room_id, live_id):
+        """Bind a collector-confirmed broadcast without changing the story.
+
+        The public room number is stable; live_id must be the platform's
+        per-broadcast identifier. Neither page loads nor game sessions define
+        a broadcast. Keep the registry in existing transactional JSON metadata.
+        """
+        room_id = clean_text(room_id, "broadcast_room", 128)
+        live_id = clean_text(live_id, "broadcast_live_id", 256)
+        if not room_id.isascii() or not room_id.isdigit():
+            raise ValueError("invalid_broadcast_room")
+        broadcasts = self.data.get("live_broadcasts", [])
+        broadcast = next((item for item in broadcasts
+                          if item["room_id"] == room_id and item["live_id"] == live_id), None)
+        if broadcast is None:
+            broadcast = {"id": ident(), "platform": "douyin", "room_id": room_id,
+                         "live_id": live_id, "bound_at": datetime.now(timezone.utc).isoformat()}
+        if self.data.get("live_broadcast_id") == broadcast["id"]:
+            return copy.deepcopy(broadcast)
+        pending = dict(self.data, live_broadcast_id=broadcast["id"],
+                       live_broadcasts=broadcasts if broadcast in broadcasts else [*broadcasts, broadcast])
+        self._save(pending)
+        return copy.deepcopy(broadcast)
+
+    def _comment_broadcast(self, source, context):
+        """Only a trusted adapter keyword can attach the current broadcast."""
+        if source != "dyhub" or not isinstance(context, dict):
+            return None
+        active = self.data.get("live_broadcast_id")
+        return next((item["id"] for item in self.data.get("live_broadcasts", [])
+                     if item["id"] == active and item["room_id"] == context.get("room_id")
+                     and item["live_id"] == context.get("live_id")), None)
+
     async def new_episode(self):
         self._idle()
         if not self.data["session_id"]:
@@ -236,21 +283,45 @@ class Game:
         return await self._run(self._prepare)
 
     async def _prepare(self, token):
-        result = await self._call("prepare", {"previous_titles": [e.get("title", "") for e in self.data["episodes"][-8:]]}, token)
+        candidate = self._prepare_candidate if self._validation_error == "invalid_private_preferences" else None
+        payload = {"previous_titles": [e.get("title", "") for e in self.data["episodes"][-8:]]}
+        if candidate is not None:
+            payload["private_preferences_context"] = candidate
+        result = await self._call("prepare", payload, token)
+        if candidate is not None:
+            # The existing single correction fills one missing field. It must
+            # not silently replace the characters/story that already validated.
+            repaired_woman = result.get("woman")
+            preferences = repaired_woman.get("private_preferences") if isinstance(repaired_woman, dict) else None
+            result = copy.deepcopy(candidate)
+            result["woman"]["private_preferences"] = preferences
+        self._prepare_candidate = None
         for role in ("man", "woman"):
             character = result.get(role)
             if not isinstance(character, dict) or type(character.get("age")) is not int or not 18 <= character["age"] <= 120:
                 raise ValueError("invalid_adult_character")
             for field in ("name", "personality", "background", "speech_style"):
                 clean_text(character.get(field), field)
-        woman = result["woman"]
-        if not isinstance(woman.get("private_preferences"), (str, list, dict)) or not woman["private_preferences"]:
-            raise ValueError("invalid_private_preferences")
         hints = result.get("public_hints")
         if not isinstance(hints, list) or not hints or len(hints) > 12 or not all(isinstance(h, str) and h.strip() for h in hints):
             raise ValueError("invalid_public_hints")
         prepared = {key: result[key] for key in ("man", "woman", "public_hints")}
         prepared.update(title=clean_text(result.get("title"), "title"), shared_background=clean_text(result.get("shared_background"), "background"), opening=clean_text(result.get("opening"), "opening"))
+        try:
+            preferences = result["woman"].get("private_preferences")
+            if isinstance(preferences, str):
+                preferences = preferences.strip()
+                if not preferences:
+                    raise ValueError("invalid_private_preferences")
+            elif not isinstance(preferences, (list, dict)) or not preferences:
+                raise ValueError("invalid_private_preferences")
+        except ValueError:
+            # Hold only a candidate whose other required fields passed. Never
+            # persist an invalid draft or publish its opening before correction.
+            self._prepare_candidate = copy.deepcopy(prepared)
+            self._prepare_candidate["woman"].pop("private_preferences", None)
+            raise
+        prepared["woman"]["private_preferences"] = preferences
         self.episode.update(prepared, status="ACTIVE")
         self._message("woman", prepared["opening"], None)
         # Opening and first collection round are committed together.
@@ -283,7 +354,8 @@ class Game:
         author_id, nickname, content = clean_text(author_id, "author", 256), clean_text(nickname, "nickname", 256), clean_text(text, "proposal", 2000)
         # Eligibility is decided at collection close. A later greeting must not
         # erase an earlier suggestion; each received candidate keeps its source.
-        proposal = {"id": ident(), "round_id": data["round_id"], "author_id": author_id, "nickname": nickname, "text": content}
+        proposal = {"id": ident(), "round_id": data["round_id"], "author_id": author_id, "nickname": nickname, "text": content,
+                    "source": "local"}
         if avatar_url := safe_avatar_url(avatar_url):
             proposal["avatar_url"] = avatar_url
         data["proposals"].append(proposal)
@@ -311,8 +383,10 @@ class Game:
             data["votes"].append(vote)
         return vote
 
-    def accept_comment(self, event, *, blocked_reason=None):
-        """Record one local simulated comment and its window-bound receipt."""
+    def accept_comment(self, event, *, blocked_reason=None, source="local", live_broadcast=None):
+        """Record a comment; source is supplied by the adapter, never the body."""
+        if source not in {"local", "dyhub"}:
+            raise ValueError("invalid_comment_source")
         if not isinstance(event, dict) or not {"expected_round_id", "expected_phase"} <= event.keys():
             raise ValueError("invalid_comment_context")
         payload = {"event_id": clean_text(event.get("event_id"), "comment_id", 256),
@@ -336,16 +410,21 @@ class Game:
                 raise ValueError("invalid_comment_conflict")
             if existing.get("avatar_url") != avatar_url:
                 raise ValueError("invalid_comment_conflict")
+            if existing.get("source", source) != source:
+                raise ValueError("invalid_comment_conflict")
             return copy.deepcopy(existing)
 
         r = self.current_round
         phase = r["phase"] if r else None
-        command = re.fullmatch(r"投([1-4])", payload["text"].strip())
-        comment = dict(payload, id=payload["event_id"], received_at=datetime.now(timezone.utc).isoformat(),
+        number = vote_number(payload["text"])
+        comment = dict(payload, id=payload["event_id"], source=source, received_at=datetime.now(timezone.utc).isoformat(),
                        session_id=self.data["session_id"], episode_id=self.data["episode_id"],
                        round_id=self.data["round_id"], round_number=r["number"] if r else None,
-                       phase=phase, kind="vote" if command else "chat", result="ignored",
+                       phase=phase, kind="vote" if number is not None else "chat", result="ignored",
                        reason="当前未开放征集或投票，仅记录评论。", proposal_id=None, vote_id=None, option_id=None)
+        broadcast_id = self._comment_broadcast(source, live_broadcast)
+        if broadcast_id:
+            comment["live_broadcast_id"] = broadcast_id
         # Copy only this author's effective input, never the whole archive. The
         # active round retains its identity while a model request is awaiting.
         pending = {"round_id": self.data["round_id"], "proposals": [], "votes": []}
@@ -356,14 +435,17 @@ class Game:
         elif self.busy:
             comment["reason"] = "正在生成，本条评论仅记录，不参与建议或投票。"
         elif self.episode and self.episode["status"] == "ACTIVE" and phase == "COLLECTING":
-            if command:
+            if number is not None:
                 comment["reason"] = "当前为建议征集阶段，投票尚未开放。"
             else:
                 proposal = self._append_proposal(pending, payload["author_id"], payload["nickname"], payload["text"], avatar_url=avatar_url)
+                proposal["source"] = source
+                if broadcast_id:
+                    proposal["live_broadcast_id"] = broadcast_id
                 comment.update(kind="proposal", result="candidate", reason="已收到，保留为本轮待编选评论；不会覆盖该参与者之前的建议。", proposal_id=proposal["id"])
         elif self.episode and self.episode["status"] == "ACTIVE" and phase == "VOTING":
-            if command:
-                option = next((o for o in r["options"] if o["number"] == int(command[1])), None)
+            if number is not None:
+                option = next((o for o in r["options"] if o["number"] == number), None)
                 if option:
                     existing_vote = self._get("votes", self.data["round_id"] + ":" + payload["author_id"])
                     if existing_vote is not None:
@@ -373,7 +455,7 @@ class Game:
                 else:
                     comment["reason"] = "该编号没有对应选项，未改动已有有效票。"
             else:
-                comment["reason"] = "当前为投票阶段，仅完整“投1”至“投4”计票；本条仅记录。"
+                comment["reason"] = "请单发当前选项编号，例如“1”“投1”或“投 1”；本条仅记录。"
         # The receipt and its effective proposal/vote commit in one transaction.
         # A failed write leaves the live state (including an in-flight round) alone.
         self._save_inputs({"comments": [comment], "proposals": pending["proposals"], "votes": pending["votes"]})
@@ -649,6 +731,13 @@ class Game:
             # The line was saved at draft time. Reveal that same bubble while
             # the typing gesture is under way; the woman still waits for its tail.
             if not record["man_released"]:
+                read_appearance = getattr(self.performer, "message_appearance", None)
+                appearance = read_appearance() if read_appearance else None
+                if appearance is not None:
+                    # The draft is already immutable. Save the visible portrait on the
+                    # round, in the same commit that first makes its message public.
+                    man = next(m for m in self._messages() if m["role"] == "man" and m["round_id"] == r["id"])
+                    r["man_appearance"] = {"message_id": man["id"], "portrait": copy.deepcopy(appearance)}
                 record["man_released"] = True
                 self._save()
                 self._metric("man_public", outcome="committed", job_id=record["job_id"])
@@ -679,11 +768,36 @@ class Game:
         if not has_message_motion:
             self._metric("man_public", outcome="committed", job_id=record["job_id"])
 
+    def _message_portrait(self, message):
+        if message["role"] == "man":
+            round_ = self._get("rounds", message["round_id"])
+            snapshot = (round_ or {}).get("man_appearance")
+            if snapshot and snapshot["message_id"] == message["id"]:
+                return {"portrait": copy.deepcopy(snapshot["portrait"])}
+        return {}
+
+    def _previous_visible_portrait(self, current):
+        # A version can change twice while the same face returns. Compare the
+        # two published messages, not the sequence of gifts between them.
+        for old in reversed(self._messages()):
+            if old["role"] == "man" and old["id"] != current["id"]:
+                return self._message_portrait(old).get("portrait")
+        return appearance_snapshot("normal")
+
     async def _reply(self, token):
         r = self.current_round
         man_message = next(m for m in self._messages() if m["round_id"] == r["id"] and m["role"] == "man")
         partner = {key: self.episode["man"][key] for key in ("name", "age")}
         payload = {"woman": self.episode["woman"], "partner": partner, "shared_background": self.episode["shared_background"], "messages": [{"role": m["role"], "text": m["text"]} for m in self._messages()], "score": self.episode["score"], "reply_to_message": {"id": man_message["id"], "text": man_message["text"]}}
+        payload["reply_to_message"].update(self._message_portrait(man_message))
+        portrait = payload["reply_to_message"].get("portrait")
+        changed = False
+        if portrait:
+            previous = self._previous_visible_portrait(man_message)
+            changed = bool(previous and previous["key"] != portrait["key"])
+            payload["appearance_comparison"] = {
+                "changed": changed, "previous_description": previous["description"] if previous else None,
+            }
         self._woman_typing_token = token
         live_performer = self.performer if self.performer and self.performer.enabled else None
         reveal_at = time.monotonic() + WOMAN_TYPING_SECONDS
@@ -697,6 +811,17 @@ class Game:
         expected = "success" if after == 100 else "failure" if after == 0 else "continue"
         if output.get("ending") != expected:
             raise ValueError("invalid_ending_score_consistency")
+        chat_delta = after - before
+        impression = 0
+        if portrait:
+            proposed = output.get("impression_delta", 0)
+            if type(proposed) is not int or not -2 <= proposed <= 2:
+                raise ValueError("invalid_impression_delta")
+            if changed and expected == "continue":
+                # Only dialogue can conclude an episode. Allow a small opposite
+                # impression too, including when the chat score is fractional.
+                impression = max(1 - math.ceil(after), min(math.ceil(100 - after) - 1, proposed))
+                after += impression
         remaining = reveal_at - time.monotonic()
         if remaining > 0:
             await asyncio.sleep(remaining)
@@ -706,13 +831,21 @@ class Game:
             raise StaleResult()
         self._message("woman", message, r["id"], man_message["id"])
         r.update(before=before, proposed_delta=delta, delta=after - before, after=after, phase="DONE")
+        if portrait:
+            r.update(chat_delta=chat_delta, impression_delta=impression, proposed_impression=proposed)
         self.episode.update(score=after, status="SUCCEEDED" if after == 100 else "FAILED" if after == 0 else "ACTIVE")
         if expected != "continue":
             # The final reply, score, clock and awards are a single durable
             # transition. Read/poll/restart must never begin a second finale.
+            awards = self._episode_awards()
+            worst = awards["worst"] or {}
+            # Reuse a random winner who also qualifies for the audience view.
+            # With only real suggestions both screens must show the same winner.
+            drawn_author = worst.get("author_id") if worst.get("selection_reason") == "random_suggestion" else None
             self.episode["finale"] = {"episode_id": self.episode["id"],
                 "status": self.episode["status"], "started_at": time.time(),
-                "duration_ms": FINALE_DURATION_MS, "awards": self._episode_awards()}
+                "duration_ms": FINALE_DURATION_MS, "awards": awards,
+                "live_awards": self._episode_awards(live_only=True, drawn_author=drawn_author)}
         self._save()
         self._metric("woman_committed", outcome="committed")
 
@@ -729,7 +862,27 @@ class Game:
             return await self._run(self._advance)
         return self.public_state()
 
-    def _episode_awards(self):
+    def _live_proposal(self, proposal):
+        """Old DyHub receipts prove origin without a migration or nickname rules."""
+        if not proposal:
+            return False
+        if "source" in proposal:
+            return proposal["source"] == "dyhub"
+        receipt = self._proposal_comments.get(proposal["id"], {})
+        if "source" in receipt:
+            return receipt["source"] == "dyhub" and receipt.get("author_id") == proposal["author_id"]
+        # Before explicit provenance existed only the collector generated both
+        # room-scoped SHA-256 namespaces. Require the matching durable receipt.
+        return (receipt.get("author_id") == proposal["author_id"]
+                and receipt.get("round_id") == proposal["round_id"]
+                and bool(re.fullmatch(r"dyhub:viewer:[0-9a-f]{64}", proposal["author_id"]))
+                and bool(re.fullmatch(r"dyhub:message:[0-9a-f]{64}", receipt.get("id", ""))))
+
+    def _live_option(self, option):
+        proposal = self._get("proposals", option.get("proposal_id"))
+        return bool(self._live_proposal(proposal) and proposal["author_id"] == option["author"]["id"])
+
+    def _episode_awards(self, *, live_only=False, drawn_author=None):
         """One episode only; called inside final settlement, never on reads.
 
         Session leaderboards retain their original rates and ordering. Random
@@ -752,18 +905,20 @@ class Game:
             recognized.update(item["proposal_id"] for item in r.get("proposal_selection", [])
                               if item.get("duplicate_of") in recognized)
             for p in self._round_inputs["proposals"].get(r["id"], []):
-                if p["id"] in recognized:
+                if p["id"] in recognized and (not live_only or self._live_proposal(p)):
                     suggestions[p["author_id"]] = row(p["author_id"], p["nickname"],
                         safe_avatar_url(p.get("avatar_url")) or suggestions.get(p["author_id"], {}).get("avatar_url"))
             if r["selection_source"] != "audience":
                 continue
             selected = next(o for o in r["options"] if o["id"] == r["selected_option_id"])
+            if live_only and not self._live_option(selected):
+                continue
             author = selected["author"]
             stats = authors.setdefault(author["id"], row(author["id"], author["nickname"], author.get("avatar_url")))
             stats.update(nickname=author["nickname"], avatar_url=safe_avatar_url(author.get("avatar_url"))
                          or suggestions.get(author["id"], {}).get("avatar_url") or stats["avatar_url"])
             stats["adopted"] += 1
-            delta = r["delta"]
+            delta = r.get("chat_delta", r["delta"])
             stats["positive"] += delta > 0
             stats["negative"] += delta < 0
             stats["score_delta"] += delta
@@ -778,29 +933,47 @@ class Game:
             reason = "most_negative_points"
         else:
             candidates = sorted(suggestions)
-            candidate = self.rng.choice(candidates) if candidates else None
+            candidate = drawn_author if drawn_author in suggestions else None
+            if candidate is None and candidates:
+                candidate = self.rng.choice(candidates)
             worst = authors.get(candidate, suggestions.get(candidate))
             reason = "random_suggestion"
         return {"best": dict(best, selection_reason="highest_positive_rate") if best else None,
                 "worst": dict(worst, rate=worst["negative"] / worst["adopted"] if worst["adopted"] else 0,
                               selection_reason=reason) if worst else None}
 
-    def _boards(self):
+    def _boards(self, *, live_only=False):
+        broadcast_id = self.data.get("live_broadcast_id") if live_only else None
+        if live_only and not broadcast_id:
+            # Historical DyHub origin proves a real viewer, but cannot prove
+            # which broadcast they joined. Keep such history in debug only.
+            return {"best": [], "worst": []}
         episode_ids = {e["id"] for e in self.data["episodes"] if e["session_id"] == self.data["session_id"]}
         authors = {}
         for r in self.data["rounds"]:
-            if r["episode_id"] not in episode_ids or r["phase"] != "DONE" or r["selection_source"] != "audience":
+            if ((not broadcast_id and r["episode_id"] not in episode_ids)
+                    or r["phase"] != "DONE" or r["selection_source"] != "audience"):
                 continue
             option = next(o for o in r["options"] if o["id"] == r["selected_option_id"])
+            if live_only and not self._live_option(option):
+                continue
+            if broadcast_id:
+                # Attribute a result to the accepted suggestion, not the later
+                # settlement time. An old/in-flight round can finish normally
+                # without awarding its points to the next broadcast.
+                proposal = self._get("proposals", option.get("proposal_id"))
+                if proposal.get("live_broadcast_id") != broadcast_id:
+                    continue
             author = option["author"]
             row = authors.setdefault(author["id"], {"author_id": author["id"], "nickname": author["nickname"], "adopted": 0, "positive": 0, "negative": 0})
-            row.update(nickname=author["nickname"], adopted=row["adopted"] + 1, positive=row["positive"] + (r["delta"] > 0), negative=row["negative"] + (r["delta"] < 0))
+            contribution = r.get("chat_delta", r["delta"])
+            row.update(nickname=author["nickname"], adopted=row["adopted"] + 1, positive=row["positive"] + (contribution > 0), negative=row["negative"] + (contribution < 0))
         def board(kind):
             rows = [dict(row, rate=row[kind] / row["adopted"]) for row in authors.values()]
             return sorted(rows, key=lambda row: (-row["rate"], -row["adopted"], row["author_id"]))
         return {"best": board("positive"), "worst": board("negative")}
 
-    def public_state(self):
+    def public_state(self, *, live_only=False):
         episode, r = self.episode, self.current_round
         public_episode = None
         if episode:
@@ -825,12 +998,27 @@ class Game:
         now = time.time()
         finale = copy.deepcopy(episode.get("finale")) if episode and episode["status"] in {"SUCCEEDED", "FAILED"} else None
         if finale:
+            live_awards = finale.pop("live_awards", None)
+            if live_only:
+                if live_awards is not None:
+                    finale["awards"] = live_awards
+                else:
+                    # Historical awards stay frozen: suppress an unproven winner
+                    # without drawing a replacement during polling or restart.
+                    live_authors = {p["author_id"] for r_ in self.data["rounds"]
+                                    if r_["episode_id"] == episode["id"]
+                                    for p in self._round_inputs["proposals"].get(r_["id"], [])
+                                    if self._live_proposal(p)}
+                    finale["awards"] = {kind: award if award and award["author_id"] in live_authors else None
+                                        for kind, award in finale["awards"].items()}
             finale["elapsed_ms"] = max(0, int((now - finale["started_at"]) * 1000))
-        return copy.deepcopy({"session": {"id": self.data["session_id"]}, "episode": public_episode, "round": public_round, "messages": [{k: m[k] for k in ("id", "role", "text", "round_id")} for m in messages], "leaderboards": self._boards(), "finale": finale, "busy": self.busy, "error": self.data["error"]})
+        public_messages = [dict(id=m["id"], role=m["role"], text=m["text"], round_id=m["round_id"],
+                                **self._message_portrait(m)) for m in messages]
+        return copy.deepcopy({"session": {"id": self.data["session_id"]}, "episode": public_episode, "round": public_round, "messages": public_messages, "leaderboards": self._boards(live_only=live_only), "finale": finale, "busy": self.busy, "error": self.data["error"]})
 
-    def operator_state(self, *, incremental=False, session_id=None, comment_cursor=None,
+    def operator_state(self, *, live_only=False, incremental=False, session_id=None, comment_cursor=None,
                        proposal_version=None, vote_version=None, comment_limit=200):
-        state = self.public_state()
+        state = self.public_state(live_only=live_only)
         state["diagnostics"] = {"episode": copy.deepcopy(self.episode), "round": copy.deepcopy(self.current_round),
                                 "messages": copy.deepcopy(self._messages()) if self.episode else []}
         current_session, current_round = self.data["session_id"], self.data["round_id"]

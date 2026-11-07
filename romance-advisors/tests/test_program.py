@@ -132,7 +132,8 @@ class ProgramTests(unittest.IsolatedAsyncioTestCase):
         await self.expire_phase()
         self.assertNotEqual(self.wb.game.episode["id"], first_episode)
         self.assertEqual(self.wb.game.episode["score"], 50)
-        self.assertEqual(self.wb.state()["leaderboards"]["best"][0]["adopted"], 1)
+        self.assertEqual(self.wb.state()["leaderboards"], {"best": [], "worst": []})
+        self.assertEqual(self.wb.state(debug=True)["leaderboards"]["best"][0]["adopted"], 1)
         self.assertEqual(program.started_at, started_at)
         self.assertEqual(program.state, "running")
 

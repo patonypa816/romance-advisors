@@ -21,6 +21,8 @@ from .model import QwenModel, strict_json
 from .program import Program
 from .viewer_avatar import AVATAR_CDN_SUFFIXES
 from .dyhub_intake import register_dyhub_routes
+from .appearance_workbench import AppearanceWorkbench, register_appearance_routes
+from .appearance import live_gift_readiness
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "romance-advisors"
@@ -45,6 +47,9 @@ def error_text(code):
         "requires_active_episode": "请先开始一期故事。",
         "requires_finished_round": "当前回合尚未完成。",
         "cleanup_failed": "停止过程中有步骤未能确认；其余清理已尝试，请检查运行状态。",
+        "invalid_program_mode": "直播模式无效，请刷新后重试。",
+        "invalid_program_run": "本次直播标识已失效，请刷新后重试。",
+        "game_mode_required": "当前未开启游戏，模拟评论不会计入旧故事。",
     }
     return messages.get(code, "当前操作未完成，请刷新状态后重试。")
 
@@ -87,6 +92,36 @@ class Workbench:
                 pass
         self.program = Program(self, client=avatar_client)
         self.game.performer = self.program
+        self.appearance = AppearanceWorkbench(self)
+
+    def appearance_requested(self):
+        config = self.appearance.service.settings()
+        return live_gift_readiness(config)["live_gift_mode"] in {"verified", "one_diamond_test"}
+
+    def appearance_gifts_enabled(self, room_id):
+        config = self.appearance.service.settings()
+        return self.appearance_requested() and config["room_id"] == room_id
+
+    def appearance_episode_started(self, episode_id):
+        self.appearance.service.begin_episode(episode_id, owner_id=self.program.run_id)
+
+    def appearance_episode_ended(self, episode_id):
+        service = self.appearance.service
+        if service.snapshot()["episode_id"] == episode_id:
+            service.close_episode()
+
+    def appearance_operation(self, **fields):
+        self.appearance.service.save_state(**fields)
+
+    def accept_appearance_gift(self, event):
+        episode_id = self.program.game_episode_id
+        if (not episode_id or self.program.sender_failed or event.get("simulated") is True
+                or self.appearance.service.snapshot()["episode_id"] != episode_id):
+            return {"accepted": False, "reason": "appearance_inactive"}
+        receipt = self.appearance.service.apply(event)
+        if receipt["accepted"]:
+            self.program.request_appearance(receipt["target"])
+        return receipt
 
     def save_settings(self):
         if self.settings_path:
@@ -115,8 +150,8 @@ class Workbench:
         self.clock_key = None
         self.save_settings()
 
-    def state(self, operator=False, **cursor):
-        state = self.game.operator_state(**cursor) if operator else self.game.public_state()
+    def state(self, operator=False, *, debug=False, **cursor):
+        state = self.game.operator_state(live_only=not debug, **cursor) if operator else self.game.public_state(live_only=not debug)
         state["busy"] = state["busy"] or bool(self.job and not self.job.done())
         if self.error and not state["error"]:
             state["error"] = {"message": self.error, "code": "request_error", "stage": "WORKBENCH"}
@@ -124,6 +159,7 @@ class Workbench:
         state["settings"] = dict(self.settings)
         state["layout"] = dict(self.layout)
         state["program"] = self.program.public(operator=operator)
+        state["appearance"] = self.appearance.snapshot(operator=operator)
         state["automation"] = {"limit_minutes": 20, "note": self.automation_note,
                                "status": "paused_error" if state["error"] else "running" if self.settings["auto_advance"] else "stopped"}
         self.sync_clock(state)
@@ -139,17 +175,22 @@ class Workbench:
             state["event_loop_delay"] = dict(self.event_loop_delay)
         return state
 
-    def accept_comment(self, event):
+    def accept_comment(self, event, *, source="local", live_broadcast=None):
+        if self.program.active and not self.program.game_enabled:
+            raise ValueError("game_mode_required")
         blocked = self.input_blocked()
         reason = {"operation_in_progress": "正在生成，评论已记录，未计入建议或投票。",
                   "input_window_closed": "本轮收集窗口已截止，评论已记录，未计入建议或投票。"}.get(blocked)
-        result = self.game.accept_comment(event, blocked_reason=reason)
+        result = self.game.accept_comment(event, blocked_reason=reason, source=source,
+                                          live_broadcast=live_broadcast)
         # Persist and apply the original vote/proposal rules first. Waking the
         # optional speaker is cheap and cannot delay the comment response.
         self.program.notify_comment()
         return result
 
     def input_blocked(self):
+        if self.program.active and not self.program.game_enabled:
+            return "game_mode_required"
         state = self.state()
         if state["busy"]:
             return "operation_in_progress"
@@ -255,6 +296,7 @@ class Workbench:
                 self.deadline = None
 
     async def close(self):
+        self.appearance.rehearsal.stop()
         failures, steps = [], {}
         # Each resource owns an independent cleanup step. A failed cloud stop or
         # cancelled scheduler must never strand the local HTTP client or SQLite.
@@ -361,6 +403,7 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
     workbench = Workbench(db_path, model=model, avatar_client=avatar_client, obs_output=obs_output)
     app["workbench"] = workbench
     register_dyhub_routes(app, workbench)
+    register_appearance_routes(app, workbench)
 
     async def health(request):
         database = str(Path(db_path).resolve()) if str(db_path) != ":memory:" else ":memory:"
@@ -379,7 +422,10 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
                       "proposal_version": request.query.get("proposal_version"),
                       "vote_version": request.query.get("vote_version"),
                       "comment_limit": request.query.get("comment_limit", "500")}
-        return web.json_response(workbench.state(operator=request.path != "/api/public", **cursor), dumps=lambda x: json.dumps(x, ensure_ascii=False, allow_nan=False))
+        # Keep the original /api/state contract for standalone text/debug tools.
+        # Normal workbench/public reads opt into synthetic results explicitly.
+        debug = request.path == "/api/state" or request.query.get("debug") == "1"
+        return web.json_response(workbench.state(operator=request.path != "/api/public", debug=debug, **cursor), dumps=lambda x: json.dumps(x, ensure_ascii=False, allow_nan=False))
 
     async def obs_state(request):
         # Only the chosen receiver gets the player URL. This read must never
@@ -400,8 +446,17 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
                    "voting/close": workbench.game.close_voting, "retry": workbench.game.retry}
         try:
             receipt = None
+            if workbench.appearance.rehearsal.ledger is not None and (action in actions or action == "program/start"):
+                return web.json_response({"error": "请先结束本地造型试玩。"}, status=409)
             if action == "program/start":
-                workbench.program.start()
+                if set(body) - {"mode"}:
+                    raise ValueError("invalid_program_mode")
+                workbench.program.start(mode=body.get("mode", "game"))
+                app['auto_source'].observe_program_run()
+            elif action == "program/mode":
+                if set(body) != {"run_id", "mode"}:
+                    raise ValueError("invalid_program_mode")
+                workbench.program.set_mode(body["run_id"], body["mode"])
             elif action == "program/stop":
                 await workbench.program.stop()
             elif action == "program/heartbeat":
@@ -450,7 +505,7 @@ def create_app(db_path=ROOT / "data/game.sqlite", *, model=None, avatar_client=N
     app.router.add_get("/api/operator-state", state)
     app.router.add_get("/api/public", state)
     app.router.add_get("/api/obs-output", obs_state)
-    for path in ("session/new", "episode/new", "round/start", "collection/close", "voting/close", "retry", "episode/abort", "comments", "proposals", "votes", "settings", "layout", "program/start", "program/stop", "program/heartbeat"):
+    for path in ("session/new", "episode/new", "round/start", "collection/close", "voting/close", "retry", "episode/abort", "comments", "proposals", "votes", "settings", "layout", "program/start", "program/stop", "program/heartbeat", "program/mode"):
         app.router.add_post("/api/" + path, mutation)
     app.router.add_get("/", index)
     app.router.add_get("/overlay", index)

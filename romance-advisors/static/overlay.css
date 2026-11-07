@@ -61,3 +61,39 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
 [hidden]{display:none!important}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}.typing-dot,.woman-reply-arriving{animation:none!important}}
 ::selection{background:var(--accent);color:var(--ink)}
+
+/* Hide every game layer, including the title and finale, during portrait chat. */
+.overlay-root>.phone-content-frame{transition:opacity 420ms ease,visibility 0s linear}
+.overlay-root[data-shot="portrait"]>.phone-content-frame{opacity:0;visibility:hidden;pointer-events:none;transition:opacity 420ms ease,visibility 0s linear 420ms}
+.overlay-root[data-shot="game"]>.phone-content-frame{opacity:1;visibility:visible}
+.overlay-root[data-shot="portrait"]>.finale-layer{display:none!important}
+@media(prefers-reduced-motion:reduce){.overlay-root>.phone-content-frame{transition:none!important}}
+
+/* The same local rehearsal layer serves phone, transparent overlay and OBS.
+   It is entirely hidden in RTC mode: only the original live iframe supplies video. */
+.overlay-root>.phone-content-frame{z-index:1}
+.appearance-portrait{position:absolute;left:0;top:0;width:1080px;height:1440px;transform-origin:0 0;overflow:hidden;pointer-events:none;z-index:0}
+.appearance-portrait img,.appearance-portrait video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.appearance-portrait video{z-index:1}
+/* Overlay the existing portrait's bottom edge without reserving any space.
+   Share the affinity bar's left-to-right fill direction. */
+.appearance-score.affinity-card{position:absolute;z-index:4;height:76px;min-height:76px;margin:0;padding:10px 12px;grid-template-columns:minmax(0,1fr) 74px;column-gap:10px;border-radius:0 0 24px 24px;background:#f7efe5f2;pointer-events:none}
+.appearance-score .affinity-number{width:74px;line-height:48px}
+.appearance-score-status{font-size:21px;color:#68524c;white-space:nowrap}
+.message-portrait{width:48px;height:64px;object-fit:cover;float:right;border-radius:9px;margin:0 0 7px 9px}
+
+/* Actual 1080×1920 coordinates: below the tallest allowed poll (1343px),
+   inside the phone crop, and left of the platform's right-hand controls. */
+.appearance-gift-guide{position:absolute;left:54%;top:71%;width:32%;z-index:2;pointer-events:none;padding:20px;border:1px solid #e5c4af45;border-radius:20px;background:#30272be8;color:var(--paper);box-shadow:0 8px 28px #1c15172b}
+.appearance-gift-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.appearance-gift-heading h2{margin:0;font-size:32px;line-height:1.25;font-weight:600}
+.appearance-gift-status{padding:5px 8px;border-radius:7px;background:#eac6b31a;color:var(--accent);font-size:21px;line-height:1.2;white-space:nowrap}
+.appearance-gift-price{margin:8px 0 15px;font-size:25px;line-height:1.3;color:var(--muted)}
+.appearance-gift-rows{display:flex;flex-direction:column;gap:16px}
+.appearance-gift-row{display:grid;grid-template-columns:100px minmax(0,1fr);align-items:center;gap:16px;min-height:108px}
+.appearance-gift-icon{display:block;width:100px;height:100px;object-fit:contain}
+.appearance-gift-copy{min-width:0}
+.appearance-gift-copy h3{margin:0 0 7px;font-size:33px;font-weight:600;line-height:1.2}
+.appearance-gift-equation{margin:0;font-size:26px;line-height:1.3;white-space:nowrap}
+.appearance-gift-equation strong{font-family:Arial,Helvetica,sans-serif;font-size:46px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+.appearance-gift-row.negative .appearance-gift-equation strong{color:var(--coral)}

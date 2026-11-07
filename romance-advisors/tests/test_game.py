@@ -87,6 +87,36 @@ class GameTests(unittest.IsolatedAsyncioTestCase):
         self.game.vote("v", "投票者", options[0]["id"])
         return await self.game.close_voting()
 
+    async def test_prepare_preserves_structured_private_preferences_and_rejects_blank_text(self):
+        original = self.model.generate
+        for preferences in (["喜欢认真兑现约定"], {"likes": "认真兑现约定"}, "  喜欢认真兑现约定  "):
+            with self.subTest(preferences=preferences):
+                async def generate(task, payload):
+                    result = await original(task, payload)
+                    result["woman"]["private_preferences"] = preferences
+                    return result
+
+                before = len(self.model.calls)
+                with patch.object(self.model, "generate", generate):
+                    state = await self.game.new_episode()
+                self.assertEqual(len(self.model.calls), before + 1)
+                self.assertIsNone(state["error"])
+                self.assertEqual(state["round"]["phase"], "COLLECTING")
+                expected = preferences.strip() if isinstance(preferences, str) else preferences
+                self.assertEqual(self.game.episode["woman"]["private_preferences"], expected)
+                self.assertNotIn("private_preferences", json.dumps(state))
+
+        async def blank(task, payload):
+            result = await original(task, payload)
+            result["woman"]["private_preferences"] = " \n\t "
+            return result
+
+        with patch.object(self.model, "generate", blank):
+            state = await self.game.new_episode()
+        self.assertEqual(state["error"]["code"], "invalid_private_preferences")
+        self.assertEqual(state["messages"], [])
+        self.assertIsNotNone(self.game._prepare_candidate)
+
     async def test_fast_reply_stays_private_while_typing_then_commits_with_score(self):
         # A short real display interval lets us observe the normal public API
         # after the synthetic model returned but before either result is public.

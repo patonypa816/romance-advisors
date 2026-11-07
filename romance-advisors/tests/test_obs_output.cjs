@@ -26,3 +26,11 @@ assert.match(page,/allow="autoplay"/);assert.doesNotMatch(page,/workbench.js|pre
 assert.doesNotMatch(script,/localStorage\.(getItem|setItem)|heartbeat|\/api\/program\/start|method:'POST'/);
 assert.match(script,/renderer.render\(state\)/);
 console.log('OBS receiver: URL authorization, sole iframe, no poll reconnect, honest fallback and receiver-only page passed.');
+
+// Geometry/mode changes cannot create another RTC attachment.
+const stableFrame=new Node(),stableMount=createPlayerMount({frame:stableFrame,still:new Node(),label:new Node(),placeholder:new Node()});
+for(const content_mode of ['chat','chat','to_game','game','game','to_chat','chat']){
+  stableMount.update({obs_output:true,player_url:good,program:{state:'running',content_mode}},base);
+}
+assert.equal(stableFrame.writes,1);assert.equal(stableFrame.removals,0);
+assert.equal((page.match(/<iframe/g)||[]).length,1);

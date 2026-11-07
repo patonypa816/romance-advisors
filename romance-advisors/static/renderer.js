@@ -1,5 +1,6 @@
-import {el,phaseText,appendMessages,TERMINAL} from './ui.js';
+import {el,phaseText,appendMessages,TERMINAL,createAppearanceMedia} from './ui.js';
 import {layoutRects} from './layout.js';
+import {shotForState,applyPortraitLayout} from './scene-layout.js';
 import {createAffinityPanel} from './affinity-panel.js';
 import {createFinaleOverlay} from './finale-overlay.js';
 // Match the approved preview: one fill color, interpolated in OKLab by score.
@@ -35,8 +36,47 @@ function affinityColor(value) {
     Math.round(255*Math.max(0,Math.min(1,v<=.0031308?12.92*v:1.055*(Math.max(0,v)**(1/2.4))-.055))));
   return `rgb(${rgb.join(',')})`;
 }
+// The scene owns these panels. A gift receipt may change the real score, but
+// it must not be a prerequisite for seeing the rules of the current game.
+function appearanceHudMode(state,shot,demo){
+  if(shot!=='game')return null;
+  const a=state.appearance;
+  if(demo||(a?.mode==='rehearsal'&&a.rehearsal_active===true))return 'preview';
+  if(!state.episode?.id||state.episode.status!=='ACTIVE')return null;
+  if(a?.mode==='rtc'&&a.active===true)return 'live';
+  if(a?.mode==='off'&&a.active===false&&typeof a.enabled==='boolean'){
+    return a.enabled?'pending':'initial';
+  }
+  return null;
+}
+function createAppearanceGiftGuide() {
+  const element=el('section','appearance-gift-guide');element.hidden=true;
+  element.setAttribute('aria-label','造型礼物指引');
+  const heading=el('div','appearance-gift-heading'),title=el('h2','','礼物造型分'),status=el('span','appearance-gift-status','仅预览');
+  heading.append(title,status);
+  const price=el('p','appearance-gift-price','每个礼物 1 钻');
+  const rows=el('div','appearance-gift-rows');
+  for(const [id,name,change,kind] of [['463','小心心','+1','positive'],['164','抖音','−1','negative']]){
+    const row=el('div',`appearance-gift-row ${kind}`),icon=el('img','appearance-gift-icon');
+    icon.src=`/static/assets/gift-guide/${id}.png`;icon.alt=name;icon.draggable=false;
+    const copy=el('div','appearance-gift-copy'),label=el('h3','',name);
+    const equation=el('p','appearance-gift-equation');
+    equation.append(el('span','','= '),el('strong','',change),el('span','',' 分'));
+    copy.append(label,equation);row.append(icon,copy);rows.append(row);
+  }
+  element.append(heading,price,rows);
+  return {element,update(appearance,mode){
+    const preview=mode==='preview',live=mode==='live'&&appearance?.enabled===true;
+    const mapped=appearance?.gift_guide_configured===true;
+    element.hidden=!(preview||(mapped&&(live||mode==='initial'||mode==='pending')));
+    element.dataset.mode=preview?'preview':live?'live':'inactive';
+    status.hidden=live;
+    status.textContent=preview?'仅预览':'未计分';
+  }};
+}
 export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   root.replaceChildren();
+  root.dataset.shot='portrait';
   const phase=el('span','live-phase','等待开场');
   const conversation=el('section','live-conversation');conversation.setAttribute('aria-label','两人的聊天');
   const speaker=el('div','phone-speaker');speaker.setAttribute('aria-hidden','true');
@@ -54,6 +94,19 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   const titleArt=el('img');titleArt.src='/static/assets/show-nameplate-cafe-natural.png';
   titleArt.alt='军师帮帮我';nameplate.append(titleArt);
   content.append(nameplate,conversation,poll,boards);root.append(content);
+  const portrait=el('section','portrait-carrier appearance-portrait');portrait.hidden=true;
+  const portraitImage=el('img'),portraitVideo=el('video');portraitImage.alt='本地造型试玩静态图';
+  portrait.append(portraitImage,portraitVideo);root.append(portrait);
+  const appearanceMedia=createAppearanceMedia(portraitImage,portraitVideo);
+  const appearanceScore=createAffinityPanel(affinityColor,{label:'造型值',numberSize:42});
+  const scoreStatus=el('span','appearance-score-status');
+  appearanceScore.element.querySelector('.affinity-heading').append(scoreStatus);
+  appearanceScore.element.classList.add('appearance-score');appearanceScore.element.hidden=true;
+  content.append(appearanceScore.element);
+  // This lower corner uses the outer 9:16 coordinates, outside the scaled
+  // phone/chat group, keeping it inside the phone crop and below every option.
+  const giftGuide=createAppearanceGiftGuide();root.append(giftGuide.element);
+  let currentLayout=null;
   const finale=createFinaleOverlay({onVisibility:onFinaleVisibility});root.append(finale.element);
   let first=true,optionsSignature='',boardsSignature='',lastDisplayMode=null;
   const seenMessages=new Set();
@@ -89,6 +142,7 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
   }
   return {
     setLayout(layout) {
+      currentLayout=layout;
       const {phone,poll:pollRect,boards:boardsRect}=layoutRects(layout);
       // Anchor the bottom edge so the artwork's natural height grows away from the chat.
       nameplate.style.top = `${Math.min(322, phone.y - 14)}px`;
@@ -100,11 +154,41 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
     },
     render(state) {
       if(disposed)return;
+      const demo=root.classList.contains('is-preview-fixture');
+      const shot=shotForState(state,{demo});
+      root.dataset.shot=shot;
+      const appearance=state.appearance;
+      const hudMode=appearanceHudMode(state,shot,demo);
+      giftGuide.update(appearance,hudMode);
+      portrait.hidden=appearance?.mode!=='rehearsal';
+      appearanceMedia.update(appearance);
+      if(currentLayout){
+        const {avatar}=layoutRects(currentLayout);
+        if(avatar&&!portrait.hidden)applyPortraitLayout(portrait,currentLayout,shot);
+        // Cover only the bottom 76px of the existing portrait. Absolute
+        // positioning leaves the portrait, standings and every other slot intact.
+        if(avatar)Object.assign(appearanceScore.element.style,{left:`${avatar.x}px`,top:`${avatar.y+avatar.h-76}px`,width:`${avatar.w}px`});
+      }
+      // When gifts are off, the ledger may still contain the previous game's
+      // final score. Show the starting rule, never carry that old score forward.
+      const appearanceValue=demo||hudMode==='initial'?50:appearance?.score;
+      const hasScore=hudMode&&hudMode!=='pending'&&typeof appearanceValue==='number'
+        &&Number.isFinite(appearanceValue)&&appearanceValue>=0&&appearanceValue<=100;
+      appearanceScore.element.hidden=!hasScore&&hudMode!=='pending';
+      const testPoints=hudMode==='live' && appearance?.operator_test_contribution;
+      scoreStatus.textContent=hudMode==='initial'?'初始 · 未计分':hudMode==='pending'?'未计分':
+        testPoints?.source==='operator_test' && testPoints.delta>0?`场控测试 +${testPoints.delta}`:'';
+      scoreStatus.hidden=!scoreStatus.textContent;
+      // Adapt only the presentation value. A gift change is independent of a
+      // chat round, so it must never inherit the intimacy settlement/delta.
+      appearanceScore.update({session:state.session,episode:hasScore?{
+        id:demo?'appearance-design-example':`${hudMode}:${state.episode?.id||'local'}`,
+        score:appearanceValue}:null,round:null});
       const episode=state.episode, current=state.round;
       const isVoting=current?.phase==='VOTING';root.classList.toggle('is-voting',isVoting);
       phase.textContent=phaseText(state);
       affinity.update(state);
-      finale.update(state);
+      finale.update(shot==='game'?state:{...state,episode:null});
       pair.textContent=episode?`${episode.man_name} × ${episode.woman_name}`:'两人的聊天';round.textContent=current?`第 ${current.number} 轮`:'';
       const messages=state.messages || [];
       const followLatest=first||lastDisplayMode!==isVoting||messages.some(message=>!seenMessages.has(String(message.id)));
@@ -141,7 +225,8 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
       const allOptions=(current?.options||[]).slice(0,4);
       const selected=allOptions.find(option=>option.id===current?.selected_option_id);
       const opts=isVoting?allOptions:selected?[selected]:[];
-      pollStatus.textContent=isVoting?`投 1—${Math.max(1,allOptions.length)}${current.remaining_seconds!=null?' · '+Math.ceil(current.remaining_seconds)+'秒':''}`:selected?'':'本轮建议';
+      const voteHint=allOptions.length>1?'发选项编号，如发1投票':'发1投票';
+      pollStatus.textContent=isVoting?`${voteHint}${current.remaining_seconds!=null?' · '+Math.ceil(current.remaining_seconds)+'秒':''}`:selected?'':'本轮建议';
       pollHeading.textContent=isVoting?'下一句怎么回':selected?'本轮采用':current?.phase==='COLLECTING'?'军师团支招':current?.selection_source==='self'?'男主自拟':['DECIDING','DRAFTING'].includes(current?.phase)?'正在想怎么回':'等待支招';
       const sig=JSON.stringify([opts,current?.selected_option_id,isVoting,current?.phase]);
       if(sig!==optionsSignature) {optionsSignature=sig;options.replaceChildren();
@@ -176,8 +261,8 @@ export function createLiveRenderer(root,{onFinaleVisibility=()=>{}}={}) {
     },
     suspend(){finale.suspend();},
     resume(){finale.resume();},
-    dispose(){finale.dispose();disposed=true;clearTyping();if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
-    offline(){clearTyping();phase.textContent='游戏状态读取失败';},
-    renderFailed(){clearTyping();phase.textContent='画面更新失败';}
+    dispose(){appearanceMedia.dispose();appearanceScore.dispose();finale.dispose();disposed=true;clearTyping();if(followFrame!==null)cancelAnimationFrame(followFrame);followFrame=null;stopContextScroll();affinity.dispose();},
+    offline(){clearTyping();giftGuide.element.hidden=true;appearanceScore.element.hidden=true;appearanceScore.update({episode:null});phase.textContent='游戏状态读取失败';},
+    renderFailed(){clearTyping();giftGuide.element.hidden=true;appearanceScore.element.hidden=true;appearanceScore.update({episode:null});phase.textContent='画面更新失败';}
   };
 }

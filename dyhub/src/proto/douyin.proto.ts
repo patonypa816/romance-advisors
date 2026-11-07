@@ -73,9 +73,9 @@ message GiftStruct {
   Image image = 1;
   string describe = 2;
   int64 id = 5;
-  bool combo = 10;
+  optional bool combo = 10;
   int32 type = 11;
-  int32 diamondCount = 12;
+  optional int32 diamondCount = 12;
   string name = 16;
   Image icon = 21;
 }

@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 from aiohttp import web
 
+from external_appearance import ExternalAppearance
 from live_session import save
 from action_schema import parse_director_plan
 from semantic_speech import parse_dialogue_semantic_plan, compile_dialogue_motion_timeline
@@ -27,6 +28,7 @@ class ExternalGame:
         self.owner_id = None
         self.generation = None
         self.jobs = {}
+        self.appearance = ExternalAppearance(self)
 
     @property
     def active(self):
@@ -36,6 +38,7 @@ class ExternalGame:
         self.owner_id = None
         self.generation = self.studio.generation
         self.jobs = {}
+        self.appearance.reset()
         self.studio.current.external_checkpoint = self.checkpoint
         self.studio.current.external_preparation_gate = self.preparation_allowed
         self.checkpoint()
@@ -60,6 +63,8 @@ class ExternalGame:
         save(self.studio.current.out / "external-game.json", {
             "generation": self.generation, "owner_id": self.owner_id,
             "progress_basis": "successful_send_and_handoff_not_confirmed_playback",
+            "appearance": {"context": self.appearance.context, "confirmed_key": self.appearance.confirmed_key,
+                           "version": self.appearance.version, "requests": [self.appearance.receipt(r) for r in self.appearance.requests.values()]},
             "jobs": [{**self.job_public(job), "text": job["text"], "text_sha256": job["text_sha256"],
                       "instruction": job.get("instruction", LEGACY_INSTRUCTION),
                       "plan": self.submitted_plan(job),
@@ -113,12 +118,14 @@ class ExternalGame:
                 "send_complete": bool(receipts and all(r.get("send_complete") for r in receipts)),
                 "handoff_wait_elapsed": bool(receipts and all(r.get("handoff_wait_elapsed") for r in receipts)),
                 "post_audio_wait_seconds": completed_wait,
+                "motion_ready_in_seconds": max(0.0, getattr(getattr(getattr(self.studio, "current", None), "component", None), "_motion_not_before", 0) - time.monotonic()),
                 "playback_confirmed": False,
                 "failure_code": item.get("failure_code", ""),
                 "delivery_outcome": item.get("delivery_outcome", ""),
                 "error": "游戏表演未完成，请核对本场状态" if item.get("error") else ""}
 
     def public(self):
+        self.appearance.refresh_failures()
         current = next((j for j in self.jobs.values() if j["item"].get("external_worker_pending")), None)
         candidate = self.next_job()
         return {"owner_id": self.owner_id, "generation": self.studio.generation,
@@ -189,6 +196,7 @@ class ExternalGame:
                      and self.busy(j)), None)
 
     def preparation_allowed(self, item):
+        self.appearance.refresh_failures()
         job = self.jobs.get(item.get("external_job_id"))
         return bool(self.active and job and job["item"] is item
                     and self.generation == self.studio.generation
@@ -196,6 +204,7 @@ class ExternalGame:
                     and item.get("external_generation") == self.generation
                     and not self.studio.closing and not self.studio.current.stopping
                     and not self.studio.automation.last_error
+                    and not self.appearance.fault and not self.studio.performance_holding
                     and not item.get("cancel_requested"))
 
     def validate_plan(self, item, body):
@@ -213,7 +222,7 @@ class ExternalGame:
         job = self.jobs.get(item.get("external_job_id"))
         allowed = bool(job and job["item"] is item and not item.get("cancel_requested")
                     and item.get("external_generation") == self.studio.generation
-                    and not self.studio.automation.last_error)
+                    and not self.studio.automation.last_error and not self.studio.performance_holding)
         if not allowed or not self.preparation_allowed(item):
             if not item.get("delivery_started"):
                 item.update(status="cancelled", cancel_requested=True, cancel_reason="external_identity_invalid")
@@ -314,6 +323,7 @@ class ExternalGame:
                         or deadlines != {k: previous["item"][k] for k in ("expires_at", "finish_before") if k in previous["item"]}):
                     raise web.HTTPConflict(text="同一游戏任务不能更换冻结表演或截止时间")
                 return web.json_response(self.job_public(previous))
+            self.appearance.refresh_failures()
             s = self.studio.current
             occupied = [j for j in self.jobs.values() if self.busy(j)]
             # 只让已准备协议的 current 与 next 重叠。旧入口还会现场合成，
@@ -322,7 +332,7 @@ class ExternalGame:
                        self.next_job() is not None or any(j.get("submission_mode", "legacy") == "legacy"
                                                          for j in occupied))
             if (not self.studio.automation.live_ready() or self.studio.automation.last_error
-                    or self.studio.closing or s.stopping or blocked):
+                    or self.studio.closing or s.stopping or blocked or self.studio.performance_holding):
                 raise web.HTTPConflict(text="请等待本场音画就绪或当前口播结束")
             if len(self.jobs) >= 300:
                 raise web.HTTPConflict(text="本场游戏任务已达上限，请结束本场")
@@ -410,7 +420,7 @@ class ExternalGame:
             if any(j is not job and j["item"].get("external_worker_pending") for j in self.jobs.values()):
                 raise web.HTTPConflict(text="当前口播尚未结束，不能预约稍后自动发送")
             if (not self.preparation_allowed(item) or not self.studio.automation.live_ready()
-                    or session.worker_fault or session.component.comment_id is not None):
+                    or session.worker_fault or session.component.comment_id is not None or self.studio.performance_holding):
                 item.update(status="cancelled", cancel_requested=True, cancel_reason="external_dispatch_invalid")
                 session.discard_prepared(item)
             else:

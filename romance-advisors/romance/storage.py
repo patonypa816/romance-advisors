@@ -27,6 +27,10 @@ class Storage:
         self.db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_reply_per_parent
             ON messages(json_extract(body, '$.parent_id'))
             WHERE json_extract(body, '$.parent_id') IS NOT NULL""")
+        # Gift receipts are indexed separately: comment/meta saves must never
+        # serialize the lifetime gift history. These tables use this same DB.
+        self.db.execute("CREATE TABLE IF NOT EXISTS appearance_receipts (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS appearance_groups (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.commit()
         self._bodies = {table: {} for table in self.TABLES}
         self._meta_body = None
@@ -47,7 +51,7 @@ class Storage:
         meta = {key: value for key, value in state.items() if key not in self.TABLES}
         return self.save_changes({table: state[table] for table in self.TABLES}, meta=meta)
 
-    def save_changes(self, changes, *, meta=None):
+    def save_changes(self, changes, *, meta=None, appearance_receipt=None, appearance_group=None):
         """Commit only changed records; publish the comparison cache after COMMIT.
 
         Callers can stage a receipt and its effective input without copying or
@@ -75,10 +79,20 @@ class Storage:
                 encoded[table] = pending
         meta_body = json.dumps(meta, ensure_ascii=False, allow_nan=False) if meta is not None else self._meta_body
         meta_changed = meta_body != self._meta_body
-        if not encoded and not meta_changed:
+        gift_receipt_body = (json.dumps(appearance_receipt, ensure_ascii=False, allow_nan=False)
+                             if appearance_receipt is not None else None)
+        gift_group_body = (json.dumps(appearance_group, ensure_ascii=False, allow_nan=False)
+                           if appearance_group is not None else None)
+        if not encoded and not meta_changed and gift_receipt_body is None and gift_group_body is None:
             return {}
         # Score/reply and comment/vote pairs still share one SQLite transaction.
         with self.db:
+            if gift_receipt_body is not None:
+                self.db.execute("INSERT INTO appearance_receipts VALUES (?, ?)",
+                                (appearance_receipt["id"], gift_receipt_body))
+            if gift_group_body is not None:
+                self.db.execute("INSERT INTO appearance_groups VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+                                (appearance_group["id"], gift_group_body))
             if meta_changed:
                 self.db.execute("INSERT INTO meta VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", (meta_body,))
             for table, records in encoded.items():
@@ -92,6 +106,14 @@ class Storage:
         for table, records in encoded.items():
             self._bodies[table].update(records)
         return {table: set(records) for table, records in encoded.items()}
+
+    def appearance_receipt(self, receipt_id):
+        row = self.db.execute("SELECT body FROM appearance_receipts WHERE id=?", (receipt_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def appearance_group(self, group_id):
+        row = self.db.execute("SELECT body FROM appearance_groups WHERE id=?", (group_id,)).fetchone()
+        return json.loads(row[0]) if row else None
 
     def close(self):
         self.db.close()

@@ -87,14 +87,15 @@ class IntakeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all('avatar_url' not in p for p in self.wb.game.data['proposals']))
 
     async def test_busy_chat_still_reaches_interaction_without_retaining_avatar(self):
-        await self.intake.on_event(self.event('early-vote', text='投1'))
+        for i, text in enumerate(('1', '投1', '投 1')):
+            await self.intake.on_event(self.event(f'early-vote-{i}', text=text))
         await self.intake.on_event(self.event('gift', type='gift'))
         await self.intake.on_event(self.event('room', roomId='999'))
         self.wb.game.busy = True
         await self.intake.on_event(self.event('busy'))
         self.wb.game.busy = False
         comments = self.wb.game.data['comments']
-        self.assertEqual(len(comments), 2)
+        self.assertEqual(len(comments), 4)
         self.assertEqual(self.wb.game.data['proposals'], [])
         self.assertTrue(all('avatar_url' not in row for row in comments))
         self.assertTrue(all(row['result'] == 'ignored' for row in comments))
@@ -103,10 +104,15 @@ class IntakeTests(unittest.IsolatedAsyncioTestCase):
         await self.intake.on_event(self.event())
         await self.wb.game.close_collection()
         self.assertEqual(self.wb.game.current_round['phase'], 'VOTING')
-        await self.intake.on_event(self.event('vote', 'voter', '投1'))
+        for i, text in enumerate(('1', '投1', '投 1'), start=1):
+            await self.intake.on_event(self.event(f'vote-{i}', f'viewer-{i}', text))
+            ballot = self.wb.game.data['comments'][-1]
+            self.assertEqual((ballot['text'], ballot['result']), (text, 'voted'))
+            self.assertNotIn('avatar_url', ballot)
+            self.assertEqual(self.wb.game.public_state()['round']['options'][0]['votes'], i)
         await self.intake.on_event(self.event('chat', 'voter', '围观'))
         comments = self.wb.game.data['comments']
-        self.assertEqual(len(comments), 3)
+        self.assertEqual(len(comments), 5)
         self.assertEqual(comments[-2]['result'], 'voted')
         self.assertEqual(comments[-1]['result'], 'ignored')
         self.assertNotIn('avatar_url', comments[-1])
@@ -140,6 +146,89 @@ class IntakeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.wb.game.data['comments']), 2)
         self.assertTrue(self.intake.stop_event.is_set())
         self.assertEqual(self.intake.error_code, 'episode_limit')
+
+    def broadcast(self, mode="chat"):
+        self.intake.scope = "broadcast"
+        self.intake.started_at -= 1
+        self.offered = []
+        self.wb.program.ready = True
+        self.wb.program.state = "running"
+        self.wb.program.content_mode = mode
+        self.wb.program._game_baseline_episode_id = None
+        self.wb.program.casual.offer = self.offered.append
+
+    async def test_broadcast_chat_ignores_old_active_game_and_routes_only_once(self):
+        self.broadcast()
+        event = self.event(text='<b>真实评论</b>')
+        await self.intake.on_event(event)
+        self.wb.program.content_mode = 'game'
+        await self.intake.on_event(event)
+        self.assertEqual(self.wb.game.data['comments'], [])
+        self.assertEqual(len(self.offered), 1)
+        self.assertEqual(self.intake.counts['duplicate'], 1)
+        recent = self.intake.snapshot()['recent_comments']
+        self.assertEqual(recent[0]['text'], '<b>真实评论</b>')
+        self.assertNotIn(AVATAR, json.dumps(recent))
+
+    async def test_broadcast_transition_and_wrong_episode_never_vote_or_replay(self):
+        self.broadcast('to_game')
+        event = self.event(text='投1')
+        await self.intake.on_event(event)
+        self.wb.program.content_mode = 'game'
+        self.wb.program._game_baseline_episode_id = self.wb.game.episode['id']
+        await self.intake.on_event(self.event('wrong-episode'))
+        self.wb.program._game_baseline_episode_id = None
+        await self.intake.on_event(event)
+        self.assertEqual(self.wb.game.data['comments'], [])
+        self.assertEqual(self.offered, [])
+        await self.intake.on_event(self.event('stable-game'))
+        self.assertEqual(len(self.wb.game.data['comments']), 1)
+        self.assertEqual(len(self.intake.snapshot()['recent_comments']), 2)
+
+    async def test_broadcast_game_limit_keeps_room_and_chat_alive_across_new_episode(self):
+        self.broadcast('game')
+        with patch('romance.dyhub_intake.MAX_EPISODE_COMMENTS', 1):
+            await self.intake.on_event(self.event('one'))
+            await self.intake.on_event(self.event('over-limit'))
+            self.assertFalse(self.intake.stop_event.is_set())
+            self.assertEqual(len(self.wb.game.data['comments']), 1)
+            self.wb.program.content_mode = 'chat'
+            await self.intake.on_event(self.event('chat-after-game'))
+            self.assertEqual(len(self.offered), 1)
+            await self.wb.game.new_episode()
+            self.wb.program.content_mode = 'game'
+            self.wb.program._game_baseline_episode_id = None
+            await self.intake.on_event(self.event('new-game'))
+            self.assertEqual(self.intake.episode_count, 1)
+            self.assertEqual(len(self.wb.game.data['comments']), 2)
+
+    async def test_broadcast_inactive_program_still_previews_bounded_real_comments(self):
+        self.broadcast()
+        self.wb.program.ready = False
+        for i in range(45):
+            await self.intake.on_event(self.event(str(i)))
+        self.assertEqual(len(self.intake.snapshot()['recent_comments']), 40)
+        self.assertEqual(self.offered, [])
+        self.assertEqual(self.wb.game.data['comments'], [])
+        self.assertEqual(self.intake.counts['received'], 45)
+
+    async def test_broadcast_seen_capacity_is_bounded_without_replayable_eviction(self):
+        self.broadcast()
+        with patch('romance.dyhub_intake.MAX_SEEN_EVENTS', 2):
+            await self.intake.on_event(self.event('one'))
+            await self.intake.on_event(self.event('two'))
+            await self.intake.on_event(self.event('three'))
+            await self.intake.on_event(self.event('one'))
+        self.assertEqual(len(self.intake.seen), 2)
+        self.assertEqual(len(self.offered), 2)
+        self.assertEqual(self.intake.counts['duplicate'], 1)
+
+    async def test_broadcast_start_does_not_replay_preconnection_backlog(self):
+        self.broadcast()
+        self.intake.started_at = time.time()
+        await self.intake.on_event(self.event(ts=(time.time() - 1) * 1000))
+        self.assertEqual(self.offered, [])
+        self.assertEqual(self.intake.snapshot()['recent_comments'], [])
 
 
 class SSEIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -210,3 +299,33 @@ class SSEIntegrationTests(unittest.IsolatedAsyncioTestCase):
             response = await client.post('/api/source/start', json={'base_url': 'http://127.0.0.1:8757', 'room_id': '123'},
                                          headers={'Origin': 'https://evil.invalid'})
             self.assertEqual(response.status, 403)
+
+
+class BroadcastLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_broadcast_connects_without_episode_and_keeps_one_subscription(self):
+        class LocalClient:
+            instances = []
+            def __init__(self, base_url, room_id, *args, **kwargs):
+                self.base_url, self.room_id = base_url, room_id
+                self.instances.append(self)
+            async def run(self, stopped):
+                await stopped.wait()
+            async def close(self):
+                pass
+        app = create_app(':memory:', model=FakeModel(), avatar_client=FakeAvatar())
+        intake = app['dyhub_intake']
+        intake.client_factory = LocalClient
+        async with TestClient(TestServer(app)) as client:
+            body = {'base_url': 'http://127.0.0.1:8757', 'room_id': '123', 'scope': 'broadcast'}
+            self.assertEqual((await client.post('/api/source/start', json=body)).status, 200)
+            self.assertEqual((await client.post('/api/source/start', json=body)).status, 200)
+            await app['workbench'].game.new_episode()
+            await asyncio.sleep(.25)
+            self.assertTrue(intake.active)
+            self.assertEqual(len(LocalClient.instances), 1)
+            changed = dict(body, room_id='456')
+            self.assertEqual((await client.post('/api/source/start', json=changed)).status, 409)
+            self.assertEqual((await client.post('/api/source/stop', json={})).status, 200)
+            self.assertFalse(intake.active)
+            for value in ('other', [], None):
+                self.assertEqual((await client.post('/api/source/start', json=dict(body, scope=value))).status, 409)

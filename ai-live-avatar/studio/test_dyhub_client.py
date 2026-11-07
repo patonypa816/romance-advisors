@@ -159,7 +159,7 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(received.wait(), 1)
             self.assertEqual(events[0]['data'], {
                 'giftId': '9007199254740993', 'giftName': '测试礼物', 'groupId': 'group-one',
-                'repeatCount': 3, 'comboCount': 4, 'groupCount': 2, 'repeatEnd': False})
+                'diamondCount': 100, 'repeatCount': 3, 'comboCount': 4, 'groupCount': 2, 'repeatEnd': False})
             self.assertEqual(events[0]['user'], {'id': 'u', 'nickname': '观众', 'payGradeLevel': 11})
             self.assertEqual(events[1]['data'], {'action': 1, 'isSetToAdmin': False, 'enterType': 0})
             self.assertEqual(events[1]['user']['payGradeLevel'], 0)
@@ -287,3 +287,19 @@ class BusinessEventTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AppearancePriceFieldTests(unittest.TestCase):
+    def test_diamond_price_is_safe_and_source_markers_are_removed(self):
+        base = {'type': 'gift', 'platform': 'douyin', 'roomId': '123', 'id': 'g',
+                'simulated': True, 'data': {'giftId': '1', 'giftName': '礼物',
+                'diamondCount': 6, 'repeatCount': 2, 'sourceTimeKnown': True, 'combo': False}}
+        safe = _safe_business_event(base, '123')
+        self.assertEqual(safe['data']['diamondCount'], 6)
+        self.assertEqual(safe['data']['repeatCount'], 2)
+        self.assertTrue(safe['data']['sourceTimeKnown'])
+        self.assertFalse(safe['data']['combo'])
+        self.assertNotIn('simulated', safe)
+        for invalid in (True, '6', 1.5, -1, 2**53):
+            base['data']['diamondCount'] = invalid
+            self.assertNotIn('diamondCount', _safe_business_event(base, '123')['data'])

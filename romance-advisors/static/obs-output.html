@@ -12,14 +12,12 @@
 </head>
 <body>
   <main id="program-scene" class="program-scene" aria-label="恋爱军师团节目画面">
-    <div class="phone-content-frame">
-      <section id="program-avatar" class="program-avatar" aria-label="人物画面">
+      <section id="program-avatar" class="program-avatar portrait-carrier" aria-label="人物画面">
         <div id="avatar-placeholder" class="avatar-placeholder"><span>等一场心动发生</span></div>
         <img id="avatar-still" src="/static/assets/preview-male-3x4.png" alt="咖啡馆里的温柔凝视，静态定版图" draggable="false" hidden>
         <span id="avatar-still-label" class="avatar-still-label" hidden>静态预览</span>
         <iframe id="avatar-player" title="数字人实时画面" allow="autoplay" referrerpolicy="no-referrer" hidden></iframe>
       </section>
-    </div>
     <div id="overlay-root" class="overlay-root"></div>
   </main>
   <script type="module" src="/static/obs-output.js"></script>
