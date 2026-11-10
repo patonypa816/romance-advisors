@@ -31,8 +31,8 @@ def bailian_config(data):
         return {}
 
 def cloudbase_config(data):
-    """Only an external CSV reference is stored; never put credentials in JSON."""
-    defaults = {"env_id": "benxinji-v3-d2g1zs30wb4a1245c", "region": "ap-shanghai",
+    """Require operator-selected environment and CSV; absent options disable only this adapter."""
+    defaults = {"env_id": "", "region": "ap-shanghai",
                 "model": "deepseek-v4.1-flash-1017", "credentials_file": ""}
     path = Path(data) / "cloudbase.json"
     try:
