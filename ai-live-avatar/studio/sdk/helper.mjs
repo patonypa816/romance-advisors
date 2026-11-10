@@ -2,7 +2,7 @@
 // management API is exposed. Secrets enter only through the parent's stdin pipe.
 import { pathToFileURL } from 'node:url';
 
-const ENV_ID = 'benxinji-v3-d2g1zs30wb4a1245c';
+const ENV_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REGION = 'ap-shanghai';
 const MODEL = 'deepseek-v4.1-flash-1017';
 const LIMIT = 256 * 1024;
@@ -20,7 +20,7 @@ function validCredential(value, secretId = false) {
 }
 
 export async function runOnce(input, sdk) {
-  if (!input || input.envId !== ENV_ID || input.region !== REGION || input.model !== MODEL
+  if (!input || typeof input.envId !== 'string' || input.envId !== input.envId.trim() || !ENV_ID.test(input.envId) || input.region !== REGION || input.model !== MODEL
       || !['selection', 'reply'].includes(input.role)) return failure('configuration_invalid');
   const { secretId, secretKey } = input.credentials || {};
   if (!validCredential(secretId, true) || !validCredential(secretKey)) return failure('credential_invalid');
@@ -28,7 +28,7 @@ export async function runOnce(input, sdk) {
       || input.messages[0]?.role !== 'system' || input.messages[1]?.role !== 'user'
       || input.messages.some(message => typeof message.content !== 'string')) return failure('response_invalid');
   try {
-    const app = sdk.init({ env: ENV_ID, region: REGION, secretId, secretKey,
+    const app = sdk.init({ env: input.envId, region: REGION, secretId, secretKey,
       timeout: 45000, retries: 0, keepalive: false, debug: false });
     const model = app.ai().createModel('cloudbase');
     const result = await model.generateText({
