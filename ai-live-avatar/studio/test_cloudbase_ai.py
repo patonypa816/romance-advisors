@@ -15,7 +15,7 @@ except ImportError:
 
 SECRET_ID = "AKIDSyntheticOnlyCredential12345"
 SECRET = "synthetic-secret-not-real-123456789"
-CONFIG = {"env_id": module.ENV_ID, "region": module.REGION, "model": module.MODEL}
+CONFIG = {"env_id": "synthetic-cloudbase-offline", "region": module.REGION, "model": module.MODEL}
 COMMENT = {"id": "c1", "text": "你这说法不对吧", "nickname": "观众", "viewer_key": "v1", "age_seconds": 2}
 BATCH = {"candidates": [COMMENT]}
 CONTEXT = {"operator_settings": {"name": "朱元璋"}, "recent_history": [], "queue_count": 0}
@@ -784,10 +784,19 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(process.stdin.data)
         self.assertEqual(payload["credentials"], {"secretId": SECRET_ID, "secretKey": SECRET})
         self.assertEqual((payload["envId"], payload["region"], payload["model"]),
-                         (module.ENV_ID, module.REGION, module.MODEL))
+                         (CONFIG["env_id"], module.REGION, module.MODEL))
         self.assertNotIn("tools", payload)
         self.assertTrue(process.stdin.closed)
         self.assertIsNotNone(process.returncode)
+
+    async def test_operator_selected_environment_is_forwarded_without_account_fallback(self):
+        process = FakeProcess()
+        client, factory = self.client(process, config={**CONFIG,
+            "env_id": "operator-owned-environment", "credentials_file": str(self.path)})
+        self.assertTrue(client.configured())
+        await client.select_comments(BATCH, CONTEXT)
+        self.assertEqual(json.loads(process.stdin.data)["envId"], "operator-owned-environment")
+        self.assertEqual(len(factory.calls), 1)
 
     async def test_null_selection_and_unknown_id(self):
         client, _ = self.client(FakeProcess(completion({"selected_id": None, "reason": "无合适评论"})))
@@ -998,8 +1007,8 @@ class SDKProcessContracts(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(client.configured())
         self.assertEqual(len(factory.calls), 2)
 
-    async def test_wrong_env_region_model_or_missing_key_has_no_fallback(self):
-        for change in [{"env_id": "other-env"}, {"region": "ap-singapore"}, {"model": "deepseek-v4-flash"}]:
+    async def test_invalid_env_region_model_or_missing_key_has_no_fallback(self):
+        for change in [{"env_id": ""}, {"env_id": None}, {"env_id": "invalid/label"}, {"env_id": "https://invalid.example"}, {"env_id": "a" * 64}, {"region": "ap-singapore"}, {"model": "deepseek-v4-flash"}]:
             client, factory = self.client(config={**CONFIG, "credentials_file": str(self.path), **change})
             self.assertFalse(client.configured())
             with self.assertRaises(module.ModelError) as caught:
