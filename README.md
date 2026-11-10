@@ -4,7 +4,9 @@
 
 这是代码恢复包，不包含原机器的数据库、凭据、资产库、音色绑定或录制文件。启动本地服务不会自动开收费云场；创建真实游戏剧情会调用模型并消耗额度或产生费用，自动联调还会使用 TTS 和 Vidu。开始真实调用前请核对账户及路由。
 
-仓库名为 `romance-advisors`，范围为本游戏及所需数字人底座，保持私有；保留旧 HELL INC 的 Git 历史、分支及 PR，不通过删除仓库或改写历史完成迁移。
+本仓库保留旧 HELL INC 的提交历史、分支和 PR。数字人工作台基于 [Gary 的 ai-live-avatar](https://github.com/garycaogan/ai-live-avatar)。
+
+相关项目：[天工开帧 · 赛博小雅直播版](https://github.com/cyber-xiaoya/cyber-xiaoya-live)，可参考它如何将观众弹幕接入 Vidu 数字人直播。
 
 ## 《恋爱军师团》当前定版角色
 
@@ -166,5 +168,5 @@ node --test tests/test_*.cjs
 
 现行游戏说明在 [romance-advisors/README.md](romance-advisors/README.md)，底座说明在 [Studio README](ai-live-avatar/studio/README.md)。原文档中的 `artifacts/` 报告链接属于原机器本地证据，未随本包上传，不能当作仓库内可打开的附件。
 
-保留 [ai-live-avatar/LICENSE](ai-live-avatar/LICENSE) 的上游 MIT 版权声明，以及 [字体 OFL](romance-advisors/static/fonts/OFL.txt)。DyHub 主项目保留 [MIT 许可](dyhub/LICENSE)；其轻量内核第三方签名组件另有 [AGPL-3.0 来源说明](dyhub/third_party/douyin-sign/README.md)及[完整许可证](dyhub/third_party/douyin-sign/LICENSE)，不能把整包笼统视为 MIT。再次分发、修改或提供网络服务时，应分别核对适用条款；源码放在私有仓库不自动消除许可义务。用户账户资产、真实配置、历史数据库、录音录像和云端会话记录均需另行管理；从 Git 恢复代码不等于恢复这些状态。
+保留 [ai-live-avatar/LICENSE](ai-live-avatar/LICENSE) 的上游 MIT 版权声明，以及 [字体 OFL](romance-advisors/static/fonts/OFL.txt)。DyHub 主项目保留 [MIT 许可](dyhub/LICENSE)；其轻量内核第三方签名组件另有 [AGPL-3.0 来源说明](dyhub/third_party/douyin-sign/README.md)及[完整许可证](dyhub/third_party/douyin-sign/LICENSE)，不能把整包笼统视为 MIT。再次分发、修改或提供网络服务时，应分别核对适用条款。用户账户资产、真实配置、历史数据库、录音录像和云端会话记录均需另行管理；从 Git 恢复代码不等于恢复这些状态。
 
