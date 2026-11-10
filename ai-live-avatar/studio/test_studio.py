@@ -143,7 +143,7 @@ class StudioContracts(unittest.IsolatedAsyncioTestCase):
             patch.object(live_session, "load_vidu", side_effect=AssertionError("unexpected credential read")),
             patch.object(studio_server, "load_bailian", return_value=("offline-key", "offline-workspace")),
             patch.object(studio_server, "load_vidu", return_value="offline-key"),
-            patch.object(studio_server, "LEGACY_SETTINGS", self.credentials_marker),
+            patch.object(studio_server, "LOCAL_SETTINGS", self.credentials_marker),
             # HTTP合同测试手动推进队列，后台模型循环由test_automation单独验证。
             patch.object(studio_server.Automation, "start", return_value=None),
         ]

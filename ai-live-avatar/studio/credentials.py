@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-LEGACY_SETTINGS = Path(__file__).resolve().parents[2] / "artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json"
+LOCAL_SETTINGS = Path(__file__).resolve().parents[2] / ".local/local-settings.json"
 QWEN_ROUTE_FILE = Path(__file__).resolve().parent / "data/qwen-route.json"
 
 def bailian_config(data):
@@ -49,7 +49,7 @@ def cloudbase_config(data):
     return defaults
 
 def config():
-    return json.loads(LEGACY_SETTINGS.read_text())
+    return json.loads(LOCAL_SETTINGS.read_text())
 
 def load_bailian():
     source = Path(config()["bailian_credentials_file"])

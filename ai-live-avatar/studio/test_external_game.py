@@ -115,7 +115,7 @@ class ExternalGameContracts(unittest.IsolatedAsyncioTestCase):
             patch.object(live_session, "synthesize_segment", self.tts),
             patch.object(fixtures.studio_server, "load_bailian", return_value=("offline-key", "offline-workspace")),
             patch.object(fixtures.studio_server, "load_vidu", return_value="offline-key"),
-            patch.object(fixtures.studio_server, "LEGACY_SETTINGS", marker),
+            patch.object(fixtures.studio_server, "LOCAL_SETTINGS", marker),
             patch.object(fixtures.studio_server.Automation, "start", return_value=None),
         ]
         for entry in self.patches:

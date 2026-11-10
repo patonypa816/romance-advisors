@@ -34,6 +34,7 @@ class ModelInputTooLarge(ModelError):
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LOCAL_SETTINGS = ROOT.parent / ".local/local-settings.json"
 QWEN_ROUTE_FILE = ROOT / "data/qwen-route.json"
 TOKEN_PLAN_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 COMMON = """你为本地虚构恋爱互动情景剧《恋爱军师团》创作中文内容，人物都是成年人。
@@ -199,10 +200,9 @@ def load_credentials(credentials_file: Path | None = None) -> Credentials:
         else:
             source = credentials_file or os.environ.get("ROMANCE_CREDENTIALS_FILE")
             if not source:
-                # Existing local credential reference, without importing or starting
-                # the digital-avatar app. A custom path works on another machine.
-                reference = ROOT.parent / "artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json"
-                source = strict_json(reference.read_text())["bailian_credentials_file"]
+                # Share only the operator-provided external-file reference with Studio.
+                # Do not search old experiment folders or other accounts.
+                source = strict_json(LOCAL_SETTINGS.read_text())["bailian_credentials_file"]
             with Path(source).expanduser().open(encoding="utf-8-sig", newline="") as handle:
                 rows = dict(csv.reader(handle))
             key = rows.get("apiKey", "").strip()

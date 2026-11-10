@@ -4,7 +4,7 @@
 
 | 模板 | 本机目标或用法 |
 | --- | --- |
-| `local-settings.example.json` | 复制到仓库根 `artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json`，只保存两个外部凭据文件的绝对路径 |
+| `local-settings.example.json` | 复制到仓库根 `.local/local-settings.json`，按启用功能保存自有外部凭据文件的绝对路径 |
 | `bailian-credentials.example.csv` | 参考其纵向键值格式，在仓库外建立真实百炼 CSV；普通北京工作空间供 Studio TTS 和默认文字模型使用 |
 | `qwen-route.example.json` | 可选，分别复制到游戏和 Studio 各自 `data/qwen-route.json`；只引用外部套餐密钥文件 |
 | `bailian-brain.example.json` | 可选，复制到 `ai-live-avatar/studio/data/bailian-brain.json`；仅设置 Studio 模型选项，不存密钥 |
@@ -14,7 +14,7 @@
 
 百炼 CSV 是两列、多行的键值文件，不是首行为字段名的横向表。`apiKey` 放自己的普通百炼密钥；`workspaceId` 和 `apiHost` 使用同一北京工作空间，host 为该工作空间加 `.cn-beijing.maas.aliyuncs.com`。Vidu 外部文本文件只保存自己的单个完整密钥，不能放 JSON 或说明文字。
 
-两个路径都使用绝对路径，不使用 `~`。限制真实文件为仅本人可读；不要把真实密钥粘进 README、终端命令、测试夹具或 issue。
+仅填写实际启用功能的路径，统一引用文件由游戏与 Studio 默认读取；不使用的功能可以保留占位值，但调用前须填写。只玩普通百炼文字游戏不需要 Vidu，文字套餐也不能代替 TTS 或 Vidu 凭据。填写的路径都使用绝对路径，不使用 `~`。限制真实文件为仅本人可读；不要把真实密钥粘进 README、终端命令、测试夹具或 issue。
 
 ## 可选文字模型套餐
 
@@ -36,6 +36,12 @@
 }
 ```
 
-这段是 `tts_voices` 内部的键值示例，不是完整 `local.json`；`tts-voices.example.json` 继续保留通用占位符。映射不会选择资产、恢复资产库或创建会话。游戏展示图路径与 SHA-256 见[根 README 的定版表](../README.md#恋爱军师团当前定版角色)。未完成选择和映射的新机器可能仍显示上游朱元璋／`libai_v3.1` 兜底，不应据此开始本游戏正式联调。
+这段是 `tts_voices` 内部的键值示例，不是完整 `local.json`；`tts-voices.example.json` 继续保留通用占位符。映射不会选择资产、恢复资产库或创建会话。游戏展示图路径与 SHA-256 见[根 README 的定版表](../README.md#恋爱军师团当前定版角色)。未完成选择和映射的新机器可能仍显示上游默认形象／`libai_v3.1` 兜底，不应据此开始本游戏正式联调。
 
 `local.json` 由 Studio 生成，含控制/播放器令牌、端口和设置。编辑前先正常停场并退出 Studio，保留其他全部字段，只增加或更新 `tts_voices`；启动后选择相应资产并核对状态显示的 `tts_voice`。模板不恢复原机器资产库、动作库或音色设置。
+
+## 首次配置与升级
+
+从仓库根执行 `mkdir -p .local`，将 `local-settings.example.json` 复制为 `.local/local-settings.json`，用编辑器填写自己外部文件的绝对路径。将目录权限设为 `0700`，文件权限设为 `0600`。完整安装步骤见[根教程](../README.md#2-配置自己的账号)。
+
+旧安装需在正常停场、退出服务后，由自己明确复制原引用文件中需要保留的字段到此新文件；不会自动搜索旧路径或导入旧凭据。不要复制真实密钥或整套运行归档。CloudBase 不是默认依赖；只有自行选用其历史适配器并完成接线时，才另配自己的云环境与凭据。

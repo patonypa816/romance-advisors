@@ -1,5 +1,6 @@
 # Operator-owned state and generated output never belong in the source snapshot.
 .DS_Store
+/.local/
 __pycache__/
 *.py[cod]
 .venv/

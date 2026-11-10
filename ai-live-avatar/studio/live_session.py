@@ -43,9 +43,7 @@ from diagnostics import Diagnostics, scrub
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 ARTIFACTS = ROOT.parent / "artifacts"
-PREVIOUS = ARTIFACTS / "zhuyuanzhang-qwen31-libai-test-20261029"
 STUDY = ARTIFACTS / "zhuyuanzhang-study-ab-20261029"
-ORIGINAL = ARTIFACTS / "zhuyuanzhang-structured-idle-20261029"
 VARIANTS = {
     "A": {"image": "study-facing-fresh-smile-720x1280-v7.png", "title": "Terra · 整套读弹幕与自然接话",
           "goal": "结合上下文自然选择整套读弹幕或直接接话；整套保留前倾、眯眼、1秒后轻声短读与回正，不把动作拆开随机。"},

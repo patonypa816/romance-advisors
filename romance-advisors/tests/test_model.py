@@ -36,6 +36,30 @@ class ModelBoundaryTests(unittest.TestCase):
             self.assertNotIn("sk-synthetic", repr(value))
             self.assertEqual(len(list(Path(directory).iterdir())), 1)
 
+    def test_default_settings_reference_only_operator_csv_in_neutral_location(self):
+        import romance.model as model
+        self.assertEqual(model.LOCAL_SETTINGS, Path(__file__).resolve().parents[2] / ".local/local-settings.json")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = Path(directory)
+            source = root / "operator.csv"
+            original = "apiKey,sk-synthetic-only\nworkspaceId,synthetic\napiHost,synthetic.cn-beijing.maas.aliyuncs.com\n"
+            source.write_text(original)
+            settings = root / ".local/local-settings.json"
+            settings.parent.mkdir()
+            settings.write_text(json.dumps({"bailian_credentials_file": str(source)}))
+            with patch.object(model, "LOCAL_SETTINGS", settings):
+                value = load_credentials()
+                self.assertEqual(value.key, "sk-synthetic-only")
+                self.assertNotIn(value.key, settings.read_text())
+                self.assertEqual(source.read_text(), original)
+                # A missing operator reference must fail, never search other accounts.
+                settings.write_text(json.dumps({"bailian_credentials_file": str(root / "absent.csv")}))
+                with self.assertRaises(ModelError):
+                    load_credentials()
+                settings.unlink()
+                with self.assertRaises(ModelError):
+                    load_credentials()
+
     def test_credentials_reject_exfiltration_endpoint_and_newlines(self):
         for endpoint in ("https://attacker.invalid/compatible-mode/v1", "https://ok.maas.aliyuncs.com@attacker.invalid/compatible-mode/v1",
                          "https://ok.maas.aliyuncs.com/compatible-\nmode/v1"):

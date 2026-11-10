@@ -2,9 +2,9 @@
 
 女生发来一句「你怎么还没走？」，男主该怎么回？在《恋爱军师团》里，直播间的观众就是他的军师。大家在弹幕里支招、投票，数字人面对镜头说出自己的想法，再低头给女生发消息。女生看到的只有正式聊天；她怎么回、亲密度怎么变，会成为观众下一轮支招的依据。
 
-这是一套在 Mac 上运行的直播节目。可以只玩文字版，也可以接入 Vidu 实时数字人，用 OBS 合成竖屏画面，再从抖音直播伴侣播出。
+项目开发已结束，本仓库公开保留源码和使用说明。节目在 Mac 上运行，模型服务与数字人账号由使用者自行配置。可以只玩文字版，也可以接入 Vidu 实时数字人，用 OBS 合成竖屏画面，再从抖音直播伴侣播出。
 
-[直播游戏画面](#直播游戏画面) · [项目来历](#项目来历) · [游戏与改造方案](#游戏与改造方案) · [作者的数字人配置](#恋爱军师团当前定版角色) · [从零配置](#1-配置本机环境) · [OBS 与抖音](#obs-与抖音直播伴侣) · [离线检查](#离线检查)
+[直播游戏画面](#直播游戏画面) · [项目来历](#项目来历) · [游戏与改造方案](#游戏与改造方案) · [节目配置示例](#恋爱军师团当前定版角色) · [从零配置](#1-配置本机环境) · [OBS 与抖音](#obs-与抖音直播伴侣) · [离线检查](#离线检查)
 
 ## 直播游戏画面
 
@@ -18,13 +18,7 @@
 
 做这个项目时，我参考的原方案是天工开帧的「赛博小雅直播版」：观众发来弹幕，数字人能在直播中接话、做动作。《恋爱军师团》沿用这种互动思路，把观众的输入进一步变成有投票、有作者、有剧情后果的一轮游戏。[天工开帧 · 赛博小雅直播版](https://github.com/cyber-xiaoya/cyber-xiaoya-live)
 
-代码上，数字人工作台基于 Gary（曹淦）的 `ai-live-avatar`。本仓库在 `ai-live-avatar/studio/` 中实现游戏表演、外接百炼语音和动作调度。抖音事件采集使用仓内的 DyHub 副本，保留了该节目需要的礼物、场次识别和重连处理。[Gary 的数字人底座](https://github.com/garycaogan/ai-live-avatar) · [DyHub 上游](https://github.com/ymstar/dyhub) · [仓内导入记录](dyhub/LOCAL_IMPORT.md)
-
-| 时间 | 仓库里发生了什么 |
-| --- | --- |
-| 2026-11-01 至 11-04 | 最初用 HELL INC 做互动游戏实验，后来将《恋爱军师团》和配套 Studio 收入主分支。旧分支和 PR 仍可追溯。[初期设计](https://github.com/patonypa816/romance-advisors/commit/b5899934497a664f1272e12b9faaa0d8bb795416) · [游戏与 Studio 入库](https://github.com/patonypa816/romance-advisors/commit/1ade378ca6e87dec5f47495a523636282474690c) |
-| 2026-11-05 | 接入抖音评论和终局评奖，定下咖啡馆男主与发消息动作，把人物、聊天、投票和榜单合成一个 OBS 节目页。[采集与终局](https://github.com/patonypa816/romance-advisors/pull/10) · [竖屏节目输出](https://github.com/patonypa816/romance-advisors/commit/21743e6f1c912629c24526f13873f96adb52f6fe) |
-| 2026-11-07 | 增加开播准备入口、按抖音场次计榜和六档造型玩法，修复「投 1」等口令的识别。[对应版本](https://github.com/patonypa816/romance-advisors/commit/0812276784b7b84d8902fe67737c36ff9a0761ea) |
+代码上，数字人工作台基于 Gary（曹淦）的 `ai-live-avatar`。本仓库在 `ai-live-avatar/studio/` 中实现游戏表演、外接百炼语音和动作调度。抖音事件采集使用仓内的 DyHub 副本，保留了该节目需要的礼物、场次识别和重连处理。[Gary 的数字人底座](https://github.com/garycaogan/ai-live-avatar) · [DyHub 上游](https://github.com/ymstar/dyhub) · [采集器接口与启动说明](dyhub/README.md)
 
 ## 游戏与改造方案
 
@@ -34,7 +28,7 @@
 2. **投票与裁决。** 观众发送对应编号，例如 `1`、`投1` 或 `投 1`。同一人以截止前最后一张有效票为准。男主通常采纳最高票，出现并列时程序从并列项中抽取一次。只有最高票与男主人设冲突时，才有 25% 的机会改选或自拟。关票后的票数和裁决都保存，刷新页面不会重抽。
 3. **口播、发消息、结算。** 数字人可以对观众说出选择的理由。正式男主消息进入屏幕聊天，女生依据她知道的事回应。游戏把女生回复与分数变化一起写入 SQLite，再显示结果。亲密度到 100 为成功、到 0 为失败。游戏把被采纳的建议记回原作者，同一次抖音直播中的成绩可跨期计榜。
 
-礼物驱动的是另一项**造型值**。例如在一钻礼物配置中，小心心（ID `463`）正向、抖音（ID `164`）负向；从 50 分累计加到 60，男主从灰卫衣换到精致档。亲密度仍由聊天结算。工作台的「开始免费试玩」可用模拟加减分看效果；真实收礼与云端换形还需要账号、房间和资产配置。[玩法与计分](romance-advisors/docs/01-产品需求.md) · [一钻手测步骤](romance-advisors/docs/04-本地工作台使用.md#一钻手测)
+礼物驱动的是另一项**造型值**。例如在一钻礼物配置中，小心心（ID `463`）正向、抖音（ID `164`）负向；从 50 分累计加到 60，男主从灰卫衣换到精致档。亲密度随聊天结算，造型变化可能带来小幅印象修正；军师榜只统计聊天得分。工作台的「开始免费试玩」可用模拟加减分看效果；真实收礼与云端换形还需要账号、房间和资产配置。[玩法与计分](romance-advisors/README.md) · [一钻手测步骤](romance-advisors/docs/04-本地工作台使用.md#一钻手测)
 
 ### 从哪里开始改
 
@@ -49,11 +43,11 @@
 
 ## 《恋爱军师团》当前定版角色
 
-下表是作者这套咖啡馆节目的配置记录。复现相同接法时，可以使用自己账号有权驱动的角色及音色。
+下表是可参考的咖啡馆节目配置，不附带任何账号、套餐、云资源或托管 Agent。请在自己的账号下开通所需功能，创建有权使用的数字人资产，并在本机运行自己的游戏与 Studio。
 
-| 环节 | 作者使用的方案 |
+| 环节 | 节目配置示例 |
 | --- | --- |
-| 文字 | 游戏和 Studio 使用百炼 `qwen3.8-flash`、北京地域、关闭思考。作者为两端分别配置了 Token Plan 文字路由。 |
+| 文字 | 游戏和 Studio 默认适配百炼 `qwen3.8-flash`、北京地域、关闭思考；按自己的账号选择普通 API 或可选文字套餐。 |
 | 语音 | 普通百炼通道调用 `qwen-audio-3.1-tts-flash`，六档使用同一音色 `longtian_v3.1`。 |
 | 人物与动作 | Vidu 实时数字人。Studio 取已确定的台词、合成语音并调度眼神、表情与局部动作。浏览器通过 AliRTC 接收云端音画。 |
 | 普通口播 | 「咖啡馆里的温柔凝视」，黑针织衫托腮；复现时填入自己账号下对应的 Vidu 资产 ID。六档中对应 `stellar`。 |
@@ -67,7 +61,7 @@
 
 ## 1 配置本机环境
 
-作者使用 macOS；一键准备依赖 macOS 应用、zsh 和 Unix 文件锁。克隆整个仓库，让 `romance-advisors/`、`ai-live-avatar/`、`dyhub/` 保持同级。在希望存放项目的目录执行以下命令，需要 Python 3.11+ 和可用的 `ffmpeg`、`ffprobe`。如使用其他受支持的 Python 版本，替换命令中的解释器名。
+本教程以 macOS 为例；一键准备依赖 macOS 应用、zsh 和 Unix 文件锁。克隆整个仓库，让 `romance-advisors/`、`ai-live-avatar/`、`dyhub/` 保持同级。在希望存放项目的目录执行以下命令，需要 Python 3.11+ 和可用的 `ffmpeg`、`ffprobe`。如使用其他受支持的 Python 版本，替换命令中的解释器名。
 
 ```sh
 git clone https://github.com/patonypa816/romance-advisors.git
@@ -83,22 +77,47 @@ sh ai-live-avatar/tools/fetch_vendor.sh
 
 最后一步下载并校验 AliRTC 浏览器 SDK 7.1.9。只玩文字版时，安装游戏端的 Python 依赖、配置文字模型并启动游戏即可；接收抖音事件时，再准备 Node.js 20+、Chrome/Chromium 并构建 DyHub。
 
-## 2 配置数字人账号、语音与造型
+## 2 配置自己的账号
 
-1. **准备两个外部凭据文件。** 按[配置模板](config-examples/README.md)在仓库外建立百炼 CSV 和 Vidu 密钥文本，由操作者填写。CSV 按行放 `apiKey`、`workspaceId`、`apiHost`，使用同一个北京工作空间；Vidu 文件只放一个密钥。真实文件设为仅本人可读。
-2. **让 Studio 找到文件。** 它在下面这个历史路径查找 `local-settings.json`。首次从仓库根目录执行以下命令，再将文件中的 `bailian_credentials_file` 和 `vidu_credentials_file` 改成上述两个外部文件的绝对路径。这里保存的是路径，真实密钥留在仓库外。
+这里的 Agent 是在本机运行的游戏模型与 Studio 编排程序：它接收输入、请求模型，再由程序校验和执行。默认接法不需要 CloudBase，也不需要额外创建托管 Agent。若自行开发云端 Agent，请在自己的账号创建、配置权限和服务接口，再编写适配；仓库不提供公共代调用服务。
+
+先按实际功能准备凭据，避免把可选服务当成必装项：
+
+| 要使用的功能 | 自己需要准备什么 |
+| --- | --- |
+| 合成测试、静态造型试玩 | 无云凭据；不能据此验证真实剧情或音画 |
+| 纯文字游戏 | 自己的百炼文字模型权限与密钥；可选自有文字套餐 |
+| Studio 评论筛选、台词与动作计划 | 自己的百炼文字模型配置 |
+| 外接语音 | 自己的普通百炼 CSV 与可用 TTS 音色；文字套餐不提供这路语音凭据 |
+| Vidu 实时人物 | 自己的 Vidu 密钥、可用额度与有权驱动的资产 |
+| 抖音评论、OBS 输出 | 自己有权使用的直播间和本机软件；不需要 CloudBase 密钥 |
+| 自建 CloudBase 适配 | 仅在选择这一独立开发路径时，准备自己的环境、模型权限和服务端凭据 |
+
+1. **在仓库外保存所需密钥。** 参考[配置模板](config-examples/README.md)，自行填写百炼 CSV 或 Vidu 密钥文本。只玩文字游戏不必准备 Vidu。真实文件设为仅本人可读，不把密钥写进源码、前端、issue 或 Git。
+2. **在仓库根创建统一引用文件。** 两个应用默认读取根目录 `.local/local-settings.json`，这里只写外部凭据文件的绝对路径。首次在仓库根执行：
 
    ```sh
-   mkdir -p artifacts/zhuyuanzhang-qwen31-libai-test-20261029
-   cp -n config-examples/local-settings.example.json artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json
-   chmod 600 artifacts/zhuyuanzhang-qwen31-libai-test-20261029/local-settings.json
+   mkdir -p .local
+   cp -n config-examples/local-settings.example.json .local/local-settings.json
+   chmod 700 .local
+   chmod 600 .local/local-settings.json
    ```
 
-3. **选择文字路由。** 通常游戏和 Studio 可共用上述普通百炼凭据。纯文字游戏也可用 `ROMANCE_CREDENTIALS_FILE` 指向自有 CSV。若复现作者的 Token Plan 接法，将 [qwen-route.example.json](config-examples/qwen-route.example.json) 分别放到 `romance-advisors/data/qwen-route.json` 与 `ai-live-avatar/studio/data/qwen-route.json`，创建所需目录，填入仓库外套餐密钥文件的绝对路径（`api_key_file`）。Studio 可选的模型设置见 [bailian-brain.example.json](config-examples/bailian-brain.example.json)。两个项目的文字路由独立；显式配置出错会报错。语音仍走普通百炼，渲染仍走 Vidu。
-4. **选角色并绑定音色。** 按下一节启动 Studio 预览，在资产库同步并选择有权使用的 Vidu 资产。正常停场、退出 Studio 后，按 [tts-voices.example.json](config-examples/tts-voices.example.json) 把「资产 ID → 音色 ID」合并进自动生成的 `ai-live-avatar/studio/data/local.json` 的 `tts_voices` 字段。保留原文件中的端口、令牌和其他映射。重启预览后核对选中资产和 `tts_voice`。新安装的通用兜底音色为 `libai_v3.1`。
-5. **可选，启用真实六档换形。** 本地静态试玩可直接使用。云端换形需要自己的六个就绪资产、各自缓存原图的 SHA-256、同一音色绑定，以及云端能访问的升级和降级两支 HTTPS 短片。将[关闭状态的模板](config-examples/external-appearance.example.json)填写为 `ai-live-avatar/studio/data/external-appearance.json`，给这组人物设定稳定的 `character_id`，将 `broadcast_key` 设为开场选中资产所属的档位，准备齐全后设 `enabled` 为 `true`，在下次正常启动时读取。作者本机的资产库和远端短片地址由账号自行管理。[Studio 六档配置](ai-live-avatar/studio/EXTERNAL_APPEARANCE.md)
+   用本机编辑器把 `bailian_credentials_file` 改成自己 CSV 的绝对路径；只有使用 Vidu 时才填写 `vidu_credentials_file`。未启用功能可以保留对应占位值，调用该功能前必须替换。不要把真实文件放进仓库；`.local/` 是本机私有配置目录。
+3. **选择自己的文字路由。** 默认使用上述普通百炼配置。纯文字游戏也支持 `ROMANCE_CREDENTIALS_FILE` 显式指向自有 CSV。若自己的账号有受支持的 Token Plan，可把 [qwen-route.example.json](config-examples/qwen-route.example.json) 分别放到 `romance-advisors/data/qwen-route.json` 与 `ai-live-avatar/studio/data/qwen-route.json`，自行创建目录，并填写外部套餐密钥文件的绝对路径。两端独立配置，显式路由错误会拒绝调用，不自动切换收费来源；TTS 和 Vidu 仍需各自凭据。Studio 模型选项见 [bailian-brain.example.json](config-examples/bailian-brain.example.json)。
+4. **已有安装升级时显式迁移。** 正常停场并退出两个服务后，自己检查原先的引用文件，把需要保留的路径字段复制到新的 `.local/local-settings.json`，再核对文件权限和路径。程序不自动搜索旧目录、读取旧凭据或迁移账号；已显式配置的环境变量和套餐路由仍应由自己核对。不要用旧机器的运行目录覆盖新机器。
+5. **选择自己的角色与音色。** 启动 Studio 预览，在资产页同步并选择自己账号的 Vidu 资产；自行编写角色名称、人设和回复偏好。正常停场并退出后，按 [tts-voices.example.json](config-examples/tts-voices.example.json) 把「资产 ID → 音色 ID」合并进生成的 `ai-live-avatar/studio/data/local.json` 的 `tts_voices`，保留端口、令牌等其他字段。重新启动并核对选中资产及 `tts_voice`。新安装兜底音色为 `libai_v3.1`，不代表已经完成节目配置。
+6. **可选，启用真实六档换形。** 静态试玩可直接使用。真实换形需要自己的六个就绪资产、各自缓存原图的 SHA-256、音色绑定，以及云端能访问的升级和降级两支 HTTPS 短片。填写 [关闭状态模板](config-examples/external-appearance.example.json) 后保存为 `ai-live-avatar/studio/data/external-appearance.json`，设置自己的 `character_id` 和开场 `broadcast_key`；素材、权限和费用确认后才启用，在下次正常启动时读取。[六档说明](ai-live-avatar/studio/EXTERNAL_APPEARANCE.md)
+
+### 开发者：接自己的模型或云端 Agent
+
+当前并非任意 API 即插即用。游戏的 [QwenModel.generate(task, payload)](romance-advisors/romance/model.py) 使用百炼兼容端点和结构化结果，地址有白名单限制；可从这个入口实现自己的模型适配，并保留 `prepare`、`select`、`draft`、`reply` 等任务的返回合同、来源约束、错误与取消处理，再接入游戏服务。只改模型名或 URL 不能保证兼容。
+
+Studio 当前由 [bailian_ai.py](ai-live-avatar/studio/bailian_ai.py) 提供百炼传输，复用 [cloudbase_ai.py](ai-live-avatar/studio/cloudbase_ai.py) 的结构化计划与校验。若使用自己的模型/Agent，需要实现筛选、回复、主持与动作排程等实际调用接口，并接入 [automation.py](ai-live-avatar/studio/automation.py) 的实例创建处；TTS 与 Vidu 是另外两条调用链，不随文字适配器切换。[自定义模型与可选 CloudBase](ai-live-avatar/studio/README.md#自定义模型与可选-cloudbase) 提供独立开发入口，不是正常工作台的配置开关。自行接线后，先验证返回结构、来源、取消和停止，再授权真实调用。
 
 ## 3 先启动 Studio 再启动游戏
+
+只玩文字游戏时跳过 Studio，直接使用本节第二个终端的游戏启动命令。接实时数字人时再按以下顺序运行。
 
 **桌面预览**用两个终端，各自从仓库根目录开始。第一个启动 Studio，让工作台预览接收音画。
 
@@ -118,11 +137,11 @@ cd romance-advisors
 
 ## OBS 与抖音直播伴侣
 
-作者在同一台 Mac 上运行游戏、Studio、DyHub、OBS 和直播伴侣。**画面**从游戏节目页进入 OBS，再由 OBS Virtual Camera 送给伴侣。**声音**从同一节目页进入 OBS 调音台，由 OBS 的监听设备送入 BlackHole 2ch（虚拟声卡），伴侣把它当作音频输入。**弹幕与礼物**走另一条路，由 DyHub 从本次直播间送回游戏。
+这套接法在同一台 Mac 上运行游戏、Studio、DyHub、OBS 和直播伴侣。**画面**从游戏节目页进入 OBS，再由 OBS Virtual Camera 送给伴侣。**声音**从同一节目页进入 OBS 调音台，由 OBS 的监听设备送入 BlackHole 2ch（虚拟声卡），伴侣把它当作音频输入。**弹幕与礼物**走另一条路，由 DyHub 从本次直播间送回游戏。
 
 ### 首次配置 OBS
 
-1. 安装 [OBS Studio](https://obsproject.com/download)、[BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) 和抖音直播伴侣。作者的准备器从 `/Applications/OBS.app` 和 `/Applications/Douyin Webcast Mate.app` 打开这两个桌面应用。若之前使用桌面预览，先正常结束云场、退出该模式的服务。在两个终端分别进入 `ai-live-avatar/` 和 `romance-advisors/`，前者运行 `.venv/bin/python -B studio/server.py`，后者运行 `.venv/bin/python -B -m romance.server --obs-output`。这次由 OBS 节目页独占数字人接收端。记下**游戏终端**打印的 `http://127.0.0.1:<端口>`。
+1. 安装 [OBS Studio](https://obsproject.com/download)、[BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) 和抖音直播伴侣。macOS 准备器默认从 `/Applications/OBS.app` 和 `/Applications/Douyin Webcast Mate.app` 打开这两个桌面应用。若之前使用桌面预览，先正常结束云场、退出该模式的服务。在两个终端分别进入 `ai-live-avatar/` 和 `romance-advisors/`，前者运行 `.venv/bin/python -B studio/server.py`，后者运行 `.venv/bin/python -B -m romance.server --obs-output`。这次由 OBS 节目页独占数字人接收端。记下**游戏终端**打印的 `http://127.0.0.1:<端口>`。
 2. 在 OBS 新建一个专用**配置文件（Profile）**和同名的**场景集合**，例如都叫「恋爱军师团」。把基础画布和输出分辨率都设为 **1080×1920**，帧率用 **30 fps**。集合内建一个节目场景。
 3. 在该场景添加一个可见的**浏览器源**，来源名称精确填写 **恋爱军师团专用节目页**。网址填 `http://127.0.0.1:<游戏端口>/static/obs-output.html`，宽 1080、高 1920，勾选「通过 OBS 控制音频」。这个地址同时包含人物、聊天、投票和榜单；`/overlay` 只提供透明游戏组件。只让一个场景使用这个专用源，方便准备器识别。
 4. 在 OBS 的「高级音频属性」把该源设为**监听和输出**，在 OBS 设置中将**音频监听设备**选为 **BlackHole 2ch**。把虚拟摄像机的输出选为 **Program（节目）**，启动虚拟摄像机。
@@ -142,7 +161,7 @@ npm ci --ignore-scripts
 npm run build
 ```
 
-随后双击根目录的 [开播准备.command](开播准备.command)。它检查已保存的 OBS 设置，启动或复用本机 Studio、DyHub 和游戏，准备虚拟摄像机并打开直播伴侣、游戏工作台。采集器管理地址是 `http://127.0.0.1:8757`；如需单独排查采集，可使用[采集器启动入口](ai-live-avatar/studio/启动评论采集.command)。需要登录态时由操作者在本机管理台处理。[DyHub 本机说明](dyhub/LOCAL_IMPORT.md)
+随后双击根目录的 [开播准备.command](开播准备.command)。它检查已保存的 OBS 设置，启动或复用本机 Studio、DyHub 和游戏，准备虚拟摄像机并打开直播伴侣、游戏工作台。采集器管理地址是 `http://127.0.0.1:8757`；如需单独排查采集，可使用[采集器启动入口](ai-live-avatar/studio/启动评论采集.command)。需要登录态时由操作者在本机管理台处理。[DyHub 本机说明](dyhub/README.md)
 
 | 操作者做什么 | 怎样确认 |
 | --- | --- |
@@ -163,7 +182,7 @@ npm run build
 
 Studio 的[音频发送节奏测试](ai-live-avatar/studio/test_prepared_pcm_overlap.py)使用合成语音与本地播放器替身，检查准备下一句时是否打断当前音频。
 
-现场要另外验证三件事：观众是否同时收到音画，人物低头与聊天气泡是否对齐，以及真实礼物是否触发预期造型并保持后续口播。发送回执只覆盖本机发送这一步。已知的重复碎念、气泡时序和礼物待验项见[交接记录](HANDOVER.md)。
+实际使用时分别检查观众端音画、低头与聊天气泡的时序，以及礼物换形和恢复口播；发送回执只表示本机发送，不等于观众已收到或画面已执行。
 
 ## 源码、素材与许可
 

@@ -299,6 +299,32 @@ class BailianTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(module.BailianAI.__bases__[0], shared.StructuredBrain)
         self.assertNotIsInstance(client, shared.CloudBaseAI)
 
+    async def test_default_automation_uses_operator_http_without_cloudbase_sdk_or_account(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from automation import Automation
+
+        # CloudBase remains optional: normal selection must work even when its
+        # transport, SDK discovery and account checks are all forbidden.
+        with TemporaryDirectory() as name, \
+             mock.patch.object(shared.CloudBaseAI, "__init__", side_effect=AssertionError("CloudBase construction")), \
+             mock.patch.object(shared.CloudBaseAI, "_sdk_ready", side_effect=AssertionError("SDK discovery")), \
+             mock.patch.object(shared.CloudBaseAI, "_credentials", side_effect=AssertionError("CloudBase account")), \
+             mock.patch.object(shared.CloudBaseAI, "_call", side_effect=AssertionError("CloudBase request")):
+            studio = SimpleNamespace(data=Path(name), config={}, current=None)
+            automation = Automation(studio)
+            client = automation.ai
+            self.clients.append(client)
+            self.assertIs(type(client), module.BailianAI)
+            client._credentials_loader = lambda: (KEY, "operator-workspace")
+            factory = Factory()
+            client._session_factory = factory
+            self.assertTrue(client.configured())
+            self.assertEqual(await client.select_comments(BATCH, CONTEXT), SELECTION)
+            self.assertEqual(factory.calls[0][0], "https://operator-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions")
+            self.assertEqual(list(Path(name).iterdir()), [])
+
     async def test_real_aiohttp_local_server_reads_parameters_and_closes_sockets(self):
         # Only this test adapter rewrites the verified HTTPS endpoint to an
         # ephemeral loopback server. Production has no endpoint override.

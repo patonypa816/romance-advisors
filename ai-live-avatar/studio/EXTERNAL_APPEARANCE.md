@@ -1,6 +1,6 @@
 # 游戏同角色六档换形
 
-默认关闭，启动本机服务不会启用，也不会因此开云场。无密钥模板位于根目录 `config-examples/external-appearance.example.json`。实际配置由操作者自行放到 Studio 的 `data/external-appearance.json`，在进程启动时读取，不热重载、不入 Git；本次实现未写入真实配置、未开启模型/TTS/Vidu。
+默认关闭，启动本机服务不会启用，也不会因此开云场。无密钥模板位于根目录 `config-examples/external-appearance.example.json`。实际配置由操作者自行放到 Studio 的 `data/external-appearance.json`，在进程启动时读取，不热重载、不入 Git。
 
 启用前需要六个**真实已就绪**资产和各自缓存原图的 SHA-256，六档键固定为 `fish/rough/tired/normal/refined/stellar`。每个资产都必须在原有 `local.json` 的 `tts_voices` 映射绑定到同一 `voice_id`，当前本场音色也须一致。`character_id` 是本机同一角色组的稳定名称；配置者仍须人工核对六张素材确实是同一人。`description` 只描述可见外貌，不写礼物或后台分数。`broadcast_key` 必须对应开场实际选中资产；它也是回普通口播时必须恢复的档位。不能把星耀原图标成普通档。
 
@@ -27,5 +27,3 @@
 
 `end_appearance_episode()` 先关闭收入，再等在途结果并自动恢复口播档；只有恢复已采用且 Studio 正常才交接回聊天。停止整个云场不为还原多发一次Type16。唯一发送者、未知创建、停止未确认等既有保护不变。
 正式低头是口播的必要后半段，Program 使用前一任务回执 `motion_ready_in_seconds` 在正式占位内等待原Q冷却，再提交低头；该等待不缩短动作安全间隔，也不表示画面成功。
-
-离线验证：Studio 的 `test_external_appearance.py` 走真实 HTTP 归属路由和真实 Type16 发送器，覆盖健康帧自动采用、保护前的帧不能代替保护后的进度、停帧/轨道丢失/换接收端、立即/迟到103及幂等。游戏的 `tests/test_automatic_appearance_protocol.py` 串起生产 Program、AvatarClient HTTP、ExternalAppearance 与共享 Type16 发送器；没有 `/confirm` 路由，覆盖合成礼物六档跨越、开局普通档、退出恢复、口播低头保护、未知不重试和查询期限。所有外部音频/WS/解码帧均为离线替身，保护时间缩短；不代表真实云端播放或视觉验收。历史人工确认兼容用例保留在 `test_real_appearance_program.py`，原两档模拟回合在 `tests/test_appearance_round.py`。

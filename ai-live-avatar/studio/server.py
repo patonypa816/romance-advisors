@@ -29,7 +29,7 @@ from semantic_speech import (parse_dialogue_semantic_plan, DIALOGUE_ACTION_KIND,
 from avatar_library import AvatarLibrary
 from idle_action_library import IdleActionLibrary, IdleActionError
 from idle_motion import IdleRecoveryError
-from credentials import LEGACY_SETTINGS, bailian_config, load_bailian, load_vidu
+from credentials import LOCAL_SETTINGS, bailian_config, load_bailian, load_vidu
 from automation import Automation, IN_FLIGHT
 from director import Director
 from dyhub_client import normalize_endpoint
@@ -475,8 +475,8 @@ class Studio:
         binding_reason = self.avatar_switch_binding_reason()
         if binding_reason:
             return blocked("avatar_binding_invalid", binding_reason)
-        if not LEGACY_SETTINGS.exists():
-            return blocked("credentials_missing", "已有语音与Vidu凭据配置未找到")
+        if not LOCAL_SETTINGS.exists():
+            return blocked("credentials_missing", "请在仓库根 .local/local-settings.json 配置自己的语音与 Vidu 凭据文件路径")
         if not self.replay_fixture and not self.automation.ai.configured():
             return blocked("model_not_configured", "请检查百炼大脑模型配置及已有百炼凭据文件")
         if not self.automation.running():
