@@ -1,8 +1,7 @@
-"""Offline local-anchor regressions: captured words, controlled PCM, no services.
+"""Offline local-anchor regressions with synthetic words and controlled PCM.
 
-The small JSON fixture preserves raw final_words from two safe stream logs.
-Audio is intentionally synthetic: these tests prove timestamps/PCM provenance and
-local scheduling rules, not that generated audio pronounced the captured text.
+Hand-authored scripts, spelling differences, multi-character provider units and
+fixed timestamps exercise provenance and scheduling without private stream logs.
 """
 import copy
 import hashlib
@@ -63,17 +62,17 @@ class LocalActionAlignmentTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'alignment_unavailable')
         self.assertEqual(caught.exception.details['reason'], reason)
 
-    def run_real_case(self, case_id):
+    def run_synthetic_case(self, case_id):
         case = next(c for c in CASES if c['case_id'] == case_id)
         part, words = copy.deepcopy(case['part']), copy.deepcopy(case['words'])
         original_part, original_words = copy.deepcopy(part), copy.deepcopy(words)
         alignment, pcm = verified(words, part['text'], case['audio_seconds'])
         self.assertEqual(alignment['status'], 'ok')
-        self.assertEqual(alignment['text_matches_script'], case_id == 'c0003')
+        self.assertEqual(alignment['text_matches_script'], case_id == 'synthetic-word-boundary')
         self.assertEqual(alignment['words'], original_words)
         # The historical whole-text gate remains strict, while this path proves
         # each final anchor against the untouched original and provider words.
-        if case_id == 'c0002':
+        if case_id == 'synthetic-mismatch':
             with self.assertRaises(SemanticSpeechError):
                 validate_alignment(alignment, part['text'], case['audio_seconds'])
         else:
@@ -105,13 +104,13 @@ class LocalActionAlignmentTests(unittest.TestCase):
         self.assertEqual(words, original_words)
         self.assertEqual(alignment['words'], original_words)
 
-    def test_c0002_raw_words_to_final_local_validation(self):
-        self.run_real_case('c0002')
+    def test_synthetic_mismatch_words_to_final_local_validation(self):
+        self.run_synthetic_case('synthetic-mismatch')
 
-    def test_c0003_raw_words_to_final_local_validation(self):
-        self.run_real_case('c0003')
-        words = next(c['words'] for c in CASES if c['case_id'] == 'c0003')
-        self.assertIn('黢黢', [w['text'] for w in words])
+    def test_synthetic_multicharacter_words_to_final_local_validation(self):
+        self.run_synthetic_case('synthetic-word-boundary')
+        words = next(c['words'] for c in CASES if c['case_id'] == 'synthetic-word-boundary')
+        self.assertIn('轻轻', [w['text'] for w in words])
 
     def test_unrelated_substitution_deletion_and_insertion_allowed(self):
         source = '甲乙丙丁戊己庚辛'

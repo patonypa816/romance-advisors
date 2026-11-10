@@ -9,7 +9,7 @@ import { runOnce } from './helper.mjs';
 http.request = https.request = () => { throw new Error('network_forbidden_in_offline_tests'); };
 const ID = 'AKIDSyntheticOnlyCredential12345';
 const KEY = 'synthetic-secret-not-real-123456789';
-const input = role => ({ envId: 'benxinji-v3-d2g1zs30wb4a1245c', region: 'ap-shanghai',
+const input = role => ({ envId: 'synthetic-cloudbase-offline', region: 'ap-shanghai',
   model: 'deepseek-v4.1-flash-1017', role, credentials: { secretId: ID, secretKey: KEY },
   messages: [{ role: 'system', content: 'Only output json.' }, { role: 'user', content: 'data' }] });
 const raw = () => ({ model: input('selection').model,
@@ -40,7 +40,7 @@ test('installed official SDK pipeline forwards JSON/thinking, one paid step, no 
   assert.equal(initOptions[0].debug, false);
   assert.equal(requests.length, 1);
   const request = requests[0];
-  assert.equal(request.url, 'https://benxinji-v3-d2g1zs30wb4a1245c.api.tcloudbasegateway.com/v1/ai/cloudbase/chat/completions');
+  assert.equal(request.url, `https://${input('selection').envId}.api.tcloudbasegateway.com/v1/ai/cloudbase/chat/completions`);
   assert.equal(request.data.model, input('selection').model);
   assert.equal(request.stream, false);
   assert.equal(request.data.stream, false);
@@ -86,9 +86,9 @@ test('SDK errors and model mismatch produce only fixed safe codes', async () => 
   assert.deepEqual(await runOnce(input('reply'), fake(async () => ({ rawResponses: [errorBody] }))), { ok: false, code: 'provider_error' });
 });
 
-test('invalid input cannot choose another environment, role or credential scheme', async () => {
+test('invalid input cannot choose malformed environment, role or credential scheme', async () => {
   const forbidden = { init() { assert.fail('SDK init must not be reached'); } };
-  for (const change of [{ envId: 'another-project' }, { region: 'ap-singapore' },
+  for (const change of [...['', null, 'https://cloud.invalid', 'bad/env', 'x'.repeat(64), 'bad\n'].map(envId => ({ envId })), { region: 'ap-singapore' },
     { model: 'deepseek-v4-flash' }, { role: 'execute_tool' }]) {
     assert.equal((await runOnce({ ...input('reply'), ...change }, forbidden)).code, 'configuration_invalid');
   }

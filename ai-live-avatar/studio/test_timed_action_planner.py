@@ -292,19 +292,18 @@ class TimedActionPlannerTests(unittest.IsolatedAsyncioTestCase):
             build_timed_action_schedules(part, alignment, 13)
         self.assertEqual(caught.exception.details["reason"], "no_verified_anchor")
 
-    def test_real_failure_fixture_has_generic_natural_full_schedule(self):
-        root = Path(__file__).parent / "data/runs/20261031-193504-80f0a4"
-        if not (root / "plans/c0001.json").exists():
-            self.skipTest("本地原始失败证据未分发到当前环境")
-        part = json.loads((root / "plans/c0001.json").read_text())["segments"][0]
-        tts = json.loads((root / "tts/c0001-1/result.json").read_text())
-        schedules = build_timed_action_schedules(part, tts["alignment"], tts["audio_seconds"])
+    def test_synthetic_infeasible_draft_has_generic_full_schedule(self):
+        # Nearby draft anchors cannot fit the required windows. The same frozen
+        # actions must still get complete legal schedules from synthetic words.
+        with self.assertRaises(SemanticSpeechError):
+            compile_dialogue_semantic_timeline(PART["actions"], PART["recovery"], ALIGNMENT, 13.0)
+        schedules = build_timed_action_schedules(PART, ALIGNMENT, 13.0)
         self.assertTrue(schedules)
         for schedule in schedules:
-            self.assertEqual(len(schedule["groups"]), len(part["actions"]))
+            self.assertEqual(len(schedule["groups"]), len(PART["actions"]))
             self.assertTrue(all("s_at_seconds" in group and "l_at_seconds" not in group
                                 for group in schedule["groups"]))
-        self.assertTrue(len(schedules) <= 12)
+        self.assertLessEqual(len(schedules), 12)
 
     def test_first_stage_explains_draft_and_final_planning_authority(self):
         self.assertIn("草案", SEMANTIC_SPEECH_CONTRACT)

@@ -116,9 +116,8 @@ class AmbientPerformance:
             self.invalidate()
 
     def participation_budget(self):
-        # Cold-start estimates come from the two 2026-11-04 samples (about
-        # 5.5s creation/preparation and 9s delivery). Subsequent actual receipts
-        # replace them. This only chooses a task's purpose; it never bans chat.
+        # Conservative cold-start defaults are replaced by subsequent actual
+        # receipts. This only chooses a task's purpose; it never bans chat.
         return max(self.preparation_samples[-6:] or [5.5]) + max(self.delivery_samples[-6:] or [9.0])
 
     def prepared(self, candidate, receipt):

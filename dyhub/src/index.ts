@@ -106,7 +106,7 @@ async function main() {
   console.log(`[dyhub] 管理台就绪: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   console.log(`[dyhub] WS 事件流: ws://localhost:${PORT}/ws?roomId=xxx&types=chat,gift`);
   console.log(`[dyhub] SSE 事件流: http://localhost:${PORT}/api/events?types=chat,gift`);
-  console.log(`[dyhub] 连接直播间示例: curl -X POST http://localhost:${PORT}/api/rooms/connect -d '{"roomId":"708764876300"}'`);
+  console.log(`[dyhub] 连接直播间示例: curl -X POST http://localhost:${PORT}/api/rooms/connect -d '{"roomId":"YOUR_ROOM_ID"}'`);
 
   // 5. 优雅退出
   const shutdown = async () => {

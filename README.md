@@ -34,7 +34,7 @@
 2. **投票与裁决。** 观众发送对应编号，例如 `1`、`投1` 或 `投 1`。同一人以截止前最后一张有效票为准。男主通常采纳最高票，出现并列时程序从并列项中抽取一次。只有最高票与男主人设冲突时，才有 25% 的机会改选或自拟。关票后的票数和裁决都保存，刷新页面不会重抽。
 3. **口播、发消息、结算。** 数字人可以对观众说出选择的理由。正式男主消息进入屏幕聊天，女生依据她知道的事回应。游戏把女生回复与分数变化一起写入 SQLite，再显示结果。亲密度到 100 为成功、到 0 为失败。游戏把被采纳的建议记回原作者，同一次抖音直播中的成绩可跨期计榜。
 
-礼物驱动的是另一项**造型值**。例如在作者的一钻手测配置中，小心心（ID `463`）正向、抖音（ID `164`）负向；从 50 分累计加到 60，男主从灰卫衣换到精致档。亲密度仍由聊天结算。工作台的「开始免费试玩」可用模拟加减分看效果；真实收礼与云端换形还需要账号、房间和资产配置。[玩法与计分](romance-advisors/docs/01-产品需求.md) · [一钻手测步骤](romance-advisors/docs/04-本地工作台使用.md#一钻手测)
+礼物驱动的是另一项**造型值**。例如在一钻礼物配置中，小心心（ID `463`）正向、抖音（ID `164`）负向；从 50 分累计加到 60，男主从灰卫衣换到精致档。亲密度仍由聊天结算。工作台的「开始免费试玩」可用模拟加减分看效果；真实收礼与云端换形还需要账号、房间和资产配置。[玩法与计分](romance-advisors/docs/01-产品需求.md) · [一钻手测步骤](romance-advisors/docs/04-本地工作台使用.md#一钻手测)
 
 ### 从哪里开始改
 
@@ -56,7 +56,7 @@
 | 文字 | 游戏和 Studio 使用百炼 `qwen3.8-flash`、北京地域、关闭思考。作者为两端分别配置了 Token Plan 文字路由。 |
 | 语音 | 普通百炼通道调用 `qwen-audio-3.1-tts-flash`，六档使用同一音色 `longtian_v3.1`。 |
 | 人物与动作 | Vidu 实时数字人。Studio 取已确定的台词、合成语音并调度眼神、表情与局部动作。浏览器通过 AliRTC 接收云端音画。 |
-| 普通口播 | 「咖啡馆里的温柔凝视」，黑针织衫托腮，Vidu 资产 ID `1015851675149152256`。六档中对应 `stellar`。 |
+| 普通口播 | 「咖啡馆里的温柔凝视」，黑针织衫托腮；复现时填入自己账号下对应的 Vidu 资产 ID。六档中对应 `stellar`。 |
 | 进入与退出游戏 | 启用真实六档时，开局从 50 分的 `normal` 灰卫衣开始。结束游戏后回到本场口播档 `stellar`。 |
 
 | 0 · 鱼头 | 50 · 普通 | 80–100 · 巨帅 |
@@ -161,12 +161,12 @@ npm run build
 (cd dyhub && npm run typecheck && node --import tsx --test test/*.test.ts)
 ```
 
-在 11 月 7 日版本的离线回归中，Studio 有一项[音频发送节奏测试](ai-live-avatar/studio/test_prepared_pcm_overlap.py)因模拟工作台缺少 `performance_holding` 状态，在音频准备阶段退出。
+Studio 的[音频发送节奏测试](ai-live-avatar/studio/test_prepared_pcm_overlap.py)使用合成语音与本地播放器替身，检查准备下一句时是否打断当前音频。
 
 现场要另外验证三件事：观众是否同时收到音画，人物低头与聊天气泡是否对齐，以及真实礼物是否触发预期造型并保持后续口播。发送回执只覆盖本机发送这一步。已知的重复碎念、气泡时序和礼物待验项见[交接记录](HANDOVER.md)。
 
 ## 源码、素材与许可
 
-[游戏代码](romance-advisors/romance/) · [前端与节目页](romance-advisors/static/) · [Studio 工作台](ai-live-avatar/studio/README.md) · [DyHub](dyhub/) · [配置模板](config-examples/README.md)。程序运行后生成的数据库、登录态、令牌、录制和本机资产绑定由操作者保存在自己的机器上；旧文档中的 `artifacts/` 链接指向本地验收记录。
+[游戏代码](romance-advisors/romance/) · [前端与节目页](romance-advisors/static/) · [Studio 工作台](ai-live-avatar/studio/README.md) · [DyHub](dyhub/) · [配置模板](config-examples/README.md)。程序运行后生成的数据库、登录态、令牌、录制和本机资产绑定由操作者保存在自己的机器上。
 
 各组件保留自己的许可：[数字人底座 MIT](ai-live-avatar/LICENSE)、[字体 OFL](romance-advisors/static/fonts/OFL.txt)、[DyHub MIT](dyhub/LICENSE) 以及[第三方抖音签名组件的 AGPL-3.0 说明](dyhub/third_party/douyin-sign/README.md)和[许可证全文](dyhub/third_party/douyin-sign/LICENSE)。仓库根目录目前没有为整个组合项目声明统一许可证。

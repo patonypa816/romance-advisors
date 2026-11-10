@@ -132,10 +132,10 @@ npm run build && npm start   # 生产模式（或 npm run dev 开发模式）
 # 打开控制台
 open http://localhost:8757
 
-# 连接直播间（示例：东方甄选）
+# 连接直播间（用自己的数字房号替换 YOUR_ROOM_ID）
 curl -X POST http://localhost:8757/api/rooms/connect \
   -H 'Content-Type: application/json' \
-  -d '{"roomId":"708764876300"}'
+  -d '{"roomId":"YOUR_ROOM_ID"}'
 ```
 
 控制台左侧可连接多个房间，通过「查看房间」下拉在**全部房间混流**与**单房间**之间切换；事件行展示头像、事件类型、来源房间与昵称。
@@ -159,19 +159,17 @@ curl -X POST http://localhost:8757/api/rooms/connect \
 
 ```json
 {
-  "id": "7681626144000791846",
-  "roomId": "708764876300",
+  "id": "demo-message-1",
+  "roomId": "YOUR_ROOM_ID",
   "platform": "douyin",
   "type": "chat",
-  "ts": 1788517960528,
-  "receivedAt": 1788517960528,
+  "ts": 1700000000000,
+  "receivedAt": 1700000000100,
   "user": {
-    "id": "101652211600",
-    "nickname": "田💕心",
-    "avatar": "https://p3.douyinpic.com/aweme/100x100/...",
-    "secUid": "MS4wLjAB..."
+    "id": "demo-viewer-1",
+    "nickname": "示例观众"
   },
-  "data": { "content": "劲道牛肉丸，3袋立享88折！" }
+  "data": { "content": "投 1" }
 }
 ```
 
@@ -199,7 +197,7 @@ curl -X POST http://localhost:8757/api/rooms/connect \
 ### WebSocket（网页弹幕墙 / 弹幕游戏）
 
 ```js
-const ws = new WebSocket('ws://localhost:8757/ws?roomId=708764876300&types=chat,gift,member');
+const ws = new WebSocket('ws://localhost:8757/ws?roomId=YOUR_ROOM_ID&types=chat,gift,member');
 
 ws.onmessage = (m) => {
   const ev = JSON.parse(m.data);
@@ -224,7 +222,7 @@ es.onmessage = (e) => {
 ```bash
 curl -X POST http://localhost:8757/api/webhooks \
   -H 'Content-Type: application/json' \
-  -d '{"roomId":"708764876300","url":"https://your-server/hook","secret":"your-secret"}'
+  -d '{"roomId":"YOUR_ROOM_ID","url":"https://your-server/hook","secret":"your-secret"}'
 
 # 事件将 POST 到 url，带签名头：
 # X-DyHub-Signature: sha256=<HMAC-SHA256(secret, body)>
@@ -296,10 +294,10 @@ docker compose up -d --build
 # 打开控制台
 open http://localhost:8757
 
-# 连接直播间（示例：东方甄选）
+# 连接直播间（用自己的数字房号替换 YOUR_ROOM_ID）
 curl -X POST http://localhost:8757/api/rooms/connect \
   -H 'Content-Type: application/json' \
-  -d '{"roomId":"708764876300"}'
+  -d '{"roomId":"YOUR_ROOM_ID"}'
 
 # 查看日志
 docker compose logs -f dyhub

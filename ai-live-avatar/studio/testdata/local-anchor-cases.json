@@ -1,774 +1,445 @@
 [
   {
-    "case_id": "c0002",
-    "source": "studio/data/runs/20261101-203224-0ed108/tts/c0002-1/events-safe.jsonl",
-    "source_sha256": "5fa5decf1c191cc4b8bc0a0794a9ab3f444570fc9c10d091cfba094bb4873082",
-    "audio_seconds": 15.68,
+    "case_id": "synthetic-mismatch",
+    "source": "synthetic-offline-fixture",
+    "source_note": "手工构造台词、词单元和 400ms 时间网格；无实播数据。",
+    "audio_seconds": 10.4,
     "part": {
-      "text": "大典那日，朕身着衮冕立于奉天殿。百官朝拜，山呼万岁。那一刻，皇权之重压在肩头，气氛肃穆得让人不敢喘气。",
-      "instruction": "声音沉稳有力，语速适中，体现帝王威严与内心感受。",
+      "text": "春日花园，清风轻拂花枝。远处小鸟，在枝头缓缓歌唱。",
+      "instruction": "自然清晰地说。",
       "actions": [
         {
           "anchor": {
-            "quote": "大典那日",
+            "quote": "春日花园",
             "occurrence": 1
           },
           "motions": [
             {
               "part": "head",
-              "description": "微微颔首示意"
+              "description": "轻轻点头一次"
             }
           ],
-          "gaze": "目光平视前方",
-          "expression": "神情庄重"
+          "gaze": "注视镜头",
+          "expression": "神情温和"
         },
         {
           "anchor": {
-            "quote": "百官朝拜",
-            "occurrence": 1
-          },
-          "motions": [
-            {
-              "part": "both_arms",
-              "description": "双手自然垂放身侧"
-            }
-          ],
-          "gaze": "环视两侧",
-          "expression": "威严凝重"
-        }
-      ],
-      "recovery": {
-        "gaze": "注视镜头",
-        "expression": "平静坚定"
-      }
-    },
-    "words": [
-      {
-        "text": "大",
-        "begin_index": 0,
-        "end_index": 1,
-        "begin_time": 240,
-        "end_time": 480
-      },
-      {
-        "text": "典",
-        "begin_index": 1,
-        "end_index": 2,
-        "begin_time": 480,
-        "end_time": 800
-      },
-      {
-        "text": "那",
-        "begin_index": 2,
-        "end_index": 3,
-        "begin_time": 800,
-        "end_time": 1040
-      },
-      {
-        "text": "日",
-        "begin_index": 3,
-        "end_index": 4,
-        "begin_time": 1040,
-        "end_time": 1280
-      },
-      {
-        "text": "，朕",
-        "begin_index": 4,
-        "end_index": 5,
-        "begin_time": 1760,
-        "end_time": 2000
-      },
-      {
-        "text": "身",
-        "begin_index": 5,
-        "end_index": 6,
-        "begin_time": 2000,
-        "end_time": 2320
-      },
-      {
-        "text": "着",
-        "begin_index": 6,
-        "end_index": 7,
-        "begin_time": 2320,
-        "end_time": 2560
-      },
-      {
-        "text": "滚",
-        "begin_index": 7,
-        "end_index": 8,
-        "begin_time": 2560,
-        "end_time": 2800
-      },
-      {
-        "text": "冕",
-        "begin_index": 8,
-        "end_index": 9,
-        "begin_time": 2800,
-        "end_time": 3120
-      },
-      {
-        "text": "立",
-        "begin_index": 9,
-        "end_index": 10,
-        "begin_time": 3120,
-        "end_time": 3360
-      },
-      {
-        "text": "于",
-        "begin_index": 10,
-        "end_index": 11,
-        "begin_time": 3360,
-        "end_time": 3600
-      },
-      {
-        "text": "奉",
-        "begin_index": 11,
-        "end_index": 12,
-        "begin_time": 3600,
-        "end_time": 3920
-      },
-      {
-        "text": "天",
-        "begin_index": 12,
-        "end_index": 13,
-        "begin_time": 3920,
-        "end_time": 4160
-      },
-      {
-        "text": "殿",
-        "begin_index": 13,
-        "end_index": 14,
-        "begin_time": 4160,
-        "end_time": 4400
-      },
-      {
-        "text": "。百",
-        "begin_index": 14,
-        "end_index": 15,
-        "begin_time": 4800,
-        "end_time": 5040
-      },
-      {
-        "text": "官",
-        "begin_index": 15,
-        "end_index": 16,
-        "begin_time": 5040,
-        "end_time": 5440
-      },
-      {
-        "text": "朝",
-        "begin_index": 16,
-        "end_index": 17,
-        "begin_time": 5440,
-        "end_time": 5760
-      },
-      {
-        "text": "拜",
-        "begin_index": 17,
-        "end_index": 18,
-        "begin_time": 5760,
-        "end_time": 6000
-      },
-      {
-        "text": "，山",
-        "begin_index": 18,
-        "end_index": 19,
-        "begin_time": 6320,
-        "end_time": 6560
-      },
-      {
-        "text": "呼",
-        "begin_index": 19,
-        "end_index": 20,
-        "begin_time": 6560,
-        "end_time": 6960
-      },
-      {
-        "text": "万",
-        "begin_index": 20,
-        "end_index": 21,
-        "begin_time": 6960,
-        "end_time": 7200
-      },
-      {
-        "text": "岁",
-        "begin_index": 21,
-        "end_index": 22,
-        "begin_time": 7200,
-        "end_time": 7440
-      },
-      {
-        "text": "。那",
-        "begin_index": 22,
-        "end_index": 23,
-        "begin_time": 7760,
-        "end_time": 8000
-      },
-      {
-        "text": "一",
-        "begin_index": 23,
-        "end_index": 24,
-        "begin_time": 8000,
-        "end_time": 8160
-      },
-      {
-        "text": "刻",
-        "begin_index": 24,
-        "end_index": 25,
-        "begin_time": 8160,
-        "end_time": 8400
-      },
-      {
-        "text": "，皇",
-        "begin_index": 25,
-        "end_index": 26,
-        "begin_time": 8960,
-        "end_time": 9280
-      },
-      {
-        "text": "权",
-        "begin_index": 26,
-        "end_index": 27,
-        "begin_time": 9280,
-        "end_time": 9600
-      },
-      {
-        "text": "之",
-        "begin_index": 27,
-        "end_index": 28,
-        "begin_time": 9600,
-        "end_time": 9840
-      },
-      {
-        "text": "重",
-        "begin_index": 28,
-        "end_index": 29,
-        "begin_time": 9840,
-        "end_time": 10080
-      },
-      {
-        "text": "压",
-        "begin_index": 29,
-        "end_index": 30,
-        "begin_time": 10480,
-        "end_time": 10720
-      },
-      {
-        "text": "在",
-        "begin_index": 30,
-        "end_index": 31,
-        "begin_time": 10800,
-        "end_time": 10960
-      },
-      {
-        "text": "肩",
-        "begin_index": 31,
-        "end_index": 32,
-        "begin_time": 10960,
-        "end_time": 11280
-      },
-      {
-        "text": "头",
-        "begin_index": 32,
-        "end_index": 33,
-        "begin_time": 11280,
-        "end_time": 11600
-      },
-      {
-        "text": "，气",
-        "begin_index": 33,
-        "end_index": 34,
-        "begin_time": 11920,
-        "end_time": 12320
-      },
-      {
-        "text": "氛",
-        "begin_index": 34,
-        "end_index": 35,
-        "begin_time": 12320,
-        "end_time": 12560
-      },
-      {
-        "text": "肃",
-        "begin_index": 35,
-        "end_index": 36,
-        "begin_time": 12560,
-        "end_time": 12880
-      },
-      {
-        "text": "穆",
-        "begin_index": 36,
-        "end_index": 37,
-        "begin_time": 12880,
-        "end_time": 13120
-      },
-      {
-        "text": "得",
-        "begin_index": 37,
-        "end_index": 38,
-        "begin_time": 13120,
-        "end_time": 13360
-      },
-      {
-        "text": "让",
-        "begin_index": 38,
-        "end_index": 39,
-        "begin_time": 13680,
-        "end_time": 14080
-      },
-      {
-        "text": "人",
-        "begin_index": 39,
-        "end_index": 40,
-        "begin_time": 14080,
-        "end_time": 14320
-      },
-      {
-        "text": "不",
-        "begin_index": 40,
-        "end_index": 41,
-        "begin_time": 14320,
-        "end_time": 14560
-      },
-      {
-        "text": "敢",
-        "begin_index": 41,
-        "end_index": 42,
-        "begin_time": 14560,
-        "end_time": 14720
-      },
-      {
-        "text": "喘",
-        "begin_index": 42,
-        "end_index": 43,
-        "begin_time": 14720,
-        "end_time": 15040
-      },
-      {
-        "text": "气。",
-        "begin_index": 43,
-        "end_index": 44,
-        "begin_time": 15040,
-        "end_time": 15360
-      }
-    ],
-    "expected_s_seconds": [
-      0.24,
-      4.8
-    ]
-  },
-  {
-    "case_id": "c0003",
-    "source": "studio/data/runs/20261101-203224-0ed108/tts/c0003-1/events-safe.jsonl",
-    "source_sha256": "cdc9d756d5d6fcf5646861c6aa3e8fefd45b28343be79b3030be8ab1499b0be6",
-    "audio_seconds": 16.0,
-    "part": {
-      "text": "哈哈，这问题问得好。咱小时候在皇觉寺门口帮人放牛，那是水牛，黑黢黢的，脾气犟得很。那时候哪有什么讲究，能吃饱肚子就是福气。",
-      "instruction": "声音松弛自然，语速适中，带着回忆往事的感慨与幽默感，不刻意压嗓或拖长。",
-      "actions": [
-        {
-          "anchor": {
-            "quote": "哈哈",
-            "occurrence": 1
-          },
-          "motions": [
-            {
-              "part": "head",
-              "description": "微微仰头轻笑，随后回正"
-            }
-          ],
-          "gaze": "目光柔和地看向镜头前方",
-          "expression": "嘴角上扬，神情轻松愉悦"
-        },
-        {
-          "anchor": {
-            "quote": "黑黢黢",
+            "quote": "远处小鸟",
             "occurrence": 1
           },
           "motions": [
             {
               "part": "right_arm",
-              "description": "右手随意向侧下方挥动一下，模拟赶牛动作"
+              "description": "抬起右手示意"
             }
           ],
-          "gaze": "眼神短暂游离至侧方，似在回忆",
-          "expression": "眉头微挑，带着一丝狡黠的笑意"
+          "gaze": "注视镜头",
+          "expression": "神情温和"
         }
       ],
       "recovery": {
-        "gaze": "重新注视镜头",
-        "expression": "恢复平静温和的神态"
+        "gaze": "注视镜头",
+        "expression": "神情平静"
       }
     },
     "words": [
       {
-        "text": "哈",
+        "text": "春",
         "begin_index": 0,
         "end_index": 1,
         "begin_time": 0,
-        "end_time": 308
+        "end_time": 300
       },
       {
-        "text": "哈",
+        "text": "日",
         "begin_index": 1,
         "end_index": 2,
-        "begin_time": 308,
-        "end_time": 615
+        "begin_time": 400,
+        "end_time": 700
       },
       {
-        "text": "，这",
+        "text": "花",
         "begin_index": 2,
         "end_index": 3,
-        "begin_time": 615,
-        "end_time": 923
+        "begin_time": 800,
+        "end_time": 1100
       },
       {
-        "text": "问",
+        "text": "园",
         "begin_index": 3,
         "end_index": 4,
-        "begin_time": 923,
-        "end_time": 1231
+        "begin_time": 1200,
+        "end_time": 1500
       },
       {
-        "text": "题",
+        "text": "，",
         "begin_index": 4,
         "end_index": 5,
-        "begin_time": 1231,
-        "end_time": 1538
+        "begin_time": 1600,
+        "end_time": 1900
       },
       {
-        "text": "问",
+        "text": "青",
         "begin_index": 5,
         "end_index": 6,
-        "begin_time": 1538,
-        "end_time": 1846
+        "begin_time": 2000,
+        "end_time": 2300
       },
       {
-        "text": "得",
+        "text": "风",
         "begin_index": 6,
         "end_index": 7,
-        "begin_time": 1846,
-        "end_time": 2154
+        "begin_time": 2400,
+        "end_time": 2700
       },
       {
-        "text": "好",
+        "text": "轻",
         "begin_index": 7,
         "end_index": 8,
-        "begin_time": 2154,
-        "end_time": 2462
+        "begin_time": 2800,
+        "end_time": 3100
       },
       {
-        "text": "。咱",
+        "text": "拂",
         "begin_index": 8,
         "end_index": 9,
-        "begin_time": 2462,
-        "end_time": 2769
+        "begin_time": 3200,
+        "end_time": 3500
+      },
+      {
+        "text": "花",
+        "begin_index": 9,
+        "end_index": 10,
+        "begin_time": 3600,
+        "end_time": 3900
+      },
+      {
+        "text": "枝",
+        "begin_index": 10,
+        "end_index": 11,
+        "begin_time": 4000,
+        "end_time": 4300
+      },
+      {
+        "text": "。",
+        "begin_index": 11,
+        "end_index": 12,
+        "begin_time": 4400,
+        "end_time": 4700
+      },
+      {
+        "text": "远",
+        "begin_index": 12,
+        "end_index": 13,
+        "begin_time": 4800,
+        "end_time": 5100
+      },
+      {
+        "text": "处",
+        "begin_index": 13,
+        "end_index": 14,
+        "begin_time": 5200,
+        "end_time": 5500
       },
       {
         "text": "小",
-        "begin_index": 9,
-        "end_index": 10,
-        "begin_time": 2769,
-        "end_time": 3077
+        "begin_index": 14,
+        "end_index": 15,
+        "begin_time": 5600,
+        "end_time": 5900
       },
       {
-        "text": "时",
-        "begin_index": 10,
-        "end_index": 11,
-        "begin_time": 3077,
-        "end_time": 3385
+        "text": "鸟",
+        "begin_index": 15,
+        "end_index": 16,
+        "begin_time": 6000,
+        "end_time": 6300
       },
       {
-        "text": "候",
-        "begin_index": 11,
-        "end_index": 12,
-        "begin_time": 3385,
-        "end_time": 3692
+        "text": "，",
+        "begin_index": 16,
+        "end_index": 17,
+        "begin_time": 6400,
+        "end_time": 6700
       },
       {
         "text": "在",
-        "begin_index": 12,
-        "end_index": 13,
-        "begin_time": 3692,
-        "end_time": 4000
-      },
-      {
-        "text": "皇",
-        "begin_index": 13,
-        "end_index": 14,
-        "begin_time": 4000,
-        "end_time": 4308
-      },
-      {
-        "text": "觉",
-        "begin_index": 14,
-        "end_index": 15,
-        "begin_time": 4308,
-        "end_time": 4615
-      },
-      {
-        "text": "寺",
-        "begin_index": 15,
-        "end_index": 16,
-        "begin_time": 4615,
-        "end_time": 4923
-      },
-      {
-        "text": "门",
-        "begin_index": 16,
-        "end_index": 17,
-        "begin_time": 4923,
-        "end_time": 5231
-      },
-      {
-        "text": "口",
         "begin_index": 17,
         "end_index": 18,
-        "begin_time": 5231,
-        "end_time": 5538
+        "begin_time": 6800,
+        "end_time": 7100
       },
       {
-        "text": "帮",
+        "text": "枝",
         "begin_index": 18,
         "end_index": 19,
-        "begin_time": 5538,
-        "end_time": 5846
+        "begin_time": 7200,
+        "end_time": 7500
       },
       {
-        "text": "人",
+        "text": "头",
         "begin_index": 19,
         "end_index": 20,
-        "begin_time": 5846,
-        "end_time": 6154
+        "begin_time": 7600,
+        "end_time": 7900
       },
       {
-        "text": "放",
+        "text": "缓",
         "begin_index": 20,
         "end_index": 21,
-        "begin_time": 6154,
-        "end_time": 6462
+        "begin_time": 8000,
+        "end_time": 8300
       },
       {
-        "text": "牛",
+        "text": "缓",
         "begin_index": 21,
         "end_index": 22,
-        "begin_time": 6462,
-        "end_time": 6769
+        "begin_time": 8400,
+        "end_time": 8700
       },
       {
-        "text": "，那",
+        "text": "歌",
         "begin_index": 22,
         "end_index": 23,
-        "begin_time": 6769,
-        "end_time": 7077
+        "begin_time": 8800,
+        "end_time": 9100
       },
       {
-        "text": "是",
+        "text": "唱",
         "begin_index": 23,
         "end_index": 24,
-        "begin_time": 7077,
-        "end_time": 7385
+        "begin_time": 9200,
+        "end_time": 9500
       },
       {
-        "text": "水",
+        "text": "。",
         "begin_index": 24,
         "end_index": 25,
-        "begin_time": 7385,
-        "end_time": 7692
-      },
-      {
-        "text": "牛",
-        "begin_index": 25,
-        "end_index": 26,
-        "begin_time": 7692,
-        "end_time": 8000
-      },
-      {
-        "text": "，黑",
-        "begin_index": 26,
-        "end_index": 27,
-        "begin_time": 8000,
-        "end_time": 8308
-      },
-      {
-        "text": "黢黢",
-        "begin_index": 27,
-        "end_index": 28,
-        "begin_time": 8308,
-        "end_time": 8615
-      },
-      {
-        "text": "的",
-        "begin_index": 28,
-        "end_index": 29,
-        "begin_time": 8615,
-        "end_time": 8923
-      },
-      {
-        "text": "，脾",
-        "begin_index": 29,
-        "end_index": 30,
-        "begin_time": 8923,
-        "end_time": 9231
-      },
-      {
-        "text": "气",
-        "begin_index": 30,
-        "end_index": 31,
-        "begin_time": 9231,
-        "end_time": 9538
-      },
-      {
-        "text": "犟",
-        "begin_index": 31,
-        "end_index": 32,
-        "begin_time": 9538,
-        "end_time": 9846
-      },
-      {
-        "text": "得",
-        "begin_index": 32,
-        "end_index": 33,
-        "begin_time": 9846,
-        "end_time": 10154
-      },
-      {
-        "text": "很",
-        "begin_index": 33,
-        "end_index": 34,
-        "begin_time": 10154,
-        "end_time": 10462
-      },
-      {
-        "text": "。那",
-        "begin_index": 34,
-        "end_index": 35,
-        "begin_time": 10462,
-        "end_time": 10769
-      },
-      {
-        "text": "时",
-        "begin_index": 35,
-        "end_index": 36,
-        "begin_time": 10769,
-        "end_time": 11077
-      },
-      {
-        "text": "候",
-        "begin_index": 36,
-        "end_index": 37,
-        "begin_time": 11077,
-        "end_time": 11385
-      },
-      {
-        "text": "哪",
-        "begin_index": 37,
-        "end_index": 38,
-        "begin_time": 11385,
-        "end_time": 11692
-      },
-      {
-        "text": "有",
-        "begin_index": 38,
-        "end_index": 39,
-        "begin_time": 11692,
-        "end_time": 12000
-      },
-      {
-        "text": "什",
-        "begin_index": 39,
-        "end_index": 40,
-        "begin_time": 12000,
-        "end_time": 12308
-      },
-      {
-        "text": "么",
-        "begin_index": 40,
-        "end_index": 41,
-        "begin_time": 12308,
-        "end_time": 12615
-      },
-      {
-        "text": "讲",
-        "begin_index": 41,
-        "end_index": 42,
-        "begin_time": 12615,
-        "end_time": 12923
-      },
-      {
-        "text": "究",
-        "begin_index": 42,
-        "end_index": 43,
-        "begin_time": 12923,
-        "end_time": 13231
-      },
-      {
-        "text": "，能",
-        "begin_index": 43,
-        "end_index": 44,
-        "begin_time": 13231,
-        "end_time": 13538
-      },
-      {
-        "text": "吃",
-        "begin_index": 44,
-        "end_index": 45,
-        "begin_time": 13538,
-        "end_time": 13846
-      },
-      {
-        "text": "饱",
-        "begin_index": 45,
-        "end_index": 46,
-        "begin_time": 13846,
-        "end_time": 14154
-      },
-      {
-        "text": "肚",
-        "begin_index": 46,
-        "end_index": 47,
-        "begin_time": 14154,
-        "end_time": 14462
-      },
-      {
-        "text": "子",
-        "begin_index": 47,
-        "end_index": 48,
-        "begin_time": 14462,
-        "end_time": 14769
-      },
-      {
-        "text": "就",
-        "begin_index": 48,
-        "end_index": 49,
-        "begin_time": 14769,
-        "end_time": 15077
-      },
-      {
-        "text": "是",
-        "begin_index": 49,
-        "end_index": 50,
-        "begin_time": 15077,
-        "end_time": 15385
-      },
-      {
-        "text": "福",
-        "begin_index": 50,
-        "end_index": 51,
-        "begin_time": 15385,
-        "end_time": 15692
-      },
-      {
-        "text": "气。",
-        "begin_index": 51,
-        "end_index": 52,
-        "begin_time": 15692,
-        "end_time": 16000
+        "begin_time": 9600,
+        "end_time": 9900
       }
     ],
     "expected_s_seconds": [
       0.0,
-      8.0
+      4.8
+    ]
+  },
+  {
+    "case_id": "synthetic-word-boundary",
+    "source": "synthetic-offline-fixture",
+    "source_note": "手工构造台词、词单元和 400ms 时间网格；无实播数据。",
+    "audio_seconds": 10.000000000000002,
+    "part": {
+      "text": "晨光穿过窗台，书页微微翻动。桌边小猫，轻轻伸了懒腰。",
+      "instruction": "自然清晰地说。",
+      "actions": [
+        {
+          "anchor": {
+            "quote": "晨光穿过",
+            "occurrence": 1
+          },
+          "motions": [
+            {
+              "part": "head",
+              "description": "轻轻点头一次"
+            }
+          ],
+          "gaze": "注视镜头",
+          "expression": "神情温和"
+        },
+        {
+          "anchor": {
+            "quote": "桌边小猫",
+            "occurrence": 1
+          },
+          "motions": [
+            {
+              "part": "right_arm",
+              "description": "抬起右手示意"
+            }
+          ],
+          "gaze": "注视镜头",
+          "expression": "神情温和"
+        }
+      ],
+      "recovery": {
+        "gaze": "注视镜头",
+        "expression": "神情平静"
+      }
+    },
+    "words": [
+      {
+        "text": "晨",
+        "begin_index": 0,
+        "end_index": 1,
+        "begin_time": 0,
+        "end_time": 300
+      },
+      {
+        "text": "光",
+        "begin_index": 1,
+        "end_index": 2,
+        "begin_time": 400,
+        "end_time": 700
+      },
+      {
+        "text": "穿",
+        "begin_index": 2,
+        "end_index": 3,
+        "begin_time": 800,
+        "end_time": 1100
+      },
+      {
+        "text": "过",
+        "begin_index": 3,
+        "end_index": 4,
+        "begin_time": 1200,
+        "end_time": 1500
+      },
+      {
+        "text": "窗",
+        "begin_index": 4,
+        "end_index": 5,
+        "begin_time": 1600,
+        "end_time": 1900
+      },
+      {
+        "text": "台",
+        "begin_index": 5,
+        "end_index": 6,
+        "begin_time": 2000,
+        "end_time": 2300
+      },
+      {
+        "text": "，",
+        "begin_index": 6,
+        "end_index": 7,
+        "begin_time": 2400,
+        "end_time": 2700
+      },
+      {
+        "text": "书",
+        "begin_index": 7,
+        "end_index": 8,
+        "begin_time": 2800,
+        "end_time": 3100
+      },
+      {
+        "text": "页",
+        "begin_index": 8,
+        "end_index": 9,
+        "begin_time": 3200,
+        "end_time": 3500
+      },
+      {
+        "text": "微微",
+        "begin_index": 9,
+        "end_index": 10,
+        "begin_time": 3600,
+        "end_time": 3900
+      },
+      {
+        "text": "翻",
+        "begin_index": 10,
+        "end_index": 11,
+        "begin_time": 4000,
+        "end_time": 4300
+      },
+      {
+        "text": "动",
+        "begin_index": 11,
+        "end_index": 12,
+        "begin_time": 4400,
+        "end_time": 4700
+      },
+      {
+        "text": "。",
+        "begin_index": 12,
+        "end_index": 13,
+        "begin_time": 4800,
+        "end_time": 5100
+      },
+      {
+        "text": "桌",
+        "begin_index": 13,
+        "end_index": 14,
+        "begin_time": 5200,
+        "end_time": 5500
+      },
+      {
+        "text": "边",
+        "begin_index": 14,
+        "end_index": 15,
+        "begin_time": 5600,
+        "end_time": 5900
+      },
+      {
+        "text": "小",
+        "begin_index": 15,
+        "end_index": 16,
+        "begin_time": 6000,
+        "end_time": 6300
+      },
+      {
+        "text": "猫",
+        "begin_index": 16,
+        "end_index": 17,
+        "begin_time": 6400,
+        "end_time": 6700
+      },
+      {
+        "text": "，",
+        "begin_index": 17,
+        "end_index": 18,
+        "begin_time": 6800,
+        "end_time": 7100
+      },
+      {
+        "text": "轻轻",
+        "begin_index": 18,
+        "end_index": 19,
+        "begin_time": 7200,
+        "end_time": 7500
+      },
+      {
+        "text": "伸",
+        "begin_index": 19,
+        "end_index": 20,
+        "begin_time": 7600,
+        "end_time": 7900
+      },
+      {
+        "text": "了",
+        "begin_index": 20,
+        "end_index": 21,
+        "begin_time": 8000,
+        "end_time": 8300
+      },
+      {
+        "text": "懒",
+        "begin_index": 21,
+        "end_index": 22,
+        "begin_time": 8400,
+        "end_time": 8700
+      },
+      {
+        "text": "腰",
+        "begin_index": 22,
+        "end_index": 23,
+        "begin_time": 8800,
+        "end_time": 9100
+      },
+      {
+        "text": "。",
+        "begin_index": 23,
+        "end_index": 24,
+        "begin_time": 9200,
+        "end_time": 9500
+      }
+    ],
+    "expected_s_seconds": [
+      0.0,
+      5.2
     ]
   }
 ]

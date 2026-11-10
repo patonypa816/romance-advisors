@@ -4,7 +4,7 @@
 
 ## 来源与保留范围
 
-源码来自本机已有的 `AI直播数字人/artifacts/dyhub-smoke-20261030/dyhub`，没有用网上的新版本替换。本机 Git 上游是 <https://github.com/ymstar/dyhub>，分支 `main`，基准提交 `77ab1fbb3ac6cb0886af40cf32865d998d9e6aab`；`package.json` 标记版本 `0.2.0`。原锁文件顶层版本仍为 `0.1.0`，依赖版本与镜像地址按原文件保留。
+本目录保留导入时的采集器源码。本机 Git 上游是 <https://github.com/ymstar/dyhub>，分支 `main`，基准提交 `77ab1fbb3ac6cb0886af40cf32865d998d9e6aab`；`package.json` 标记版本 `0.2.0`。原锁文件顶层版本仍为 `0.1.0`，依赖版本与镜像地址按原文件保留。
 
 以下 5 个文件保留本机未提交的改动：
 

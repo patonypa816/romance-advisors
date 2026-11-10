@@ -4,7 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from credentials import bailian_config
+from credentials import bailian_config, cloudbase_config
+from cloudbase_ai import CloudBaseAI, ModelError
 
 
 class BailianConfigContracts(unittest.TestCase):
@@ -32,6 +33,29 @@ class BailianConfigContracts(unittest.TestCase):
             (root / "bailian-brain.json").write_text(json.dumps({"model": "old-provider-model"}))
             self.assertEqual(bailian_config(root)["model"], "old-provider-model")
 
+
+class CloudBaseConfigContracts(unittest.TestCase):
+    def test_missing_environment_blocks_only_retained_cloudbase_adapter(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            options = cloudbase_config(root)
+            self.assertEqual(options["env_id"], "")
+            client = CloudBaseAI(options)
+            with self.assertRaisesRegex(ModelError, "configuration_invalid"):
+                client._validate_config()
+            self.assertFalse(client.configured())
+            self.assertEqual(bailian_config(root)["model"], "qwen3.8-flash")
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_operator_environment_and_external_reference_are_preserved(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "cloudbase.json").write_text(json.dumps({
+                "env_id": "synthetic-cloudbase-offline", "credentials_file": "/not-read/offline.csv"}))
+            options = cloudbase_config(root)
+            self.assertEqual(options["env_id"], "synthetic-cloudbase-offline")
+            self.assertEqual(options["credentials_file"], "/not-read/offline.csv")
+            CloudBaseAI(options)._validate_config()
 
 if __name__ == "__main__":
     unittest.main()

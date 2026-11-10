@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -25,7 +26,8 @@ from semantic_speech import parse_dialogue_semantic_plan
 from test_motion_component import FakeSocket, NoNetwork
 
 HERE = Path(__file__).resolve().parent
-REPORT = HERE.parent.parent / "romance-advisors/artifacts/character-continuity-20261104/pcm-overlap-check.json"
+# Persist a report only when the operator explicitly chooses its output path.
+REPORT = Path(os.environ["STUDIO_PCM_REPORT"]).expanduser() if os.environ.get("STUDIO_PCM_REPORT") else None
 A_SECONDS = 5.0
 B_SECONDS = 2.0
 HISTORY_COUNT = 60
@@ -94,8 +96,9 @@ class PreparedPCMOverlapTests(unittest.IsolatedAsyncioTestCase):
             "source_sha256": {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in
                 ("live_session.py", "motion_component.py", "component_live.py", "tts_live.py",
                  "external_game.py", Path(__file__).name)}}
-        REPORT.parent.mkdir(parents=True, exist_ok=True)
-        REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        if REPORT is not None:
+            REPORT.parent.mkdir(parents=True, exist_ok=True)
+            REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
     async def measure(self, label, *, overlap):
         session = live_session.LiveSession(self.root / label, "A", image=self.image)
@@ -117,6 +120,7 @@ class PreparedPCMOverlapTests(unittest.IsolatedAsyncioTestCase):
         session.diagnostics.record = observe_record
         self.assertEqual(component.DRAIN_SECONDS, 4.0)  # Never shorten the handoff for this test.
         host = SimpleNamespace(current=session, generation="offline-generation", closing=False,
+                               performance_holding=False,
                                automation=SimpleNamespace(last_error=""))
         external = ExternalGame(host)
         external.owner_id, external.generation = "offline-owner", host.generation

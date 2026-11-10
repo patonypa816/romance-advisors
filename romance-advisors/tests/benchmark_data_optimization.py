@@ -1,8 +1,9 @@
 """Offline before/after receipt benchmark; no services, models or real database.
 
 Run from romance-advisors:
-  PYTHONPATH=.:tests .venv/bin/python tests/benchmark_data_optimization.py
-The baseline is the source snapshot taken immediately before this change.
+  PYTHONPATH=.:tests .venv/bin/python tests/benchmark_data_optimization.py --baseline /path/to/baseline/romance
+Supply a trusted source snapshot of the earlier romance package as the baseline.
+The repository does not include private source snapshots or previous run records.
 """
 import argparse
 import importlib
@@ -26,8 +27,9 @@ class NoModel:
         raise AssertionError("benchmark must not call a model")
 
 
-def baseline_game():
-    path = ROOT / "artifacts/engineering-optimization-20261104/before/romance-advisors/romance"
+def baseline_game(path):
+    # Import only the explicitly supplied benchmark baseline; no private paths.
+    path = path.expanduser().resolve()
     package = types.ModuleType("romance_data_baseline")
     package.__path__ = [str(path)]
     sys.modules[package.__name__] = package
@@ -127,9 +129,13 @@ def measure(cls, history, disk, samples=31):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline", type=Path, required=True,
+                        help="trusted baseline romance package directory containing game.py")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    before = baseline_game()
+    if not (args.baseline.expanduser() / "game.py").is_file():
+        parser.error("--baseline must contain game.py")
+    before = baseline_game(args.baseline)
     result = {"method": "31 alternating changed-vote receipts per case; same synthetic archive; in-memory and temporary SQLite WAL; no HTTP, browser, network or model calls",
               "limits": "Local microbenchmark p95 is descriptive only; not production throughput or stable tail latency. Initial full restore remains linear in archive size.",
               "environment": {"python": platform.python_version(), "platform": platform.platform()},

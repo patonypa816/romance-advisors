@@ -333,11 +333,11 @@ class StudioContracts(unittest.IsolatedAsyncioTestCase):
         target = assets / "smile.png"
         target.write_bytes(b"offline-new-smiling-image")
         self.enterContext(patch.object(studio_server, "HERE", fixture_root))
-        value = {"avatar_id": "1013731835382874112",
+        value = {"avatar_id": "900000000000000001",
                  "switch_videos": ["https://media.example.test/one.mp4"],
                  "source_image_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
                  "transition_label": "离线交叉对照", "target_image": target.name,
-                 "initial_avatar": {"avatar_id": "1013727367312453632",
+                 "initial_avatar": {"avatar_id": "900000000000000002",
                                     "source_image_sha256": self.control.current.variant_info["image_sha256"]}}
         return value, target
 

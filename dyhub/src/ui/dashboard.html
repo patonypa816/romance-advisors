@@ -194,7 +194,7 @@
       <div>
         <div class="panel-title">连接直播间</div>
         <div class="room-add">
-          <input id="roomInput" placeholder="房间号，如 708764876300" />
+          <input id="roomInput" placeholder="请输入自己的数字房号" />
           <button id="btnConnect">连接</button>
         </div>
         <details style="margin-top:8px;">
@@ -242,7 +242,7 @@
       <h3><span class="badge ws">WebSocket</span>实时推送 · 低延迟</h3>
       <div class="addr" id="wsAddr"></div>
       <div class="params">
-        参数：<b>roomId</b>（选填，即连接时输入的直播间号 / live.douyin.com 链接尾号，如 708764876300；留空 = 订阅全部房间混流）· <b>types</b>（逗号分隔，chat,gift,member,follow,like,room,unknown）
+        参数：<b>roomId</b>（选填，即连接时输入的直播间号 / live.douyin.com 链接尾号；留空 = 订阅全部房间混流）· <b>types</b>（逗号分隔，chat,gift,member,follow,like,room,unknown）
         <br/>场景：网页弹幕墙 / 弹幕游戏 / 实时看板
       </div>
       <pre><code id="wsCode"></code></pre>
@@ -373,7 +373,7 @@ curl -X POST http://${base}/api/webhooks \\
 # 事件将 POST 到 url，带签名头：
 # X-DyHub-Signature: sha256=<HMAC-SHA256(secret, body)>`;
   }
-  renderDemo('708764876300');
+  renderDemo('YOUR_ROOM_ID');
 
   // ---- 实时对接测试 ----
   function setTestStatus(txt, on) {
@@ -568,7 +568,7 @@ curl -X POST http://${base}/api/webhooks \\
       // 重建"查看房间"下拉选项，保留当前选中
       const roomIds = s.rooms.map(r => String(r.roomId));
       // 对接演示地址跟随第一个已连接房间（短号），无房间时回退示例号
-      renderDemo(roomIds[0] || '708764876300');
+      renderDemo(roomIds[0] || 'YOUR_ROOM_ID');
       const prev = roomSelect.value;
       const cur = roomIds.includes(prev) ? prev : 'all';
       roomSelect.innerHTML = '<option value="all">全部房间（混流）</option>' +
