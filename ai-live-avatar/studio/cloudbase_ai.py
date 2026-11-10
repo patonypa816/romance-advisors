@@ -45,7 +45,7 @@ actions必须恰好1个kind=S节点，motions必须恰好1项，delay_seconds=0�
 服务端从S的gaze/expression生成只有眼神/表情的GE前导，GE成功发送0.5秒后发S，
 S成功发送1.5秒后以原recovery生成Q；不生成台词，不调用TTS，不发送Type10或PCM。
 不要生成GE/Q节点，不要悄悄截断用户明确要求的动作；超出试验范围应交由操作人另行安排。"""
-ENV_ID = "benxinji-v3-d2g1zs30wb4a1245c"
+_ENV_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 REGION = "ap-shanghai"
 SDK_VERSION = "3.18.7"
 SDK_HELPER = Path(__file__).with_name("sdk") / "helper.mjs"
@@ -1364,9 +1364,11 @@ class CloudBaseAI(StructuredBrain):
                                if os.path.isfile(p) and os.access(p, os.X_OK)), None)
 
     def _validate_config(self):
-        # This project was authorized for this environment's AI only. Do not
-        # silently route a malformed/missing setting to another cloud project.
-        if (self.config.get("env_id") != ENV_ID or self.config.get("region") != REGION
+        # Environment selection belongs to the operator. Reject missing or
+        # malformed DNS labels instead of falling back to another cloud account.
+        env_id = self.config.get("env_id")
+        if (not isinstance(env_id, str) or not _ENV_ID.fullmatch(env_id)
+                or self.config.get("region") != REGION
                 or self.config.get("model") != MODEL):
             raise ModelError("configuration_invalid")
 
@@ -1515,7 +1517,7 @@ class CloudBaseAI(StructuredBrain):
             # One short-lived SDK process per attempt: killing it closes the
             # socket on cancel/timeout; no late local generation or auto retry.
             async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                body = await self._run_sdk({"envId": ENV_ID, "region": REGION,
+                body = await self._run_sdk({"envId": self.config["env_id"], "region": REGION,
                                            "model": MODEL, "role": role, "messages": messages,
                                            "credentials": credentials})
             rid = body.get("request_id", "")
